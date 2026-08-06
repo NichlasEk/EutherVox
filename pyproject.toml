@@ -8,6 +8,7 @@ dependencies = [
     "websockets>=14,<17",
     "httpx>=0.28,<1",
     "pychromecast>=14,<16",
+    "yt-dlp>=2026.7,<2027",
 ]
 
 [project.optional-dependencies]

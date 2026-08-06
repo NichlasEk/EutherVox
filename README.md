@@ -158,7 +158,9 @@ Sätt ihop en spellista med svensk punk på Kök 2.
 
 Cast är avstängt i mockkonfigurationen. Real-beta-konfigurationen mappar aliaset `köket` till `Kök 2` på det lokala nätet. IP och Cast-UUID är enhetsmetadata, inte autentiseringshemligheter. Lägg till framtida rum under separata `[cast.rooms."alias"]`-tabeller.
 
-Första Cast-starten skickar endast den första sökträffen. YouTube-controllerns session och första uppspelningskommando har en hård tidsgräns; en mottagare som bara startar med ett pling men aldrig slutför handskakningen kastas ur anslutningscachen och ger telefonfallback i stället för en fastlåst app. Automatisk köning sker först i en senare slice när första uppspelningen kan verifieras stabilt på Nest Mini.
+Real-beta använder den experimentella backenden `direct_audio`. Gatewayen väljer först en video via användarens YouTube Data API-koppling, löser sedan en kortlivad AAC/M4A-URL med `yt-dlp` och skickar den till Nest-enhetens vanliga Cast mediareceiver. Mediefilen laddas inte ned, den signerade URL:en loggas eller lagras inte och faktisk `PLAYING`/`BUFFERING`-status krävs innan appen får en lyckad kvittens. Detta är en inofficiell YouTube-strömväg och kan påverkas av YouTube-förändringar eller tjänstevillkor.
+
+Den äldre `youtube_controller` finns kvar som valbar backend för experiment, men fungerar inte stabilt på Nest Mini: den kan starta YouTube-mottagaren utan att skapa en mediasession. Båda backendvarianterna har hårda tidsgränser och telefonfallback. Första Cast-starten spelar endast första sökträffen; automatisk köning återstår.
 
 ## MCP och modellstyrda verktyg
 
@@ -210,7 +212,7 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - Låtvalet är en första beta: en YouTube-sökning i musikkategorin används, inte YouTube Musics privata rekommendationsmotor. Granska därför listan efter skapande.
 - En lokal lista som skapats utan OAuth innehåller tills vidare bara titel och stämningsfråga. Separat kommandoflöde för att synka en äldre lokal lista efter OAuth-koppling återstår.
 - YouTube Data API:s standardkvot begränsar hur många sökningar och låtinfogningar som kan göras per dygn.
-- Cast-adaptern använder PyChromecasts inofficiella YouTube-controller eftersom Google saknar ett publikt API för att välja YouTube Music-mottagare. Den är därför beta, konfigurationsstyrd och faller tillbaka till telefonen.
+- Cast-adaptern använder PyChromecast och en inofficiell `yt-dlp`-resolver eftersom Google saknar ett publikt YouTube Music-uppspelnings-API för serverstyrda mottagare. Den är därför beta, konfigurationsstyrd och faller tillbaka till telefonen.
 - Cast-kö, volym, paus/nästa och dirigering till fler rum återstår.
 - MCP-servern använder än så länge stdio och utför inte fristående åtgärder; autentiserad Streamable HTTP kan läggas till när en extern agent behöver fjärrstyra EutherVox.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.

@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import logging
 from uuid import UUID
 
+from .youtube_audio import ResolvedAudio, YouTubeAudioResolver
+
 
 LOG = logging.getLogger("euthervox.cast")
 
@@ -24,10 +26,14 @@ class CastService:
 
     def __init__(self, settings: dict):
         self.enabled = bool(settings.get("enabled", False))
+        self.backend = str(settings.get("backend", "youtube_controller"))
         self.timeout_seconds = float(settings.get("timeout_seconds", 8.0))
         self.operation_timeout_seconds = float(
             settings.get("operation_timeout_seconds", self.timeout_seconds * 2 + 2)
         )
+        self.resolver_timeout_seconds = float(settings.get("resolver_timeout_seconds", 20.0))
+        self.playback_confirmation_seconds = float(settings.get("playback_confirmation_seconds", 8.0))
+        self.audio_resolver = YouTubeAudioResolver(self.timeout_seconds)
         self.targets: dict[str, CastTarget] = {}
         for room, raw in dict(settings.get("rooms", {})).items():
             try:
@@ -57,8 +63,18 @@ class CastService:
             raise ValueError("Inga spelbara YouTube-träffar hittades")
         async with self._lock:
             try:
+                if self.backend == "direct_audio":
+                    audio = await asyncio.wait_for(
+                        self.audio_resolver.resolve(video_ids[0]),
+                        timeout=self.resolver_timeout_seconds,
+                    )
+                    operation = asyncio.to_thread(self._play_direct_audio, room, audio)
+                elif self.backend == "youtube_controller":
+                    operation = asyncio.to_thread(self._play_youtube_controller, room, video_ids[0])
+                else:
+                    raise RuntimeError(f"Okänd Cast-backend: {self.backend}")
                 await asyncio.wait_for(
-                    asyncio.to_thread(self._play, room, video_ids[0]),
+                    operation,
                     timeout=self.operation_timeout_seconds,
                 )
             except TimeoutError as error:
@@ -77,7 +93,7 @@ class CastService:
                     len(video_ids) - 1,
                 )
 
-    def _play(self, room: str, first_video_id: str) -> None:
+    def _play_youtube_controller(self, room: str, first_video_id: str) -> None:
         try:
             import pychromecast
             from pychromecast.const import MESSAGE_TYPE
@@ -112,6 +128,50 @@ class CastService:
             cast.register_handler(controller)
         controller.play_video(first_video_id)
         self._connections[target.room] = (cast, controller)
+
+    def _play_direct_audio(self, room: str, audio: ResolvedAudio) -> None:
+        try:
+            import pychromecast
+        except ImportError as error:
+            raise RuntimeError("PyChromecast är inte installerat") from error
+
+        target = self.targets.get(room.casefold())
+        if not self.enabled or not target:
+            raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {room}")
+        existing = self._connections.get(target.room)
+        created = existing is None
+        if existing:
+            cast, _controller = existing
+        else:
+            cast = pychromecast.get_chromecast_from_host(
+                (target.host, target.port, target.uuid, target.model_name, target.friendly_name),
+                timeout=self.timeout_seconds,
+            )
+            cast.wait(timeout=self.timeout_seconds)
+        controller = cast.media_controller
+        try:
+            controller.play_media(
+                audio.url,
+                audio.content_type,
+                title=audio.title,
+                thumb=audio.thumbnail or None,
+                stream_type="BUFFERED",
+            )
+            controller.block_until_active(timeout=self.playback_confirmation_seconds)
+            if not controller.status.media_session_id or not controller.status.player_is_playing:
+                raise RuntimeError("Nest startade ingen bekräftad ljuduppspelning")
+        except Exception:
+            if created:
+                cast.disconnect(timeout=0)
+            raise
+        self._connections[target.room] = (cast, controller)
+        LOG.info(
+            "cast_audio_playing room=%s video_id=%s content_type=%s title=%r",
+            target.room,
+            audio.video_id,
+            audio.content_type,
+            audio.title,
+        )
 
     def _discard_connection(self, room: str) -> None:
         connection = self._connections.pop(room.casefold(), None)

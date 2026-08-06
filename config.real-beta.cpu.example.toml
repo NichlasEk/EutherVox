@@ -52,8 +52,11 @@ directory = "state/playlists"
 
 [cast]
 enabled = true
+backend = "direct_audio"
 timeout_seconds = 8
 operation_timeout_seconds = 18
+resolver_timeout_seconds = 20
+playback_confirmation_seconds = 8
 
 [mcp]
 enabled = true
