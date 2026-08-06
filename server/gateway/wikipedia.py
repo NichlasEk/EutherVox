@@ -20,6 +20,7 @@ class WikipediaService:
         self.enabled = bool(settings.get("enabled", False))
         self.api_url = str(settings.get("api_url", "https://sv.wikipedia.org/w/api.php"))
         self.timeout_seconds = float(settings.get("timeout_seconds", 8.0))
+        self.max_attempts = max(1, int(settings.get("max_attempts", 2)))
         self.max_extract_chars = int(settings.get("max_extract_chars", 6000))
         self.user_agent = str(
             settings.get(
@@ -54,10 +55,34 @@ class WikipediaService:
             timeout=timeout,
             trust_env=False,
             transport=self.transport,
+            follow_redirects=True,
             headers={"User-Agent": self.user_agent},
         ) as client:
-            response = await client.get(self.api_url, params=params)
-            response.raise_for_status()
+            response = None
+            last_error: httpx.HTTPError | None = None
+            for attempt in range(self.max_attempts):
+                try:
+                    response = await client.get(self.api_url, params=params)
+                    response.raise_for_status()
+                    break
+                except (httpx.TimeoutException, httpx.NetworkError) as error:
+                    last_error = error
+                    if attempt + 1 >= self.max_attempts:
+                        raise RuntimeError(
+                            f"Wikipedia svarade inte efter {self.max_attempts} försök"
+                        ) from error
+                except httpx.HTTPStatusError as error:
+                    if error.response.status_code not in {429, 500, 502, 503, 504}:
+                        raise RuntimeError(
+                            f"Wikipedia svarade med HTTP {error.response.status_code}"
+                        ) from error
+                    last_error = error
+                    if attempt + 1 >= self.max_attempts:
+                        raise RuntimeError(
+                            f"Wikipedia svarade inte efter {self.max_attempts} försök"
+                        ) from error
+            if response is None:
+                raise RuntimeError("Wikipedia kunde inte nås") from last_error
         pages = response.json().get("query", {}).get("pages", [])
         page = next((item for item in pages if item.get("extract")), None)
         if not page:

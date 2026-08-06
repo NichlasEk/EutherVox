@@ -69,6 +69,7 @@ planner_timeout_seconds = 8
 enabled = true
 api_url = "https://sv.wikipedia.org/w/api.php"
 timeout_seconds = 8
+max_attempts = 2
 max_extract_chars = 6000
 
 [conversation]

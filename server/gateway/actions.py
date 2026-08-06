@@ -38,6 +38,17 @@ class ActionPlanner:
         re.IGNORECASE,
     )
     _TRACK_NOUN_PREFIX = re.compile(r"^(?:låten\s+med\s+namnet|låten)\s+", re.IGNORECASE)
+    _WIKIPEDIA_TOKEN = re.compile(
+        r"\b(?:wikipedia|wiki\s*pedia|vilket\s+pedia|vicket\s+pedia)\b",
+        re.IGNORECASE,
+    )
+    _WIKIPEDIA_REQUEST_PREFIX = re.compile(
+        r"^\s*(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?"
+        r"(?:kolla(?:\s+upp)?|sök(?:a)?(?:\s+efter)?|slå\s+upp|leta(?:\s+efter|\s+upp)?|"
+        r"sammanfatta|berätta\s+om|vad\s+(?:står|säger)\s+(?:det\s+)?om|"
+        r"läs(?:a)?(?:\s+upp)?(?:\s+(?:inledningen|artikeln))?(?:\s+(?:av|om))?)\s+",
+        re.IGNORECASE,
+    )
     _MEDIA_CONTROL = re.compile(
         r"^\s*(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?"
         r"(?P<command>pausa|pause|sätt(?:a)?\s+på\s+paus|fortsätt(?:a)?(?:\s+spela)?|spela\s+vidare|återuppta|resume|stoppa|stäng(?:a)?\s+av|sluta\s+spela)"
@@ -73,6 +84,9 @@ class ActionPlanner:
 
     def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
         command = self._CONVERSATION_PREFIX.sub("", transcript)
+        wikipedia = self._plan_wikipedia(command, node_name)
+        if wikipedia:
+            return wikipedia
         control_text, control_room = self._extract_output(command.strip(" .!?"))
         control = self._MEDIA_CONTROL.match(control_text)
         if control:
@@ -143,6 +157,42 @@ class ActionPlanner:
             arguments=arguments,
             acknowledgement=(
                 f"Jag spelar {query} i {output_room}." if output_room else f"Jag skickar {query} till YouTube Music."
+            ),
+        )
+
+    def _plan_wikipedia(self, command: str, node_name: str) -> DeviceAction | None:
+        match = self._WIKIPEDIA_TOKEN.search(command)
+        if not match:
+            return None
+        mode = (
+            "introduction"
+            if re.search(r"\b(?:läs|läsa)\b.*\b(?:inledningen|artikeln)\b", command, re.IGNORECASE)
+            else "summary"
+        )
+        before = command[: match.start()].strip(" .,!?:;-")
+        after = command[match.end() :].strip(" .,!?:;-")
+        after = re.sub(r"^(?:artikeln\s+)?(?:om|efter)\s+", "", after, flags=re.IGNORECASE)
+        if after:
+            query = after
+        else:
+            before = re.sub(r"\s+(?:på|i|från)\s*$", "", before, flags=re.IGNORECASE)
+            query = self._WIKIPEDIA_REQUEST_PREFIX.sub("", before).strip(" .,!?:;-")
+        generic_query = re.sub(
+            r"^(?:kan\s+du|skulle\s+du\s+kunna)\s+",
+            "",
+            query,
+            flags=re.IGNORECASE,
+        ).casefold()
+        if generic_query in {"", "kolla", "kolla upp", "köra", "söka", "slå upp", "gå in"}:
+            query = ""
+        return DeviceAction(
+            action_id=str(uuid4()),
+            name="knowledge.wikipedia",
+            target_node=node_name,
+            arguments={"query": query, "mode": mode},
+            acknowledgement=(
+                f"Jag slår upp {query} på svenska Wikipedia."
+                if query else "Vad vill du att jag slår upp på Wikipedia?"
             ),
         )
 

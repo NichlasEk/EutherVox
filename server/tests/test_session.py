@@ -246,6 +246,29 @@ def test_action_planner_does_not_mistake_conversation_about_controls_for_command
     assert ActionPlanner().plan("Jag pausade musiken igår", "pixel") is None
 
 
+def test_action_planner_handles_wikipedia_requests_and_observed_stt_spelling():
+    examples = {
+        "Kan du kolla akvariefisker på vilket pedia?": ("akvariefisker", "summary"),
+        "Sammanfatta järnmalm från Wikipedia": ("järnmalm", "summary"),
+        "Sök Wikipedia efter Ada Lovelace": ("Ada Lovelace", "summary"),
+        "Läs inledningen av Wikipedia-artikeln om Skinnskatteberg": ("Skinnskatteberg", "introduction"),
+    }
+
+    for transcript, (query, mode) in examples.items():
+        action = ActionPlanner().plan(transcript, "pixel")
+        assert action is not None, transcript
+        assert action.name == "knowledge.wikipedia"
+        assert action.arguments == {"query": query, "mode": mode}
+
+
+def test_action_planner_requests_wikipedia_topic_instead_of_inventing_one():
+    action = ActionPlanner().plan("Kan du köra på Wikipedia?", "pixel")
+
+    assert action is not None
+    assert action.name == "knowledge.wikipedia"
+    assert action.arguments == {"query": "", "mode": "summary"}
+
+
 def test_action_planner_accepts_natural_and_observed_stt_music_requests():
     examples = {
         "Kan du spela cyberpunk i köket?": "cyberpunk",
@@ -774,6 +797,35 @@ def test_wikipedia_tool_summarizes_source_speaks_and_shows_link():
         completed = next(item for item in controls if item.get("type") == "action.completed")
         assert completed["status"] == "completed"
         assert not any(item.get("type") == "action.request" for item in controls)
+
+    asyncio.run(scenario())
+
+
+def test_wikipedia_request_without_topic_asks_for_clarification_without_lookup():
+    class WikipediaStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Kan du köra på Wikipedia?"
+
+    class ForbiddenWikipedia:
+        async def lookup(self, query: str):
+            raise AssertionError("Wikipedia must not be queried without a topic")
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = WikipediaStt()
+        session.wikipedia = ForbiddenWikipedia()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "wiki-clarify"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "wiki-clarify"}))
+        await session.response_task
+
+        controls = [item for item in sent if isinstance(item, dict)]
+        final = next(item for item in controls if item.get("type") == "assistant.text.final")
+        assert final["text"] == "Vad vill du att jag slår upp på Wikipedia?"
+        assert any(item.get("type") == "tts.start" for item in controls)
+        assert any(isinstance(item, bytes) for item in sent)
+        assert not any(item.get("type") == "action.status" for item in controls)
 
     asyncio.run(scenario())
 

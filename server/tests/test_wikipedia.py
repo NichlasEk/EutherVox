@@ -54,3 +54,57 @@ def test_wikipedia_lookup_reports_missing_article():
             assert "ingen Wikipedia-artikel" in str(error)
 
     asyncio.run(scenario())
+
+
+def test_wikipedia_lookup_retries_a_transient_timeout():
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise httpx.ConnectTimeout("temporary timeout", request=request)
+        return httpx.Response(200, json={
+            "query": {
+                "pages": [{
+                    "title": "Akvariefiskar",
+                    "extract": "Akvariefiskar är fiskar som hålls i akvarium.",
+                    "fullurl": "https://sv.wikipedia.org/wiki/Akvariefiskar",
+                }]
+            }
+        })
+
+    async def scenario():
+        service = WikipediaService(
+            {"enabled": True, "api_url": "https://sv.wikipedia.test/w/api.php"},
+            transport=httpx.MockTransport(handler),
+        )
+        article = await service.lookup("akvariefiskar")
+
+        assert article.title == "Akvariefiskar"
+        assert attempts == 2
+
+    asyncio.run(scenario())
+
+
+def test_wikipedia_lookup_reports_timeout_after_retry():
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        raise httpx.ConnectTimeout("still unavailable", request=request)
+
+    async def scenario():
+        service = WikipediaService(
+            {"enabled": True, "api_url": "https://sv.wikipedia.test/w/api.php"},
+            transport=httpx.MockTransport(handler),
+        )
+        try:
+            await service.lookup("akvariefiskar")
+            assert False, "RuntimeError expected"
+        except RuntimeError as error:
+            assert str(error) == "Wikipedia svarade inte efter 2 försök"
+            assert attempts == 2
+
+    asyncio.run(scenario())

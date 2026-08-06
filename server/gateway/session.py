@@ -374,6 +374,24 @@ class VoiceSession:
                         return
                 output_room = str(action.arguments.get("output_room", ""))
                 if action.name == "knowledge.wikipedia":
+                    query = str(action.arguments.get("query", "")).strip()
+                    if not query:
+                        clarification = "Vad vill du att jag slår upp på Wikipedia?"
+                        character = self.characters.get(self.character_name)
+                        await self.send_json({
+                            "type": "assistant.text.delta",
+                            "utterance_id": utterance_id,
+                            "text": clarification,
+                        })
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": clarification,
+                        })
+                        await self._stream_action_speech(utterance_id, clarification, character)
+                        self._remember_turn(transcript, clarification)
+                        self._reset()
+                        return
                     try:
                         if not self.wikipedia:
                             raise RuntimeError("Wikipedia-verktyget är inte konfigurerat")
@@ -383,7 +401,6 @@ class VoiceSession:
                             "status": "running",
                             "message": "Slår upp på svenska Wikipedia…",
                         })
-                        query = str(action.arguments["query"])
                         mode = str(action.arguments.get("mode", "summary"))
                         article = await self.wikipedia.lookup(query)
                         character = self.characters.get(self.character_name)
