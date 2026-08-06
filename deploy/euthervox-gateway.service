@@ -1,0 +1,15 @@
+[Unit]
+Description=EutherVox local voice gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nichlas/EutherVox
+ExecStart=/home/nichlas/EutherVox/.venv/bin/euthervox-gateway --config /home/nichlas/EutherVox/config.real-beta.example.toml
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

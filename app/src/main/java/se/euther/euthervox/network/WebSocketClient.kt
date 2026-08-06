@@ -33,7 +33,7 @@ interface VoiceTransport {
 }
 
 /** Dependency-free RFC 6455 client. One bounded writer queue keeps network stalls off AudioRecord. */
-class WebSocketClient(private val scope: CoroutineScope) : VoiceTransport {
+class WebSocketClient(private val scope: CoroutineScope, private val bearerToken: String? = null) : VoiceTransport {
     private data class Frame(val opcode: Int, val payload: ByteArray)
 
     private var outgoing = Channel<Frame>(capacity = 12)
@@ -110,11 +110,14 @@ class WebSocketClient(private val scope: CoroutineScope) : VoiceTransport {
             if (uri.rawQuery != null) append('?').append(uri.rawQuery)
         }
         val host = if (uri.port >= 0) "${uri.host}:${uri.port}" else uri.host
-        val request = "GET $path HTTP/1.1\r\nHost: $host\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n\r\n"
+        require(bearerToken?.contains('\r') != true && bearerToken?.contains('\n') != true) { "Ogiltig app-token" }
+        val authorization = bearerToken?.takeIf(String::isNotBlank)?.let { "Authorization: Bearer $it\r\n" }.orEmpty()
+        val request = "GET $path HTTP/1.1\r\nHost: $host\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: $key\r\nSec-WebSocket-Version: 13\r\n$authorization\r\n"
         output.write(request.toByteArray(Charsets.US_ASCII))
         output.flush()
         val response = readHttpHeaders(input)
-        require(response.lineSequence().first().contains(" 101 ")) { "WebSocket handshake avvisades" }
+        val status = response.lineSequence().first()
+        require(status.contains(" 101 ")) { "WebSocket handshake avvisades (${status.substringAfter(' ').substringBefore(' ')})" }
         val accept = response.lineSequence().firstOrNull { it.startsWith("Sec-WebSocket-Accept:", true) }
             ?.substringAfter(':')?.trim()
         val expected = Base64.encodeToString(

@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -78,6 +79,8 @@ fun EutherVoxApp() {
     val preferences = remember { context.getSharedPreferences("euthervox", 0) }
     var address by remember { mutableStateOf(preferences.getString("server_address", "").orEmpty()) }
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
+    var username by remember { mutableStateOf(preferences.getString("username", "").orEmpty()) }
+    var password by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> hasPermission = granted }
@@ -103,7 +106,7 @@ fun EutherVoxApp() {
             Text(state.serverAddress.ifBlank { "Ingen server vald" }, style = MaterialTheme.typography.bodySmall)
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { controller.connect(address, nodeName) }, enabled = address.isNotBlank()) { Text("Anslut") }
+                Button(onClick = { controller.connect(address, nodeName, username) }, enabled = address.isNotBlank()) { Text("Anslut") }
                 OutlinedButton(onClick = { showSettings = true }) { Text("Inställningar") }
             }
 
@@ -135,12 +138,21 @@ fun EutherVoxApp() {
 
     if (showSettings) AlertDialog(
         onDismissRequest = { if (address.isNotBlank()) showSettings = false },
-        title = { Text("Lokal anslutning") },
+        title = { Text("Anslutning") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(address, { address = it }, label = { Text("Serveradress") }, placeholder = { Text("ws://datorns-lan-ip:8788") }, singleLine = true)
+                OutlinedTextField(address, { address = it }, label = { Text("Serveradress") }, placeholder = { Text("wss://apothictech.se/euthervox/ws") }, singleLine = true)
                 OutlinedTextField(nodeName, { nodeName = it }, label = { Text("Nodnamn") }, singleLine = true)
-                Text("Ljud sparas inte på telefonen. ws:// är okrypterat och endast avsett för betrott lokalt nätverk.", style = MaterialTheme.typography.bodySmall)
+                OutlinedTextField(username, { username = it }, label = { Text("EutherOxide-användare") }, singleLine = true)
+                OutlinedTextField(
+                    password,
+                    { password = it },
+                    label = { Text("Lösenord (endast första gången)") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Text("Vid wss:// växlas lösenordet mot en app-token som krypteras med Android Keystore. Lösenordet sparas aldrig. ws:// ska endast användas på betrott LAN.", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { password = ""; controller.forgetCredentials() }) { Text("Glöm sparad inloggning") }
             }
         },
         confirmButton = {
@@ -148,9 +160,11 @@ fun EutherVoxApp() {
                 preferences.edit {
                     putString("server_address", address.trim())
                     putString("node_name", nodeName.trim())
+                    putString("username", username.trim())
                 }
                 showSettings = false
-                controller.connect(address, nodeName)
+                controller.connect(address, nodeName, username, password)
+                password = ""
             }, enabled = address.isNotBlank()) { Text("Spara och anslut") }
         },
     )

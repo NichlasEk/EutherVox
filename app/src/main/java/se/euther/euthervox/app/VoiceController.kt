@@ -16,6 +16,8 @@ import se.euther.euthervox.audio.PcmMicrophoneSource
 import se.euther.euthervox.audio.StreamingAudioSink
 import se.euther.euthervox.network.VoiceTransport
 import se.euther.euthervox.network.WebSocketClient
+import se.euther.euthervox.network.AuthTokenStore
+import se.euther.euthervox.network.EutherAuthClient
 import se.euther.euthervox.protocol.ServerEvent
 import se.euther.euthervox.protocol.audioEnd
 import se.euther.euthervox.protocol.audioStart
@@ -66,6 +68,8 @@ private data class Timeline(
 class VoiceController(context: Context, private val scope: CoroutineScope) : VoiceTransport.Listener {
     private val microphone = PcmMicrophoneSource(context.applicationContext, scope)
     private val speaker: StreamingAudioSink = PcmAudioTrackSink(scope)
+    private val authClient = EutherAuthClient()
+    private val tokenStore = AuthTokenStore(context.applicationContext)
     private val mutableState = MutableStateFlow(VoiceUiState())
     val state: StateFlow<VoiceUiState> = mutableState.asStateFlow()
     private var transport: VoiceTransport? = null
@@ -78,10 +82,10 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var utteranceId: String? = null
     private var timeline = Timeline()
 
-    fun connect(serverAddress: String, requestedNodeName: String) {
+    fun connect(serverAddress: String, requestedNodeName: String, username: String = "", password: String = "") {
         val normalized = serverAddress.trim().trimEnd('/')
         if (normalized.isBlank()) {
-            fail("Ange serveradress, till exempel ws://datorns-lan-ip:8788", recoverable = false)
+            fail("Ange serveradress, till exempel wss://server/euthervox/ws", recoverable = false)
             return
         }
         disconnect()
@@ -90,9 +94,28 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         shouldReconnect = true
         mutableState.value = mutableState.value.copy(serverAddress = normalized, status = VoiceStatus.Connecting, connectionLabel = "Ansluter…", errorMessage = null)
         connectionJob = scope.launch {
+            var loginPassword = password
+            var bearerToken = if (normalized.startsWith("wss://")) tokenStore.load() else null
+            if (normalized.startsWith("wss://") && loginPassword.isNotBlank()) {
+                mutableState.value = mutableState.value.copy(connectionLabel = "Loggar in…")
+                bearerToken = runCatching { authClient.login(normalized, username, loginPassword) }
+                    .onSuccess(tokenStore::save)
+                    .getOrElse {
+                        loginPassword = ""
+                        shouldReconnect = false
+                        fail(it.message ?: "Inloggningen misslyckades", recoverable = false)
+                        return@launch
+                    }
+                loginPassword = ""
+            }
+            if (normalized.startsWith("wss://") && bearerToken.isNullOrBlank()) {
+                shouldReconnect = false
+                fail("Logga in via Inställningar första gången", recoverable = false)
+                return@launch
+            }
             var retryMs = 500L
             while (shouldReconnect) {
-                val candidate = WebSocketClient(scope)
+                val candidate = WebSocketClient(scope, bearerToken)
                 transport = candidate
                 candidate.connect(address, this@VoiceController)
                 if (!shouldReconnect) break
@@ -114,6 +137,12 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         transport = null
         scope.launch { old?.close() }
         mutableState.value = mutableState.value.copy(connectionLabel = "Ej ansluten", status = VoiceStatus.Idle, canTalk = false, microphoneActive = false)
+    }
+
+    fun forgetCredentials() {
+        disconnect()
+        tokenStore.clear()
+        mutableState.value = mutableState.value.copy(errorMessage = "Sparad inloggning borttagen")
     }
 
     fun startTalking() {
@@ -209,6 +238,18 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     override suspend fun onClosed(cause: Throwable?) {
         ready = false
         stopResources()
+        if (cause?.message?.contains("(401)") == true) {
+            tokenStore.clear()
+            shouldReconnect = false
+            mutableState.value = mutableState.value.copy(
+                connectionLabel = "Inloggning krävs",
+                status = VoiceStatus.Error,
+                errorMessage = "Sessionen avvisades. Logga in igen i Inställningar.",
+                canTalk = false,
+                microphoneActive = false,
+            )
+            return
+        }
         if (shouldReconnect) {
             mutableState.value = mutableState.value.copy(
                 connectionLabel = "Frånkopplad: ${cause?.message ?: "servern stängde"}",

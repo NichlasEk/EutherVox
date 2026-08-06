@@ -52,6 +52,19 @@ uv run euthervox-gateway --config config.real-beta.cpu.example.toml
 
 Båda profilerna låser `language = "sv"` och `task = "transcribe"`, så den engelska snabbmodellen används inte och tal översätts inte till engelska. Lägg bara till `hotwords` efter mätning; en bred ordlista visade sig kunna förvränga vanliga svenska fraser. Gatewayen värmer STT och Qwen före den börjar lyssna; Ollama håller sedan Qwen varm i 30 minuter för att undvika dess uppmätta kallstart på cirka 4,45 sekunder.
 
+### Publik anslutning via EutherOxide
+
+Betan kan använda `wss://apothictech.se/euthervox/ws`. Appen loggar då in via EutherOxides befintliga `/api/app/login`, sparar aldrig lösenordet och krypterar den långlivade app-token med Android Keystore. Caddy släpper endast igenom WebSocket-upgraderingar vars Bearer-token tillhör en aktiv, icke bannlyst EutherOxide-användare.
+
+Gatewayen kan hållas igång på modellmaskinen med den versionshanterade user-servicen:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/euthervox-gateway.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now euthervox-gateway.service
+```
+
 Bygg Android-appen:
 
 ```bash
