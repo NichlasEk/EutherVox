@@ -14,11 +14,14 @@ import se.euther.euthervox.audio.AudioStreamFormat
 import se.euther.euthervox.audio.PcmAudioTrackSink
 import se.euther.euthervox.audio.PcmMicrophoneSource
 import se.euther.euthervox.audio.StreamingAudioSink
+import se.euther.euthervox.actions.AndroidDeviceActionExecutor
+import se.euther.euthervox.actions.DeviceActionExecutor
 import se.euther.euthervox.network.VoiceTransport
 import se.euther.euthervox.network.WebSocketClient
 import se.euther.euthervox.network.AuthTokenStore
 import se.euther.euthervox.network.EutherAuthClient
 import se.euther.euthervox.protocol.ServerEvent
+import se.euther.euthervox.protocol.actionResult
 import se.euther.euthervox.protocol.audioEnd
 import se.euther.euthervox.protocol.audioStart
 import se.euther.euthervox.protocol.parseServerEvent
@@ -70,6 +73,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private val speaker: StreamingAudioSink = PcmAudioTrackSink(scope)
     private val authClient = EutherAuthClient()
     private val tokenStore = AuthTokenStore(context.applicationContext)
+    private val actionExecutor: DeviceActionExecutor = AndroidDeviceActionExecutor(context.applicationContext)
     private val mutableState = MutableStateFlow(VoiceUiState())
     val state: StateFlow<VoiceUiState> = mutableState.asStateFlow()
     private var transport: VoiceTransport? = null
@@ -301,8 +305,40 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 speaker.finish { finishUtterance() }
             }
             is ServerEvent.Cancelled -> finishUtterance()
+            is ServerEvent.ActionRequest -> handleAction(event)
             is ServerEvent.Error -> fail("${event.code}: ${event.message}", event.recoverable)
             is ServerEvent.Unknown -> Unit
+        }
+    }
+
+    private fun handleAction(event: ServerEvent.ActionRequest) {
+        val activeUtterance = utteranceId
+        if (event.requiresConfirmation) {
+            scope.launch {
+                transport?.sendText(actionResult(event.actionId, event.utteranceId, "rejected", "Åtgärden kräver bekräftelse"))
+            }
+            fail("Åtgärden kräver bekräftelse och kördes inte")
+            return
+        }
+        if (event.targetNode != nodeName || event.utteranceId != activeUtterance) {
+            scope.launch {
+                transport?.sendText(actionResult(event.actionId, event.utteranceId, "rejected", "Fel mål eller yttrande"))
+            }
+            fail("Servern skickade en åtgärd till fel nod")
+            return
+        }
+
+        finishUtterance()
+        val result = actionExecutor.execute(event)
+        scope.launch {
+            transport?.sendText(actionResult(event.actionId, event.utteranceId, result.status, result.message))
+        }
+        if (result.status != "completed") {
+            mutableState.value = mutableState.value.copy(
+                status = VoiceStatus.Error,
+                errorMessage = result.message,
+                canTalk = ready,
+            )
         }
     }
 

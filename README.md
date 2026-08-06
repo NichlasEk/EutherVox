@@ -1,4 +1,4 @@
-# EutherVox 0.1
+# EutherVox 0.3 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -105,6 +105,19 @@ server/gateway/
 
 Android spelar inte in till fil och loggar inte rått ljud. Mikrofonen startas först efter `audio.start` och frigörs vid finger upp, avbruten gest, paus eller fel. En begränsad kö mellan AudioRecord och WebSocket gör att nätverksstopp inte blockerar ljudinläsningen; tappade block visas i UI.
 
+## Spela musik på telefonen
+
+Version 0.3 introducerar ett generellt, vitlistat åtgärdsprotokoll. Säg exempelvis:
+
+```text
+Spela Ghost på YouTube Music.
+Spela upp något mörkt och lugnt på YouTube Music.
+```
+
+Gatewayen tolkar bara tydliga yttranden som börjar med `spela` eller `spela upp`. Den skickar `media.play` med en söksträng och telefonens eget nodnamn. Android kontrollerar åtgärden och startar sedan YouTube Music via plattformens `MEDIA_PLAY_FROM_SEARCH`. YouTube Music måste vara installerat och inloggat. Ingen Google-token eller YouTube-hemlighet lagras i EutherVox.
+
+Detta är medvetet nodneutralt: en framtida rumsnod kan implementera samma `action.request` och `action.result` utan att känna till STT- eller figurmodellerna. Rumsdirigering och permanenta spellistor ingår inte i 0.3. För riktiga kontoägda spellistor ska en senare adapter använda officiella YouTube Data API med OAuth och uttrycklig användarbekräftelse; den nuvarande musikåtgärden skriver ingenting till kontot.
+
 ## Tester
 
 ```bash
@@ -127,9 +140,11 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - Standardprofilen `config.example.toml` är fortfarande den deterministiska mock-kedjan; välj uttryckligen en real-beta-konfiguration för riktigt tal.
 - Den riktiga STT-profilen skickar i denna slice sin första `stt.partial` precis före `stt.final`; inkrementell avkodning medan knappen hålls inne återstår.
 - Endast ett aktivt yttrande per WebSocket stöds avsiktligt.
+- Musikstarten använder Androids dokumenterade sök-/uppspelnings-intent. Exakt träff och om uppspelningen startar direkt bestäms av den installerade YouTube Music-versionen och måste provas på fysisk telefon.
+- Sparade YouTube-spellistor, Google OAuth, kökontroll, paus/nästa och dirigering till andra noder återstår.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.
-- `ws://` är okrypterat. `wss://` stöds av transporten, men certifikat och autentisering är inte konfigurerade.
-- Ingen extern autentisering, wake word, bakgrundsavlyssning eller långtidsminne finns.
+- `ws://` är okrypterat och ska bara användas på betrott LAN. Den publika betarutten använder EutherOxide-inloggning och `wss://`.
+- Ingen wake word, bakgrundsavlyssning eller långtidsminne finns.
 - Android UI-test på fysisk enhet och mätning över verkligt Wi-Fi ingår inte i den automatiska testsuiten.
 
 ## Uppmätta lokala modellvärden

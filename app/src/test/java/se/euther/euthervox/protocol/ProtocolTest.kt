@@ -26,4 +26,23 @@ class ProtocolTest {
         val event = parseServerEvent("""{"type":"error","code":"STT_FAILED","message":"no speech","recoverable":true}""")
         assertEquals(ServerEvent.Error("STT_FAILED", "no speech", true), event)
     }
+
+    @Test fun parsesAllowlistedDeviceAction() {
+        val event = parseServerEvent(
+            """{"type":"action.request","action_id":"a1","utterance_id":"u1","name":"media.play","target":{"kind":"node","node_name":"pixel"},"arguments":{"provider":"youtube_music","query":"något mörkt och lugnt"},"requires_confirmation":false}"""
+        )
+
+        assertEquals(
+            ServerEvent.ActionRequest("a1", "u1", "media.play", "pixel", "youtube_music", "något mörkt och lugnt", false),
+            event,
+        )
+    }
+
+    @Test fun serializesActionResult() {
+        val json = JsonParser.parseString(actionResult("a1", "u1", "completed", "klart")).asJsonObject
+
+        assertEquals("action.result", json["type"].asString)
+        assertEquals("a1", json["action_id"].asString)
+        assertEquals("completed", json["status"].asString)
+    }
 }

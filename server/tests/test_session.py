@@ -11,6 +11,7 @@ from gateway.adapters import (
     TomlCharacterProvider,
     _cached_whisper_snapshot,
 )
+from gateway.actions import ActionPlanner
 from gateway.config import load_config
 from gateway.session import Phase, ProtocolError, VoiceSession
 
@@ -99,4 +100,55 @@ def test_second_utterance_is_rejected_while_recording():
             assert False, "ProtocolError expected"
         except ProtocolError as error:
             assert error.code == "SESSION_BUSY"
+    asyncio.run(scenario())
+
+
+def test_action_planner_extracts_youtube_music_query_and_target():
+    action = ActionPlanner().plan("Spela upp något mörkt och lugnt på YouTube Music.", "pixel")
+
+    assert action is not None
+    assert action.name == "media.play"
+    assert action.target_node == "pixel"
+    assert action.arguments == {"provider": "youtube_music", "query": "något mörkt och lugnt"}
+    assert action.requires_confirmation is False
+
+
+def test_action_planner_does_not_treat_recording_as_music_playback():
+    assert ActionPlanner().plan("Spela in det här", "pixel") is None
+
+
+def test_music_command_returns_action_without_tts():
+    class MusicStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Spela Ghost på YouTube Music"
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = MusicStt()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "music-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "music-1"}))
+        await session.response_task
+
+        controls = [item for item in sent if isinstance(item, dict)]
+        types = [item["type"] for item in controls]
+        assert types == [
+            "session.ready", "stt.partial", "stt.final", "assistant.text.delta",
+            "assistant.text.final", "action.request",
+        ]
+        request = controls[-1]
+        assert request["target"]["node_name"] == "unknown"
+        assert request["arguments"]["query"] == "Ghost"
+        assert not any(isinstance(item, bytes) for item in sent)
+        assert session.phase is Phase.READY
+
+        await session.handle_text(json.dumps({
+            "type": "action.result",
+            "action_id": request["action_id"],
+            "utterance_id": "music-1",
+            "status": "completed",
+        }))
+        assert not session.pending_actions
+
     asyncio.run(scenario())

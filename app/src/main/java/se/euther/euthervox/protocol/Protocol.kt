@@ -25,6 +25,14 @@ fun audioStart(utteranceId: String) = message("audio.start", utteranceId)
 fun audioEnd(utteranceId: String) = message("audio.end", utteranceId)
 fun responseCancel(utteranceId: String) = message("response.cancel", utteranceId)
 
+fun actionResult(actionId: String, utteranceId: String, status: String, resultMessage: String) = JsonObject().apply {
+    addProperty("type", "action.result")
+    addProperty("action_id", actionId)
+    addProperty("utterance_id", utteranceId)
+    addProperty("status", status)
+    addProperty("message", resultMessage)
+}.toString()
+
 private fun message(type: String, utteranceId: String) = JsonObject().apply {
     addProperty("type", type)
     addProperty("utterance_id", utteranceId)
@@ -39,6 +47,15 @@ sealed interface ServerEvent {
     data class TtsStart(val utteranceId: String, val sampleRate: Int, val channels: Int) : ServerEvent
     data class TtsEnd(val utteranceId: String) : ServerEvent
     data class Cancelled(val utteranceId: String) : ServerEvent
+    data class ActionRequest(
+        val actionId: String,
+        val utteranceId: String,
+        val name: String,
+        val targetNode: String,
+        val provider: String,
+        val query: String,
+        val requiresConfirmation: Boolean,
+    ) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -58,6 +75,15 @@ fun parseServerEvent(raw: String): ServerEvent {
         }
         "tts.end" -> ServerEvent.TtsEnd(utterance)
         "response.cancelled" -> ServerEvent.Cancelled(utterance)
+        "action.request" -> ServerEvent.ActionRequest(
+            actionId = json["action_id"].asString,
+            utteranceId = utterance,
+            name = json["name"].asString,
+            targetNode = json["target"].asJsonObject["node_name"].asString,
+            provider = json["arguments"].asJsonObject["provider"].asString,
+            query = json["arguments"].asJsonObject["query"].asString,
+            requiresConfirmation = json["requires_confirmation"]?.asBoolean ?: true,
+        )
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)
     }

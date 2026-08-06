@@ -10,6 +10,7 @@ from typing import Awaitable, Callable
 from uuid import uuid4
 
 from .adapters import CharacterProvider, SpeechToTextEngine, TextGenerationEngine, TextToSpeechEngine
+from .actions import ActionPlanner
 from .config import GatewayConfig
 
 
@@ -46,11 +47,14 @@ class VoiceSession:
     phase: Phase = Phase.CONNECTED
     utterance_id: str | None = None
     character_name: str = ""
+    node_name: str = "unknown"
     audio: bytearray = field(default_factory=bytearray)
     response_task: asyncio.Task | None = None
     received_frames: int = 0
     started_ns: int = 0
     audio_end_ns: int = 0
+    action_planner: ActionPlanner = field(default_factory=ActionPlanner)
+    pending_actions: set[str] = field(default_factory=set)
 
     async def handle_text(self, raw: str) -> None:
         try:
@@ -64,6 +68,8 @@ class VoiceSession:
                 await self._end_audio(message)
             elif message_type == "response.cancel":
                 await self._cancel(message)
+            elif message_type == "action.result":
+                await self._action_result(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -95,6 +101,7 @@ class VoiceSession:
         ):
             raise ProtocolError("UNSUPPORTED_AUDIO", "Expected mono pcm_s16le, 16000 Hz, 20 ms frames", False)
         self.character_name = message.get("character", self.config.default_character)
+        self.node_name = str(message.get("node_name", "unknown"))
         self.characters.get(self.character_name)
         self.phase = Phase.READY
         await self.send_json({"type": "session.ready", "session_id": self.session_id, "protocol_version": 1})
@@ -132,6 +139,21 @@ class VoiceSession:
         await self.send_json({"type": "response.cancelled", "utterance_id": self.utterance_id})
         self._reset()
 
+    async def _action_result(self, message: dict) -> None:
+        action_id = str(message["action_id"])
+        if action_id not in self.pending_actions:
+            raise ProtocolError("ACTION_MISMATCH", "action.result does not match a requested action")
+        self.pending_actions.remove(action_id)
+        status = str(message.get("status", "unknown"))
+        detail = str(message.get("message", ""))
+        LOG.info(
+            "action_result session=%s action=%s status=%s message=%r",
+            self.session_id,
+            action_id,
+            status,
+            detail,
+        )
+
     async def _respond(self, utterance_id: str, pcm: bytes) -> None:
         try:
             initial_partial = getattr(self.stt, "initial_partial", None)
@@ -154,6 +176,30 @@ class VoiceSession:
             if not initial_partial:
                 await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": transcript})
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
+            action = self.action_planner.plan(transcript, self.node_name)
+            if action:
+                await self.send_json({
+                    "type": "assistant.text.delta",
+                    "utterance_id": utterance_id,
+                    "text": action.acknowledgement,
+                })
+                await self.send_json({
+                    "type": "assistant.text.final",
+                    "utterance_id": utterance_id,
+                    "text": action.acknowledgement,
+                })
+                self.pending_actions.add(action.action_id)
+                await self.send_json(action.to_message(utterance_id))
+                LOG.info(
+                    "action_request session=%s utterance=%s action=%s name=%s target=%s",
+                    self.session_id,
+                    utterance_id,
+                    action.action_id,
+                    action.name,
+                    action.target_node,
+                )
+                self._reset()
+                return
             character = self.characters.get(self.character_name)
             pieces: list[str] = []
             first_piece = True
