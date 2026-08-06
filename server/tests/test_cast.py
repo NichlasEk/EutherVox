@@ -69,6 +69,25 @@ def test_cast_timeout_discards_cached_connection_and_returns_error():
     asyncio.run(scenario())
 
 
+def test_internal_cast_timeout_is_not_reported_as_full_operation_timeout():
+    async def scenario():
+        service = make_service(operation_timeout_seconds=1)
+
+        def failed_play(_room: str, _video_id: str):
+            raise TimeoutError("socket thread stopped")
+
+        service._play_youtube_controller = failed_play
+        try:
+            await service.play_youtube_tracks("köket", ("video-1",))
+            assert False, "RuntimeError expected"
+        except RuntimeError as error:
+            assert "avbröts internt" in str(error)
+            assert "socket thread stopped" in str(error)
+            assert "inom 1" not in str(error)
+
+    asyncio.run(scenario())
+
+
 def test_direct_audio_backend_resolves_and_casts_only_first_track():
     class FakeResolver:
         async def resolve(self, video_id: str) -> ResolvedAudio:
@@ -88,6 +107,36 @@ def test_direct_audio_backend_resolves_and_casts_only_first_track():
         assert played[0][1].content_type == "audio/mp4"
 
     asyncio.run(scenario())
+
+
+def test_paused_cast_session_is_explicitly_resumed():
+    class FakeStatus:
+        media_session_id = 42
+        player_state = "PAUSED"
+        player_is_playing = False
+
+    class FakeController:
+        status = FakeStatus()
+        play_calls = 0
+
+        def block_until_active(self, timeout: float):
+            assert timeout == 0.02
+
+        def play(self, timeout: float):
+            assert timeout == 0.02
+            self.play_calls += 1
+            self.status.player_state = "PLAYING"
+            self.status.player_is_playing = True
+
+        def update_status(self):
+            pass
+
+    service = make_service(playback_confirmation_seconds=0.02)
+    controller = FakeController()
+
+    service._confirm_playback(controller, "köket")
+
+    assert controller.play_calls == 1
 
 
 def test_youtube_audio_resolver_accepts_only_googlevideo_https_streams():

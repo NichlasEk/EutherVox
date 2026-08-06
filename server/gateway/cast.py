@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import time
 from uuid import UUID
 
 from .youtube_audio import ResolvedAudio, YouTubeAudioResolver
@@ -73,12 +74,15 @@ class CastService:
                     operation = asyncio.to_thread(self._play_youtube_controller, room, video_ids[0])
                 else:
                     raise RuntimeError(f"Okänd Cast-backend: {self.backend}")
+                operation_task = asyncio.create_task(operation)
                 await asyncio.wait_for(
-                    operation,
+                    operation_task,
                     timeout=self.operation_timeout_seconds,
                 )
             except TimeoutError as error:
                 self._discard_connection(room)
+                if "operation_task" in locals() and operation_task.done() and not operation_task.cancelled():
+                    raise RuntimeError(f"Cast-operationen avbröts internt: {error}") from error
                 raise RuntimeError(
                     f"Cast svarade inte inom {self.operation_timeout_seconds:g} sekunder"
                 ) from error
@@ -142,12 +146,15 @@ class CastService:
         created = existing is None
         if existing:
             cast, _controller = existing
+            LOG.info("cast_audio_connection room=%s mode=reuse", target.room)
         else:
+            LOG.info("cast_audio_connection room=%s mode=connect host=%s port=%d", target.room, target.host, target.port)
             cast = pychromecast.get_chromecast_from_host(
                 (target.host, target.port, target.uuid, target.model_name, target.friendly_name),
                 timeout=self.timeout_seconds,
             )
             cast.wait(timeout=self.timeout_seconds)
+            LOG.info("cast_audio_connected room=%s", target.room)
         controller = cast.media_controller
         try:
             controller.play_media(
@@ -157,12 +164,14 @@ class CastService:
                 thumb=audio.thumbnail or None,
                 stream_type="BUFFERED",
             )
-            controller.block_until_active(timeout=self.playback_confirmation_seconds)
-            if not controller.status.media_session_id or not controller.status.player_is_playing:
-                raise RuntimeError("Nest startade ingen bekräftad ljuduppspelning")
+            LOG.info("cast_audio_media_sent room=%s video_id=%s", target.room, audio.video_id)
+            self._confirm_playback(controller, target.room)
         except Exception:
             if created:
-                cast.disconnect(timeout=0)
+                try:
+                    cast.disconnect(timeout=0)
+                except Exception:
+                    LOG.debug("cast_disconnect_failed room=%s", room, exc_info=True)
             raise
         self._connections[target.room] = (cast, controller)
         LOG.info(
@@ -172,6 +181,29 @@ class CastService:
             audio.content_type,
             audio.title,
         )
+
+    def _confirm_playback(self, controller: object, room: str) -> None:
+        controller.block_until_active(timeout=self.playback_confirmation_seconds)
+        status = controller.status
+        LOG.info(
+            "cast_audio_status room=%s player_state=%s media_session=%s",
+            room,
+            status.player_state,
+            status.media_session_id or "none",
+        )
+        if not status.media_session_id:
+            raise RuntimeError("Nest skapade ingen mediasession")
+        if not status.player_is_playing:
+            LOG.info("cast_audio_resume room=%s player_state=%s", room, status.player_state)
+            deadline = time.monotonic() + self.playback_confirmation_seconds
+            controller.play(timeout=self.playback_confirmation_seconds)
+            while not controller.status.player_is_playing and time.monotonic() < deadline:
+                controller.update_status()
+                time.sleep(0.2)
+        if not controller.status.player_is_playing:
+            raise RuntimeError(
+                f"Nest skapade en mediasession men startade inte ljudet (status {controller.status.player_state})"
+            )
 
     def _discard_connection(self, room: str) -> None:
         connection = self._connections.pop(room.casefold(), None)
