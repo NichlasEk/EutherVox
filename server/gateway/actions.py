@@ -31,13 +31,17 @@ class ActionPlanner:
 
     _PLAY = re.compile(r"^\s*spela(?:\s+upp)?\s+(.+?)\s*[.!?]*\s*$", re.IGNORECASE)
     _YOUTUBE_SUFFIX = re.compile(r"\s+(?:på|i)\s+youtube\s+music\s*$", re.IGNORECASE)
-    _PLAYLIST = re.compile(
-        r"^\s*(?:skapa|gör)(?:\s+en)?\s+spellista(?:\s+(?:med|för|som)\s+)(.+?)\s*[.!?]*\s*$",
+    _PLAYLIST_AFTER_NOUN = re.compile(
+        r"^\s*(?:skapa|gör)(?:\s+en)?\s+spell?ista(?:\s+(?:med|för|som)\s+)(.+?)\s*[.!?]*\s*$",
+        re.IGNORECASE,
+    )
+    _PLAYLIST_BEFORE_NOUN = re.compile(
+        r"^\s*(?:skapa|gör)(?:\s+en)?\s+(.+?)(?:\s+|-)spell?ista\s*[.!?]*\s*$",
         re.IGNORECASE,
     )
 
     def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
-        playlist = self._PLAYLIST.match(transcript)
+        playlist = self._PLAYLIST_AFTER_NOUN.match(transcript) or self._PLAYLIST_BEFORE_NOUN.match(transcript)
         if playlist:
             query = playlist.group(1).strip(" .!?")
             if query:

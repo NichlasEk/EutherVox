@@ -128,6 +128,22 @@ def test_action_planner_proposes_private_playlist_with_confirmation():
     assert action.requires_confirmation is True
 
 
+def test_action_planner_accepts_natural_word_order_and_stt_single_l_spelling():
+    action = ActionPlanner().plan("Gör en cool cyberpunk spelista.", "pixel")
+
+    assert action is not None
+    assert action.name == "playlist.create"
+    assert action.arguments == {"provider": "euthervox", "query": "cool cyberpunk"}
+    assert action.requires_confirmation is True
+
+
+def test_action_planner_accepts_hyphenated_playlist_description():
+    action = ActionPlanner().plan("Skapa en mörk svensk synth-spellista", "pixel")
+
+    assert action is not None
+    assert action.arguments["query"] == "mörk svensk synth"
+
+
 def test_music_command_returns_action_without_tts():
     class MusicStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
