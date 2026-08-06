@@ -362,24 +362,20 @@ class VoiceSession:
                         return
                     except Exception as error:
                         LOG.exception("media_cast_failed session=%s room=%s", self.session_id, output_room)
+                        failure_message = f"Jag kunde inte spela på {self.cast.display_name(output_room) if self.cast else output_room}: {error}"
                         await self.send_json({
-                            "type": "action.status",
-                            "action_id": action.action_id,
-                            "status": "running",
-                            "message": f"Cast misslyckades ({error}). Försöker på telefonen…",
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": failure_message,
                         })
-                        fallback_arguments = dict(action.arguments)
-                        fallback_arguments.pop("output_room", None)
-                        action = DeviceAction(
-                            action_id=str(uuid4()),
-                            name="media.play",
-                            target_node=action.target_node,
-                            arguments=fallback_arguments,
-                            acknowledgement=(
-                                f"Cast till {output_room} misslyckades ({error}). "
-                                "Jag öppnar musiken på telefonen i stället."
-                            ),
-                        )
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "failed",
+                            "message": failure_message,
+                        })
+                        self._reset()
+                        return
                 await self.send_json({
                     "type": "assistant.text.delta",
                     "utterance_id": utterance_id,
