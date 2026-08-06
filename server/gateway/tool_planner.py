@@ -18,7 +18,7 @@ class OllamaToolPlanner:
     """Turns natural language into one validated action through Ollama tool calls."""
 
     _ACTION_HINT = re.compile(
-        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång)\b",
+        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om)\b",
         re.IGNORECASE,
     )
 
@@ -49,11 +49,15 @@ class OllamaToolPlanner:
                     "role": "system",
                     "content": (
                         "Du väljer EutherVox-verktyg. Anropa exakt ett verktyg endast när användaren faktiskt ber "
-                        "att spela musik eller skapa en spellista. Frågor och vanlig konversation får inget verktygsanrop. "
+                        "om musik, en spellista eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
                         "Indirekta önskemål som 'jag är sugen på mörk cyberpunk i köket' betyder att musiken ska spelas nu. "
                         "Önskemål om en bestämd låt, till exempel 'jag vill höra November Rain', ska anropa music_play "
                         "och behålla låttitel och eventuell artist exakt i query. "
                         "Ord som spellista, lista eller mix betyder playlist_create när användaren ber att få en sådan sparad. "
+                        "Använd wikipedia_lookup för fakta om offentliga ämnen, personer, platser och historiska händelser, "
+                        "särskilt vid Wikipedia, slå upp, vem är, vad är, sammanfatta eller berätta om. Använd aldrig Wikipedia "
+                        "för användarens privata saker, personliga råd, musikstyrning eller aktuella nyheter. Välj mode introduction "
+                        "bara när användaren uttryckligen ber att få artikelns inledning uppläst; välj annars summary. "
                         f"Konfigurerade rum: {rooms}. Hitta inte på rum. Behåll genre och stämning i query eller description."
                     ),
                 },

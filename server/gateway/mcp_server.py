@@ -8,13 +8,14 @@ from mcp.server import MCPServer
 from .cast import CastService
 from .config import load_config
 from .tools import EutherVoxToolRegistry
+from .wikipedia import WikipediaService
 
 
-def build_mcp_server(registry: EutherVoxToolRegistry) -> MCPServer:
+def build_mcp_server(registry: EutherVoxToolRegistry, wikipedia: WikipediaService | None = None) -> MCPServer:
     server = MCPServer(
         "EutherVox",
-        description="Säkra verktyg för EutherVox musik, privata spellistor och konfigurerade rumsenheter.",
-        instructions="Verktygen skapar validerade åtgärdsförslag. Spellistor kräver alltid användarbekräftelse.",
+        description="Säkra verktyg för EutherVox musik, Wikipedia, privata spellistor och konfigurerade rumsenheter.",
+        instructions="Åtgärdsverktygen skapar validerade förslag. Wikipedia är skrivskyddat. Spellistor kräver alltid användarbekräftelse.",
     )
 
     @server.tool()
@@ -38,6 +39,14 @@ def build_mcp_server(registry: EutherVoxToolRegistry) -> MCPServer:
             )
         )
 
+    @server.tool()
+    async def wikipedia_lookup(query: str) -> dict[str, str]:
+        """Hämta titel, artikelinledning och käll-URL från svenska Wikipedia utan att redigera något."""
+        if wikipedia is None:
+            raise RuntimeError("Wikipedia-verktyget är inte konfigurerat")
+        article = await wikipedia.lookup(query)
+        return {"title": article.title, "extract": article.extract, "url": article.url}
+
     return server
 
 
@@ -47,7 +56,8 @@ def cli() -> None:
     args = parser.parse_args()
     config = load_config(args.config)
     registry = EutherVoxToolRegistry(CastService(config.cast_settings))
-    build_mcp_server(registry).run(transport="stdio")
+    wikipedia = WikipediaService(config.wikipedia_settings)
+    build_mcp_server(registry, wikipedia).run(transport="stdio")
 
 
 if __name__ == "__main__":

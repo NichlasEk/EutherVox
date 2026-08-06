@@ -59,6 +59,23 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(
+            name="wikipedia_lookup",
+            description="Slå upp en offentlig sak, person, plats eller händelse på svenska Wikipedia.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Ämnet eller artikelns namn."},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["summary", "introduction"],
+                        "description": "summary för en kort sammanfattning, introduction för att läsa artikelinledningen.",
+                    },
+                },
+                "required": ["query"],
+                "additionalProperties": False,
+            },
+        ),
     )
 
     def __init__(self, cast: CastService | None = None):
@@ -87,8 +104,19 @@ class EutherVoxToolRegistry:
         if unexpected:
             raise ToolValidationError(f"Otillåtna argument: {', '.join(sorted(unexpected))}")
 
-        query_key = "query" if tool_name == "music_play" else "description"
+        query_key = "description" if tool_name == "playlist_create" else "query"
         query = self._clean_text(arguments.get(query_key), query_key)
+        if tool_name == "wikipedia_lookup":
+            mode = str(arguments.get("mode", "summary"))
+            if mode not in {"summary", "introduction"}:
+                raise ToolValidationError("mode måste vara summary eller introduction")
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="knowledge.wikipedia",
+                target_node=node_name,
+                arguments={"query": query, "mode": mode},
+                acknowledgement=f"Jag slår upp {query} på svenska Wikipedia.",
+            )
         room = self._normalize_room(arguments.get("output_room", ""))
         if room and (not self.cast or not self.cast.configured(room)):
             raise ToolValidationError(f"Rummet {room} är inte en konfigurerad Cast-mottagare")

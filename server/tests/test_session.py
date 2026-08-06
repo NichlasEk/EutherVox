@@ -13,11 +13,12 @@ from gateway.adapters import (
     render_music_acknowledgement,
     render_music_control_acknowledgement,
 )
-from gateway.actions import ActionPlanner
+from gateway.actions import ActionPlanner, DeviceAction
 from gateway.config import load_config
 from gateway.playlists import PlaylistTrack, TomlPlaylistStore
 from gateway.session import Phase, ProtocolError, VoiceSession
 from gateway.youtube import CreatedPlaylist, PlaylistPreview
+from gateway.wikipedia import WikipediaArticle
 
 
 ROOT = Path(__file__).parents[2]
@@ -646,6 +647,62 @@ def test_music_control_runs_on_server_and_speaks_character_acknowledgement():
         assert completed["status"] == "completed"
         assert not any(item.get("type") == "action.request" for item in controls)
         assert session.phase is Phase.READY
+
+    asyncio.run(scenario())
+
+
+def test_wikipedia_tool_summarizes_source_speaks_and_shows_link():
+    class WikipediaStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Berätta om Skinnskatteberg"
+
+    class FakeToolPlanner:
+        async def plan(self, transcript: str, node_name: str):
+            return DeviceAction(
+                action_id="wiki-action",
+                name="knowledge.wikipedia",
+                target_node=node_name,
+                arguments={"query": "Skinnskatteberg", "mode": "summary"},
+                acknowledgement="Jag slår upp Skinnskatteberg.",
+            )
+
+    class FakeWikipedia:
+        async def lookup(self, query: str) -> WikipediaArticle:
+            assert query == "Skinnskatteberg"
+            return WikipediaArticle(
+                "Skinnskatteberg",
+                "Skinnskatteberg är en tätort i Västmanland med en historia präglad av bergsbruk.",
+                "https://sv.wikipedia.org/wiki/Skinnskatteberg",
+            )
+
+    class GroundedLlm:
+        async def generate(self, transcript: str, character):
+            assert "bergsbruk" in transcript
+            yield "Skinnskatteberg ligger i Västmanland. "
+            yield "Bergsbruket har satt spår i ortens historia."
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = WikipediaStt()
+        session.tool_planner = FakeToolPlanner()
+        session.wikipedia = FakeWikipedia()
+        session.llm = GroundedLlm()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "wiki-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "wiki-1"}))
+        await session.response_task
+
+        controls = [item for item in sent if isinstance(item, dict)]
+        final = next(item for item in controls if item.get("type") == "assistant.text.final")
+        assert "Bergsbruket" in final["text"]
+        assert "Källa: Skinnskatteberg" in final["text"]
+        assert "https://sv.wikipedia.org/wiki/Skinnskatteberg" in final["text"]
+        assert any(item.get("type") == "tts.start" for item in controls)
+        assert any(isinstance(item, bytes) for item in sent)
+        completed = next(item for item in controls if item.get("type") == "action.completed")
+        assert completed["status"] == "completed"
+        assert not any(item.get("type") == "action.request" for item in controls)
 
     asyncio.run(scenario())
 

@@ -18,7 +18,7 @@ STT text
                                               |
                          authenticated VoiceSession execution
                                               |
-                             YouTube / Cast / Android node
+                              Wikipedia / YouTube / Cast / Android node
 ```
 
 Den deterministiska vägen ligger först eftersom vanliga kommandon då inte behöver ett extra modellanrop. Verktygsplaneraren anropas endast för yttranden med musik- eller rumsindikatorer. Om Ollama inte väljer exakt ett verktyg fortsätter yttrandet till den vanliga figurresponsen.
@@ -49,6 +49,18 @@ Argument:
 
 Ger en intern `playlist.create` med `requires_confirmation=true`. Den autentiserade användaren måste bekräfta i appen innan TOML-listan eller YouTube-speglingen skapas.
 
+### `wikipedia_lookup`
+
+Argument i den interna modellvägen:
+
+```json
+{"query":"Skinnskatteberg","mode":"summary"}
+```
+
+`mode` är `summary` eller `introduction`. Gatewayen hämtar endast artikelinledningen från den uttryckligen konfigurerade svenska MediaWiki-API-adressen. Vid `summary` får den lokala modellen källtexten och måste sammanfatta enbart den; vid `introduction` läses inledningen upp utan omskrivning. Appens sluttext innehåller artikelns titel och URL, men URL:n skickas inte till TTS.
+
+Den fristående MCP-serverns `wikipedia_lookup` returnerar `title`, `extract` och `url` direkt. Den är skrivskyddad och kan varken redigera Wikipedia eller välja en annan värd genom verktygsargument.
+
 ## Säkerhetsgräns
 
 - Endast registrerade verktygsnamn accepteras.
@@ -56,7 +68,8 @@ Ger en intern `playlist.create` med `requires_confirmation=true`. Den autentiser
 - Text normaliseras, måste vara 1–160 tecken och kan inte bära egen användaridentitet.
 - Rum måste finnas i gatewayens uttryckliga Cast-konfiguration.
 - Modellen kan inte ange IP, port, UUID, URL, filväg, shellkommando eller EutherOxide-användare.
-- MCP stdio-servern skapar förslag men har ingen fristående exekveringsbehörighet.
+- Wikipedia-värden anges endast i serverns TOML; modellen får bara ange söktext och uppläsningsläge.
+- MCP stdio-servern får göra skrivskyddade Wikipedia-uppslag men har ingen fristående behörighet att styra musik eller enheter.
 
 En framtida Streamable HTTP-transport ska ligga bakom EutherOxides autentisering. Den måste översätta verifierad identitet till en kortlivad sessionskontext och får inte acceptera användaridentitet som verktygsargument.
 

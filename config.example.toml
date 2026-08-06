@@ -41,3 +41,9 @@ operation_timeout_seconds = 18
 [mcp]
 enabled = false
 planner_timeout_seconds = 8
+
+[wikipedia]
+enabled = false
+api_url = "https://sv.wikipedia.org/w/api.php"
+timeout_seconds = 8
+max_extract_chars = 6000

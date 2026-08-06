@@ -183,8 +183,19 @@ Den exponerar:
 - `cast_list_targets`: läser tillåtna rumsalias utan att lämna ut IP eller Cast-UUID.
 - `music_play`: skapar ett validerat uppspelningsförslag.
 - `playlist_create`: skapar ett validerat förslag som kräver bekräftelse.
+- `wikipedia_lookup`: hämtar titel, artikelinledning och käll-URL skrivskyddat från svenska Wikipedia.
 
-En extern MCP-klient får i denna första slice endast åtgärdsförslag. Faktisk körning sker fortfarande inne i en autentiserad EutherVox-session. Se [MCP-verktygsdesignen](docs/mcp-tools.md).
+Skinnskattaren kan använda samma Wikipedia-verktyg direkt i röstflödet. Exempel:
+
+```text
+Berätta om Skinnskatteberg.
+Sammanfatta Novemberrevolutionen från Wikipedia.
+Läs inledningen av Wikipedia-artikeln om järnmalm.
+```
+
+Sammanfattningen grundas på den hämtade artikelinledningen, läses upp med figurens vanliga röst och visas tillsammans med källänken. Konfigurationen ligger under `[wikipedia]`; verktyget är skrivskyddat och API-adressen kan inte påverkas av modellen.
+
+En extern MCP-klient får endast validerade åtgärdsförslag för musik och spellistor. Det skrivskyddade Wikipedia-verktyget får däremot hämta källtext direkt; faktisk musik- och enhetsstyrning sker fortfarande inne i en autentiserad EutherVox-session. Se [MCP-verktygsdesignen](docs/mcp-tools.md).
 
 ## Tester
 
@@ -213,7 +224,7 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - En lokal lista som skapats utan OAuth innehåller tills vidare bara titel och stämningsfråga. Separat kommandoflöde för att synka en äldre lokal lista efter OAuth-koppling återstår.
 - YouTube Data API:s standardkvot begränsar hur många sökningar och låtinfogningar som kan göras per dygn.
 - Cast-adaptern använder PyChromecast och en inofficiell `yt-dlp`-resolver eftersom Google saknar ett publikt YouTube Music-uppspelnings-API för serverstyrda mottagare. Den är därför beta, konfigurationsstyrd och faller tillbaka till telefonen.
-- Cast-kö, volym, paus/nästa och dirigering till fler rum återstår.
+- Cast-kö, volym, nästa och dirigering till fler rum återstår.
 - MCP-servern använder än så länge stdio och utför inte fristående åtgärder; autentiserad Streamable HTTP kan läggas till när en extern agent behöver fjärrstyra EutherVox.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.
 - `ws://` är okrypterat och ska bara användas på betrott LAN. Den publika betarutten använder EutherOxide-inloggning och `wss://`.

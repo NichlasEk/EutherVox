@@ -20,12 +20,13 @@ from .session import ProtocolError, VoiceSession
 from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .tools import EutherVoxToolRegistry
+from .wikipedia import WikipediaService
 
 
 LOG = logging.getLogger("euthervox.gateway")
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -42,6 +43,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         playlists=playlists,
         cast=cast,
         tool_planner=tool_planner,
+        wikipedia=wikipedia,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -120,6 +122,7 @@ async def run(config: GatewayConfig) -> None:
     youtube = YouTubePlaylistService(config.youtube_settings, config.config_dir)
     playlists = TomlPlaylistStore(config.playlist_settings, config.config_dir)
     cast = CastService(config.cast_settings)
+    wikipedia = WikipediaService(config.wikipedia_settings)
     tool_registry = EutherVoxToolRegistry(cast)
     tool_planner = None
     if bool(config.mcp_settings.get("enabled", False)) and config.llm_provider == "ollama":
@@ -143,7 +146,7 @@ async def run(config: GatewayConfig) -> None:
     )
     oauth_http = OAuthHttpHandler(youtube)
     async with serve(
-        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner),
+        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia),
         config.host,
         config.port,
         max_size=2**20,

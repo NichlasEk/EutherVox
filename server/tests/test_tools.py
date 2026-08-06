@@ -33,12 +33,19 @@ def test_registry_creates_allowlisted_music_and_confirmed_playlist_actions():
 
     music = registry.create_action("music_play", {"query": " mörk   synth ", "output_room": "Kök 2"}, "pixel")
     playlist = registry.create_action("playlist_create", {"description": "cyberpunk"}, "pixel")
+    wikipedia = registry.create_action(
+        "wikipedia_lookup",
+        {"query": "Skinnskatteberg", "mode": "summary"},
+        "pixel",
+    )
 
     assert music.name == "media.play"
     assert music.arguments == {"provider": "youtube_music", "query": "mörk synth", "output_room": "köket"}
     assert music.target_node == "pixel"
     assert playlist.name == "playlist.create"
     assert playlist.requires_confirmation is True
+    assert wikipedia.name == "knowledge.wikipedia"
+    assert wikipedia.arguments == {"query": "Skinnskatteberg", "mode": "summary"}
 
 
 def test_registry_rejects_unknown_tools_rooms_and_arguments():
@@ -62,7 +69,9 @@ def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
         server = build_mcp_server(registry)
         tools = await server.list_tools()
 
-        assert {tool.name for tool in tools} == {"cast_list_targets", "music_play", "playlist_create"}
+        assert {tool.name for tool in tools} == {
+            "cast_list_targets", "music_play", "playlist_create", "wikipedia_lookup",
+        }
         target = registry.list_cast_targets()[0]
         assert target == {"room": "köket", "display_name": "Kök 2", "model": "Google Nest Mini"}
         assert "host" not in target
@@ -74,7 +83,9 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert request.url.path == "/api/chat"
-        assert {tool["function"]["name"] for tool in payload["tools"]} == {"music_play", "playlist_create"}
+        assert {tool["function"]["name"] for tool in payload["tools"]} == {
+            "music_play", "playlist_create", "wikipedia_lookup",
+        }
         return httpx.Response(200, json={
             "message": {
                 "role": "assistant",
@@ -116,5 +127,39 @@ def test_ollama_tool_planner_skips_non_actionable_conversation_without_request()
             transport=httpx.MockTransport(handler),
         )
         assert await planner.plan("Hur mår du i dag?", "pixel") is None
+
+    asyncio.run(scenario())
+
+
+def test_ollama_tool_planner_translates_wikipedia_request_to_read_only_action():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert "wikipedia_lookup" in {tool["function"]["name"] for tool in payload["tools"]}
+        return httpx.Response(200, json={
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": "wikipedia_lookup",
+                        "arguments": {"query": "Skinnskatteberg", "mode": "summary"},
+                    }
+                }],
+            },
+            "done": True,
+        })
+
+    async def scenario():
+        planner = OllamaToolPlanner(
+            make_registry(),
+            "http://ollama.test",
+            "qwen-test",
+            transport=httpx.MockTransport(handler),
+        )
+        action = await planner.plan("Berätta om Skinnskatteberg", "pixel")
+
+        assert action is not None
+        assert action.name == "knowledge.wikipedia"
+        assert action.arguments == {"query": "Skinnskatteberg", "mode": "summary"}
 
     asyncio.run(scenario())
