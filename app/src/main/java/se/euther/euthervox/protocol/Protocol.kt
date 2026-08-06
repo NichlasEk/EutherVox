@@ -33,6 +33,11 @@ fun actionResult(actionId: String, utteranceId: String, status: String, resultMe
     addProperty("message", resultMessage)
 }.toString()
 
+fun actionConfirm(actionId: String) = JsonObject().apply {
+    addProperty("type", "action.confirm")
+    addProperty("action_id", actionId)
+}.toString()
+
 private fun message(type: String, utteranceId: String) = JsonObject().apply {
     addProperty("type", type)
     addProperty("utterance_id", utteranceId)
@@ -54,8 +59,11 @@ sealed interface ServerEvent {
         val targetNode: String,
         val provider: String,
         val query: String,
+        val uri: String,
         val requiresConfirmation: Boolean,
     ) : ServerEvent
+    data class ActionStatus(val actionId: String, val status: String, val message: String) : ServerEvent
+    data class ActionCompleted(val actionId: String, val status: String, val message: String) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -81,8 +89,19 @@ fun parseServerEvent(raw: String): ServerEvent {
             name = json["name"].asString,
             targetNode = json["target"].asJsonObject["node_name"].asString,
             provider = json["arguments"].asJsonObject["provider"].asString,
-            query = json["arguments"].asJsonObject["query"].asString,
+            query = json["arguments"].asJsonObject["query"]?.asString.orEmpty(),
+            uri = json["arguments"].asJsonObject["uri"]?.asString.orEmpty(),
             requiresConfirmation = json["requires_confirmation"]?.asBoolean ?: true,
+        )
+        "action.status" -> ServerEvent.ActionStatus(
+            json["action_id"].asString,
+            json["status"].asString,
+            json["message"].asString,
+        )
+        "action.completed" -> ServerEvent.ActionCompleted(
+            json["action_id"].asString,
+            json["status"].asString,
+            json["message"].asString,
         )
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)

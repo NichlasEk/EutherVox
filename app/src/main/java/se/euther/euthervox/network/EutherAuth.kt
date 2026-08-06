@@ -42,6 +42,8 @@ class EutherAuthClient {
     }
 
     companion object {
+        fun youtubeOAuthUrl(websocketUrl: String): String = "${httpOrigin(websocketUrl)}/euthervox/oauth/start"
+
         internal fun httpOrigin(websocketUrl: String): String {
             val uri = URI(websocketUrl.trim())
             val scheme = when (uri.scheme) {

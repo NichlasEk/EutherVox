@@ -40,3 +40,13 @@ timeout_seconds = 30.0
 provider = "piper"
 model_path = "models/piper/sv_SE-nst-medium.onnx"
 frame_ms = 20
+
+[youtube]
+# OAuth-hemligheter läses från miljön och får aldrig läggas i denna fil.
+enabled = true
+client_id_env = "EUTHERVOX_GOOGLE_CLIENT_ID"
+client_secret_env = "EUTHERVOX_GOOGLE_CLIENT_SECRET"
+owner_username_env = "EUTHERVOX_YOUTUBE_OWNER"
+redirect_uri = "https://apothictech.se/euthervox/oauth/callback"
+token_path = "state/youtube-token.json"
+playlist_size = 15

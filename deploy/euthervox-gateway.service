@@ -10,6 +10,7 @@ ExecStart=/home/nichlas/EutherVox/.venv/bin/euthervox-gateway --config /home/nic
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/home/nichlas/.config/euthervox/youtube.env
 
 [Install]
 WantedBy=default.target

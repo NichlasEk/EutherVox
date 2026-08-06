@@ -21,6 +21,7 @@ import se.euther.euthervox.network.WebSocketClient
 import se.euther.euthervox.network.AuthTokenStore
 import se.euther.euthervox.network.EutherAuthClient
 import se.euther.euthervox.protocol.ServerEvent
+import se.euther.euthervox.protocol.actionConfirm
 import se.euther.euthervox.protocol.actionResult
 import se.euther.euthervox.protocol.audioEnd
 import se.euther.euthervox.protocol.audioStart
@@ -53,6 +54,8 @@ data class VoiceUiState(
     val errorMessage: String? = null,
     val droppedCaptureFrames: Int = 0,
     val canTalk: Boolean = false,
+    val pendingAction: ServerEvent.ActionRequest? = null,
+    val actionMessage: String? = null,
 )
 
 private data class Timeline(
@@ -306,6 +309,18 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             }
             is ServerEvent.Cancelled -> finishUtterance()
             is ServerEvent.ActionRequest -> handleAction(event)
+            is ServerEvent.ActionStatus -> mutableState.value = mutableState.value.copy(
+                status = VoiceStatus.Processing,
+                actionMessage = event.message,
+                canTalk = false,
+            )
+            is ServerEvent.ActionCompleted -> mutableState.value = mutableState.value.copy(
+                status = if (event.status == "completed") VoiceStatus.Idle else VoiceStatus.Error,
+                actionMessage = event.message,
+                errorMessage = if (event.status == "completed") null else event.message,
+                pendingAction = null,
+                canTalk = ready,
+            )
             is ServerEvent.Error -> fail("${event.code}: ${event.message}", event.recoverable)
             is ServerEvent.Unknown -> Unit
         }
@@ -314,13 +329,24 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private fun handleAction(event: ServerEvent.ActionRequest) {
         val activeUtterance = utteranceId
         if (event.requiresConfirmation) {
-            scope.launch {
-                transport?.sendText(actionResult(event.actionId, event.utteranceId, "rejected", "Åtgärden kräver bekräftelse"))
+            if (event.name != "playlist.create" || event.targetNode != nodeName) {
+                scope.launch {
+                    transport?.sendText(actionResult(event.actionId, event.utteranceId, "rejected", "Okänd bekräftelseåtgärd"))
+                }
+                fail("Servern föreslog en otillåten åtgärd")
+                return
             }
-            fail("Åtgärden kräver bekräftelse och kördes inte")
+            finishUtterance()
+            mutableState.value = mutableState.value.copy(
+                status = VoiceStatus.Processing,
+                pendingAction = event,
+                actionMessage = "Skapa en privat spellista med: ${event.query}?",
+                canTalk = false,
+            )
             return
         }
-        if (event.targetNode != nodeName || event.utteranceId != activeUtterance) {
+        val wrongUtterance = event.utteranceId.isNotBlank() && event.utteranceId != activeUtterance
+        if (event.targetNode != nodeName || wrongUtterance) {
             scope.launch {
                 transport?.sendText(actionResult(event.actionId, event.utteranceId, "rejected", "Fel mål eller yttrande"))
             }
@@ -339,6 +365,30 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 errorMessage = result.message,
                 canTalk = ready,
             )
+        }
+    }
+
+    fun confirmPendingAction() {
+        val action = mutableState.value.pendingAction ?: return
+        mutableState.value = mutableState.value.copy(
+            pendingAction = null,
+            actionMessage = "Skapar spellistan…",
+            status = VoiceStatus.Processing,
+            canTalk = false,
+        )
+        scope.launch { transport?.sendText(actionConfirm(action.actionId)) }
+    }
+
+    fun rejectPendingAction() {
+        val action = mutableState.value.pendingAction ?: return
+        mutableState.value = mutableState.value.copy(
+            pendingAction = null,
+            actionMessage = "Spellistan avbröts.",
+            status = VoiceStatus.Idle,
+            canTalk = ready,
+        )
+        scope.launch {
+            transport?.sendText(actionResult(action.actionId, action.utteranceId, "rejected", "Användaren avbröt"))
         }
     }
 

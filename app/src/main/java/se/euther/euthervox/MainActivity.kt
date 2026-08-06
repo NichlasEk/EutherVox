@@ -2,6 +2,8 @@ package se.euther.euthervox
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -58,6 +60,7 @@ import androidx.core.content.edit
 import se.euther.euthervox.app.Latencies
 import se.euther.euthervox.app.VoiceController
 import se.euther.euthervox.app.VoiceStatus
+import se.euther.euthervox.network.EutherAuthClient
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,6 +130,20 @@ fun EutherVoxApp() {
             TranscriptCard("Preliminärt", state.partialTranscript)
             TranscriptCard("Du sade", state.finalTranscript)
             TranscriptCard("Skinnskattaren", state.responseText)
+            if (state.actionMessage != null) {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Åtgärd", fontWeight = FontWeight.Bold, color = Forest)
+                        Text(state.actionMessage!!)
+                        if (state.pendingAction != null) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(onClick = controller::confirmPendingAction) { Text("Skapa privat spellista") }
+                                OutlinedButton(onClick = controller::rejectPendingAction) { Text("Avbryt") }
+                            }
+                        }
+                    }
+                }
+            }
             LatencyCard(state.latencies)
 
             OutlinedButton(onClick = controller::cancelResponse, enabled = state.status == VoiceStatus.Speaking || state.status == VoiceStatus.Processing) {
@@ -152,6 +169,14 @@ fun EutherVoxApp() {
                     visualTransformation = PasswordVisualTransformation(),
                 )
                 Text("Vid wss:// växlas lösenordet mot en app-token som krypteras med Android Keystore. Lösenordet sparas aldrig. ws:// ska endast användas på betrott LAN.", style = MaterialTheme.typography.bodySmall)
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(EutherAuthClient.youtubeOAuthUrl(address))))
+                        }
+                    },
+                    enabled = address.isNotBlank(),
+                ) { Text("Koppla YouTube-konto") }
                 TextButton(onClick = { password = ""; controller.forgetCredentials() }) { Text("Glöm sparad inloggning") }
             }
         },

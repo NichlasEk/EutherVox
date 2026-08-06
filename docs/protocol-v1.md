@@ -40,8 +40,8 @@ Server till klient annonseras i `tts.start`. Prototypen använder mono `pcm_s16l
 
 Meddelandena och fälten följer exemplen i arbetsuppdraget:
 
-- Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.result`.
-- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `response.cancelled`, `error`.
+- Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.confirm`, `action.result`.
+- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `error`.
 
 `session.start.input_audio` valideras innan `session.ready`. Alla yttrandemeddelanden ska använda samma `utterance_id` som aktiverades med `audio.start`.
 
@@ -87,6 +87,8 @@ Noden rapporterar resultatet separat:
 ```
 
 `status` är `completed`, `failed` eller `rejected`. Ett `action_id` är giltigt endast om servern har skickat motsvarande begäran på samma anslutning. I version 1 är målet alltid den anslutna noden själv. Framtida rumsdirigering ska välja en annan aktiv nodanslutning på servern; en telefon får inte låtsas vara en annan nod bara genom att ändra `target`.
+
+En kontoändrande åtgärd, exempelvis `playlist.create`, har alltid `requires_confirmation: true`. Klienten visar argumenten men kör ingenting. Godkännande skickas som `{"type":"action.confirm","action_id":"..."}`; avslag skickas som `action.result` med `status: rejected`. Servern rapporterar arbetet med `action.status` och exakt ett avslutande `action.completed`. När en spellista är skapad skickar servern en separat, vitlistad `media.open`-åtgärd med en `https://music.youtube.com/`-länk.
 
 ## Ordning och backpressure
 

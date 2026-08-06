@@ -33,7 +33,7 @@ class ProtocolTest {
         )
 
         assertEquals(
-            ServerEvent.ActionRequest("a1", "u1", "media.play", "pixel", "youtube_music", "något mörkt och lugnt", false),
+            ServerEvent.ActionRequest("a1", "u1", "media.play", "pixel", "youtube_music", "något mörkt och lugnt", "", false),
             event,
         )
     }
@@ -44,5 +44,11 @@ class ProtocolTest {
         assertEquals("action.result", json["type"].asString)
         assertEquals("a1", json["action_id"].asString)
         assertEquals("completed", json["status"].asString)
+    }
+
+    @Test fun serializesActionConfirmation() {
+        val json = JsonParser.parseString(actionConfirm("a1")).asJsonObject
+        assertEquals("action.confirm", json["type"].asString)
+        assertEquals("a1", json["action_id"].asString)
     }
 }

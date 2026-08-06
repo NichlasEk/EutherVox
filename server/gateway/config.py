@@ -15,6 +15,7 @@ class AudioConfig:
 
 @dataclass(frozen=True)
 class GatewayConfig:
+    config_dir: Path
     host: str
     port: int
     text_logging: bool
@@ -29,6 +30,7 @@ class GatewayConfig:
     stt_settings: dict
     llm_settings: dict
     tts_settings: dict
+    youtube_settings: dict
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -44,12 +46,14 @@ def load_config(path: str | Path) -> GatewayConfig:
     stt_settings = dict(raw["stt"])
     llm_settings = dict(raw["llm"])
     tts_settings = dict(raw["tts"])
+    youtube_settings = dict(raw.get("youtube", {}))
     for settings, key in ((stt_settings, "download_root"), (tts_settings, "model_path")):
         if key in settings:
             value = Path(settings[key])
             if not value.is_absolute():
                 settings[key] = str(config_path.parent / value)
     return GatewayConfig(
+        config_dir=config_path.parent,
         host=server.get("host", "0.0.0.0"),
         port=int(server.get("port", 8788)),
         text_logging=bool(server.get("text_logging", False)),
@@ -72,4 +76,5 @@ def load_config(path: str | Path) -> GatewayConfig:
         stt_settings=stt_settings,
         llm_settings=llm_settings,
         tts_settings=tts_settings,
+        youtube_settings=youtube_settings,
     )

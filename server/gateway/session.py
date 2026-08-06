@@ -10,8 +10,9 @@ from typing import Awaitable, Callable
 from uuid import uuid4
 
 from .adapters import CharacterProvider, SpeechToTextEngine, TextGenerationEngine, TextToSpeechEngine
-from .actions import ActionPlanner
+from .actions import ActionPlanner, DeviceAction
 from .config import GatewayConfig
+from .youtube import YouTubePlaylistService
 
 
 SendJson = Callable[[dict], Awaitable[None]]
@@ -43,6 +44,8 @@ class VoiceSession:
     characters: CharacterProvider
     send_json: SendJson
     send_binary: SendBinary
+    youtube: YouTubePlaylistService | None = None
+    authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
     utterance_id: str | None = None
@@ -55,6 +58,7 @@ class VoiceSession:
     audio_end_ns: int = 0
     action_planner: ActionPlanner = field(default_factory=ActionPlanner)
     pending_actions: set[str] = field(default_factory=set)
+    pending_confirmations: dict[str, DeviceAction] = field(default_factory=dict)
 
     async def handle_text(self, raw: str) -> None:
         try:
@@ -70,6 +74,8 @@ class VoiceSession:
                 await self._cancel(message)
             elif message_type == "action.result":
                 await self._action_result(message)
+            elif message_type == "action.confirm":
+                await self._action_confirm(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -141,9 +147,12 @@ class VoiceSession:
 
     async def _action_result(self, message: dict) -> None:
         action_id = str(message["action_id"])
-        if action_id not in self.pending_actions:
+        if action_id in self.pending_confirmations:
+            self.pending_confirmations.pop(action_id)
+        elif action_id in self.pending_actions:
+            self.pending_actions.remove(action_id)
+        else:
             raise ProtocolError("ACTION_MISMATCH", "action.result does not match a requested action")
-        self.pending_actions.remove(action_id)
         status = str(message.get("status", "unknown"))
         detail = str(message.get("message", ""))
         LOG.info(
@@ -153,6 +162,58 @@ class VoiceSession:
             status,
             detail,
         )
+
+    async def _action_confirm(self, message: dict) -> None:
+        action_id = str(message["action_id"])
+        action = self.pending_confirmations.pop(action_id, None)
+        if action is None:
+            raise ProtocolError("ACTION_MISMATCH", "action.confirm does not match a proposed action")
+        if self.phase is not Phase.READY:
+            raise ProtocolError("SESSION_BUSY", "Cannot confirm an action while the session is busy")
+        self.phase = Phase.PROCESSING
+        self.response_task = asyncio.create_task(self._execute_confirmed_action(action))
+
+    async def _execute_confirmed_action(self, action: DeviceAction) -> None:
+        try:
+            if action.name != "playlist.create" or not self.youtube:
+                raise RuntimeError("Spellistetjänsten är inte konfigurerad")
+            query = str(action.arguments["query"])
+            preview = self.youtube.preview(query)
+            await self.send_json({
+                "type": "action.status",
+                "action_id": action.action_id,
+                "status": "running",
+                "message": f"Söker musik och skapar {preview.title}…",
+            })
+            created = await self.youtube.create_playlist(preview)
+            await self.send_json({
+                "type": "action.completed",
+                "action_id": action.action_id,
+                "status": "completed",
+                "message": f"{created.title} skapades med {created.track_count} låtar.",
+            })
+            open_action = DeviceAction(
+                action_id=str(uuid4()),
+                name="media.open",
+                target_node=action.target_node,
+                arguments={"provider": "youtube_music", "uri": created.music_url},
+                acknowledgement="Spellistan är klar.",
+            )
+            self.pending_actions.add(open_action.action_id)
+            await self.send_json(open_action.to_message(self.utterance_id or ""))
+            LOG.info("playlist_created session=%s playlist=%s tracks=%d", self.session_id, created.playlist_id, created.track_count)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            LOG.exception("confirmed_action_failed session=%s action=%s", self.session_id, action.action_id)
+            await self.send_json({
+                "type": "action.completed",
+                "action_id": action.action_id,
+                "status": "failed",
+                "message": str(error),
+            })
+        finally:
+            self._reset()
 
     async def _respond(self, utterance_id: str, pcm: bytes) -> None:
         try:
@@ -178,6 +239,31 @@ class VoiceSession:
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
             action = self.action_planner.plan(transcript, self.node_name)
             if action:
+                if action.name == "playlist.create":
+                    if not self.youtube or not self.youtube.can_use(self.authenticated_user):
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": "Ditt EutherOxide-konto har inte behörighet till det kopplade YouTube-kontot.",
+                        })
+                        self._reset()
+                        return
+                    if not self.youtube or not self.youtube.configured:
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": "YouTube OAuth är inte konfigurerat på servern ännu.",
+                        })
+                        self._reset()
+                        return
+                    if not self.youtube.authorized:
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": "Koppla ditt YouTube-konto i appens inställningar först.",
+                        })
+                        self._reset()
+                        return
                 await self.send_json({
                     "type": "assistant.text.delta",
                     "utterance_id": utterance_id,
@@ -188,7 +274,10 @@ class VoiceSession:
                     "utterance_id": utterance_id,
                     "text": action.acknowledgement,
                 })
-                self.pending_actions.add(action.action_id)
+                if action.requires_confirmation:
+                    self.pending_confirmations[action.action_id] = action
+                else:
+                    self.pending_actions.add(action.action_id)
                 await self.send_json(action.to_message(utterance_id))
                 LOG.info(
                     "action_request session=%s utterance=%s action=%s name=%s target=%s",

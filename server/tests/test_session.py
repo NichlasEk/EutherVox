@@ -14,6 +14,7 @@ from gateway.adapters import (
 from gateway.actions import ActionPlanner
 from gateway.config import load_config
 from gateway.session import Phase, ProtocolError, VoiceSession
+from gateway.youtube import CreatedPlaylist, PlaylistPreview
 
 
 ROOT = Path(__file__).parents[2]
@@ -117,6 +118,15 @@ def test_action_planner_does_not_treat_recording_as_music_playback():
     assert ActionPlanner().plan("Spela in det här", "pixel") is None
 
 
+def test_action_planner_proposes_private_playlist_with_confirmation():
+    action = ActionPlanner().plan("Skapa en spellista med mörk svensk synth", "pixel")
+
+    assert action is not None
+    assert action.name == "playlist.create"
+    assert action.arguments["query"] == "mörk svensk synth"
+    assert action.requires_confirmation is True
+
+
 def test_music_command_returns_action_without_tts():
     class MusicStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
@@ -150,5 +160,82 @@ def test_music_command_returns_action_without_tts():
             "status": "completed",
         }))
         assert not session.pending_actions
+
+    asyncio.run(scenario())
+
+
+def test_playlist_creation_requires_confirmation_then_opens_result():
+    class PlaylistStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Skapa en spellista med mörk svensk synth"
+
+    class FakeYouTube:
+        configured = True
+        authorized = True
+
+        def can_use(self, authenticated_user: str) -> bool:
+            return authenticated_user == "nichlas"
+
+        def preview(self, query: str) -> PlaylistPreview:
+            return PlaylistPreview("EutherVox – mörk svensk synth", query, 15)
+
+        async def create_playlist(self, preview: PlaylistPreview) -> CreatedPlaylist:
+            return CreatedPlaylist("PL-test", preview.title, 12)
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = PlaylistStt()
+        session.youtube = FakeYouTube()
+        session.authenticated_user = "nichlas"
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "playlist-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "playlist-1"}))
+        await session.response_task
+
+        proposal = next(item for item in sent if isinstance(item, dict) and item.get("name") == "playlist.create")
+        assert proposal["requires_confirmation"] is True
+        assert proposal["action_id"] in session.pending_confirmations
+
+        await session.handle_text(json.dumps({"type": "action.confirm", "action_id": proposal["action_id"]}))
+        await session.response_task
+
+        controls = [item for item in sent if isinstance(item, dict)]
+        assert any(item.get("type") == "action.status" and item.get("status") == "running" for item in controls)
+        assert any(item.get("type") == "action.completed" and item.get("status") == "completed" for item in controls)
+        opened = next(item for item in controls if item.get("name") == "media.open")
+        assert opened["arguments"]["uri"] == "https://music.youtube.com/playlist?list=PL-test"
+        assert session.phase is Phase.READY
+
+    asyncio.run(scenario())
+
+
+def test_playlist_proposal_is_not_sent_to_non_owner():
+    class PlaylistStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Skapa en spellista med mörk svensk synth"
+
+    class OwnerOnlyYouTube:
+        configured = True
+        authorized = True
+
+        def can_use(self, authenticated_user: str) -> bool:
+            return authenticated_user == "nichlas"
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = PlaylistStt()
+        session.youtube = OwnerOnlyYouTube()
+        session.authenticated_user = "someone-else"
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "playlist-denied"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "playlist-denied"}))
+        await session.response_task
+
+        controls = [item for item in sent if isinstance(item, dict)]
+        assert not any(item.get("type") == "action.request" for item in controls)
+        assert controls[-1]["type"] == "assistant.text.final"
+        assert "inte behörighet" in controls[-1]["text"]
 
     asyncio.run(scenario())

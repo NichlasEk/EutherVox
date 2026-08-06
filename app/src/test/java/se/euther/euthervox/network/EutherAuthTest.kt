@@ -17,4 +17,11 @@ class EutherAuthTest {
             EutherAuthClient.httpOrigin("ws://192.168.32.88:8788"),
         )
     }
+
+    @Test fun derivesYouTubeOAuthUrlFromPublicWebSocket() {
+        assertEquals(
+            "https://apothictech.se/euthervox/oauth/start",
+            EutherAuthClient.youtubeOAuthUrl("wss://apothictech.se/euthervox/ws"),
+        )
+    }
 }

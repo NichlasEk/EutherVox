@@ -10,7 +10,7 @@ class DeviceAction:
     action_id: str
     name: str
     target_node: str
-    arguments: dict[str, str]
+    arguments: dict[str, object]
     acknowledgement: str
     requires_confirmation: bool = False
 
@@ -31,8 +31,24 @@ class ActionPlanner:
 
     _PLAY = re.compile(r"^\s*spela(?:\s+upp)?\s+(.+?)\s*[.!?]*\s*$", re.IGNORECASE)
     _YOUTUBE_SUFFIX = re.compile(r"\s+(?:på|i)\s+youtube\s+music\s*$", re.IGNORECASE)
+    _PLAYLIST = re.compile(
+        r"^\s*(?:skapa|gör)(?:\s+en)?\s+spellista(?:\s+(?:med|för|som)\s+)(.+?)\s*[.!?]*\s*$",
+        re.IGNORECASE,
+    )
 
     def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
+        playlist = self._PLAYLIST.match(transcript)
+        if playlist:
+            query = playlist.group(1).strip(" .!?")
+            if query:
+                return DeviceAction(
+                    action_id=str(uuid4()),
+                    name="playlist.create",
+                    target_node=node_name,
+                    arguments={"provider": "youtube", "query": query},
+                    acknowledgement=f"Jag kan skapa en privat spellista med {query}. Bekräfta i appen.",
+                    requires_confirmation=True,
+                )
         if re.match(r"^\s*spela\s+in\b", transcript, re.IGNORECASE):
             return None
         match = self._PLAY.match(transcript)

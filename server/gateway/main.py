@@ -4,19 +4,24 @@ import argparse
 import asyncio
 import json
 import logging
+from http import HTTPStatus
+from urllib.parse import parse_qs, urlsplit
 
 from websockets.asyncio.server import ServerConnection, serve
+from websockets.datastructures import Headers
 from websockets.exceptions import ConnectionClosed
+from websockets.http11 import Request, Response
 
 from .adapters import TomlCharacterProvider, build_engines
 from .config import GatewayConfig, load_config
 from .session import ProtocolError, VoiceSession
+from .youtube import YouTubePlaylistService
 
 
 LOG = logging.getLogger("euthervox.gateway")
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -29,6 +34,8 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         characters=TomlCharacterProvider(config.profile_dir),
         send_json=send_json,
         send_binary=socket.send,
+        youtube=youtube,
+        authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
         async for message in socket:
@@ -49,8 +56,52 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         LOG.info("session_closed session=%s", session.session_id)
 
 
+class OAuthHttpHandler:
+    def __init__(self, youtube: YouTubePlaylistService):
+        self.youtube = youtube
+
+    async def __call__(self, _connection: ServerConnection, request: Request) -> Response | None:
+        parsed = urlsplit(request.path)
+        if parsed.path == "/euthervox/oauth/start":
+            if not self.youtube.can_use(request.headers.get("X-Euther-User", "")):
+                return self._html(HTTPStatus.FORBIDDEN, "Detta EutherOxide-konto är inte YouTube-ägaren.")
+            try:
+                return self._response(HTTPStatus.FOUND, b"", {"Location": self.youtube.authorization_url()})
+            except Exception as error:
+                return self._html(HTTPStatus.SERVICE_UNAVAILABLE, f"YouTube-kopplingen kan inte startas: {error}")
+        if parsed.path == "/euthervox/oauth/callback":
+            if not self.youtube.can_use(request.headers.get("X-Euther-User", "")):
+                return self._html(HTTPStatus.FORBIDDEN, "Detta EutherOxide-konto är inte YouTube-ägaren.")
+            query = parse_qs(parsed.query)
+            if query.get("error"):
+                return self._html(HTTPStatus.BAD_REQUEST, f"Google nekade kopplingen: {query['error'][0]}")
+            try:
+                await self.youtube.complete_authorization(query.get("code", [""])[0], query.get("state", [""])[0])
+                return self._html(HTTPStatus.OK, "YouTube är kopplat. Du kan återvända till EutherVox.")
+            except Exception as error:
+                LOG.exception("youtube_oauth_failed")
+                return self._html(HTTPStatus.BAD_REQUEST, f"YouTube-kopplingen misslyckades: {error}")
+        if parsed.path == "/euthervox/oauth/status":
+            allowed = self.youtube.can_use(request.headers.get("X-Euther-User", ""))
+            body = json.dumps({"configured": self.youtube.configured, "authorized": self.youtube.authorized if allowed else False}).encode()
+            return self._response(HTTPStatus.OK, body, {"Content-Type": "application/json", "Cache-Control": "no-store"})
+        return None
+
+    def _html(self, status: HTTPStatus, message: str) -> Response:
+        escaped = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        body = f"<!doctype html><meta charset=utf-8><title>EutherVox</title><body style='font-family:sans-serif;padding:2rem;background:#f2ebdd;color:#254c3a'><h1>EutherVox</h1><p>{escaped}</p></body>".encode()
+        return self._response(status, body, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store"})
+
+    @staticmethod
+    def _response(status: HTTPStatus, body: bytes, extra_headers: dict[str, str]) -> Response:
+        headers = Headers(extra_headers)
+        headers["Content-Length"] = str(len(body))
+        return Response(status.value, status.phrase, headers, body)
+
+
 async def run(config: GatewayConfig) -> None:
     engines = build_engines(config)
+    youtube = YouTubePlaylistService(config.youtube_settings, config.config_dir)
     for name, engine in (("stt", engines[0]), ("llm", engines[1])):
         warmup = getattr(engine, "warmup", None)
         if warmup:
@@ -63,7 +114,14 @@ async def run(config: GatewayConfig) -> None:
         config.tts_provider,
         engines[2].sample_rate,
     )
-    async with serve(lambda socket: handle_connection(socket, config, engines), config.host, config.port, max_size=2**20):
+    oauth_http = OAuthHttpHandler(youtube)
+    async with serve(
+        lambda socket: handle_connection(socket, config, engines, youtube),
+        config.host,
+        config.port,
+        max_size=2**20,
+        process_request=oauth_http,
+    ):
         LOG.info("listening ws://%s:%d", config.host, config.port)
         await asyncio.get_running_loop().create_future()
 

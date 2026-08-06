@@ -27,3 +27,5 @@ provider = "mock"
 [tts]
 provider = "mock"
 
+[youtube]
+enabled = false

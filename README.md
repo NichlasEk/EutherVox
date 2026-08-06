@@ -1,4 +1,4 @@
-# EutherVox 0.3 beta
+# EutherVox 0.4 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -116,7 +116,32 @@ Spela upp något mörkt och lugnt på YouTube Music.
 
 Gatewayen tolkar bara tydliga yttranden som börjar med `spela` eller `spela upp`. Den skickar `media.play` med en söksträng och telefonens eget nodnamn. Android kontrollerar åtgärden och startar sedan YouTube Music via plattformens `MEDIA_PLAY_FROM_SEARCH`. YouTube Music måste vara installerat och inloggat. Ingen Google-token eller YouTube-hemlighet lagras i EutherVox.
 
-Detta är medvetet nodneutralt: en framtida rumsnod kan implementera samma `action.request` och `action.result` utan att känna till STT- eller figurmodellerna. Rumsdirigering och permanenta spellistor ingår inte i 0.3. För riktiga kontoägda spellistor ska en senare adapter använda officiella YouTube Data API med OAuth och uttrycklig användarbekräftelse; den nuvarande musikåtgärden skriver ingenting till kontot.
+Detta är medvetet nodneutralt: en framtida rumsnod kan implementera samma `action.request` och `action.result` utan att känna till STT- eller figurmodellerna.
+
+## Privata humörspellistor
+
+Version 0.4 kan skapa en privat YouTube-spellista efter uttrycklig bekräftelse. Exempel:
+
+```text
+Skapa en spellista med mörk svensk synth för verkstaden.
+```
+
+Appen visar sökningen och knapparna `Skapa privat spellista` och `Avbryt`. Efter godkännande söker gatewayen endast musikvideor, skapar en privat lista, lägger till träffarna och öppnar resultatet i YouTube Music. Google-lösenord hanteras aldrig av EutherVox. OAuth-token lagras med filrättighet 0600 på gatewaymaskinen; klientuppgifter läses endast ur systemd-miljön.
+
+### Engångskonfiguration för Google
+
+1. Skapa eller välj ett projekt i Google Cloud Console och aktivera YouTube Data API v3.
+2. Skapa en OAuth-klient av typen Web application.
+3. Lägg till exakt redirect-URI `https://apothictech.se/euthervox/oauth/callback`.
+4. Skapa filen `~/.config/euthervox/youtube.env` utanför repot:
+
+```dotenv
+EUTHERVOX_GOOGLE_CLIENT_ID=din-klient-id
+EUTHERVOX_GOOGLE_CLIENT_SECRET=din-klienthemlighet
+EUTHERVOX_YOUTUBE_OWNER=ditt-eutheroxide-användarnamn
+```
+
+Skydda filen med `chmod 600`, installera om `deploy/euthervox-gateway.service`, kör `systemctl --user daemon-reload` och starta om gatewayen. Öppna sedan Inställningar i appen och tryck `Koppla YouTube-konto`. OAuth-start, callback och status ligger under `/euthervox/oauth/` och ska skyddas av samma EutherOxide-behörighet som WebSocket-rutten. EutherOxide måste vidarebefordra den verifierade identiteten i `X-Euther-User`; gatewayen jämför den mot `EUTHERVOX_YOUTUBE_OWNER` för både OAuth och spellistskapande.
 
 ## Tester
 
@@ -141,7 +166,9 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - Den riktiga STT-profilen skickar i denna slice sin första `stt.partial` precis före `stt.final`; inkrementell avkodning medan knappen hålls inne återstår.
 - Endast ett aktivt yttrande per WebSocket stöds avsiktligt.
 - Musikstarten använder Androids dokumenterade sök-/uppspelnings-intent. Exakt träff och om uppspelningen startar direkt bestäms av den installerade YouTube Music-versionen och måste provas på fysisk telefon.
-- Sparade YouTube-spellistor, Google OAuth, kökontroll, paus/nästa och dirigering till andra noder återstår.
+- Låtvalet är en första beta: en YouTube-sökning i musikkategorin används, inte YouTube Musics privata rekommendationsmotor. Granska därför listan efter skapande.
+- YouTube Data API:s standardkvot begränsar hur många sökningar och låtinfogningar som kan göras per dygn.
+- Kökontroll, paus/nästa och dirigering till andra noder återstår.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.
 - `ws://` är okrypterat och ska bara användas på betrott LAN. Den publika betarutten använder EutherOxide-inloggning och `wss://`.
 - Ingen wake word, bakgrundsavlyssning eller långtidsminne finns.
