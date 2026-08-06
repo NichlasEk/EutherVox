@@ -9,6 +9,8 @@ import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
@@ -23,7 +25,7 @@ import java.util.concurrent.atomic.AtomicLong
 data class AudioStreamFormat(val codec: String, val sampleRate: Int, val channels: Int, val frameMs: Int? = null)
 
 interface MicrophoneSource {
-    fun start(onFrame: (ByteArray) -> Unit, onFirstFrame: () -> Unit)
+    fun start(onFrame: (ByteArray) -> Unit, onFirstFrame: () -> Unit, echoCancellation: Boolean = false)
     fun stop()
 }
 
@@ -38,18 +40,29 @@ class PcmMicrophoneSource(private val context: Context, private val scope: Corou
     private val active = AtomicBoolean(false)
     private var recorder: AudioRecord? = null
     private var captureJob: Job? = null
+    private var echoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+
+    val supportsEchoCancellation: Boolean get() = AcousticEchoCanceler.isAvailable()
 
     @SuppressLint("MissingPermission")
-    override fun start(onFrame: (ByteArray) -> Unit, onFirstFrame: () -> Unit) {
+    override fun start(onFrame: (ByteArray) -> Unit, onFirstFrame: () -> Unit, echoCancellation: Boolean) {
         check(ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
         if (!active.compareAndSet(false, true)) return
         val frameBytes = 640
         val minimum = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        val audioSource = if (echoCancellation) MediaRecorder.AudioSource.VOICE_COMMUNICATION else MediaRecorder.AudioSource.VOICE_RECOGNITION
         val audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000, AudioFormat.CHANNEL_IN_MONO,
+            audioSource, 16_000, AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT, maxOf(minimum, frameBytes * 8),
         )
         check(audioRecord.state == AudioRecord.STATE_INITIALIZED) { "Mikrofonen kunde inte initieras" }
+        if (echoCancellation && AcousticEchoCanceler.isAvailable()) {
+            echoCanceler = AcousticEchoCanceler.create(audioRecord.audioSessionId)?.also { it.enabled = true }
+        }
+        if (echoCancellation && NoiseSuppressor.isAvailable()) {
+            noiseSuppressor = NoiseSuppressor.create(audioRecord.audioSessionId)?.also { it.enabled = true }
+        }
         recorder = audioRecord
         audioRecord.startRecording()
         captureJob = scope.launch(Dispatchers.IO) {
@@ -74,6 +87,10 @@ class PcmMicrophoneSource(private val context: Context, private val scope: Corou
         if (!active.compareAndSet(true, false)) return
         recorder?.runCatching { stop() }
         captureJob?.cancel()
+        echoCanceler?.release()
+        noiseSuppressor?.release()
+        echoCanceler = null
+        noiseSuppressor = null
         recorder?.release()
         recorder = null
         captureJob = null

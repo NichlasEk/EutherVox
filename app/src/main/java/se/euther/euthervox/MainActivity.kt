@@ -119,10 +119,34 @@ fun EutherVoxApp() {
 
             PushToTalkButton(
                 active = state.microphoneActive,
-                enabled = state.canTalk && hasPermission,
+                enabled = state.canTalk && hasPermission && !state.conversationActive,
                 onStart = controller::startTalking,
                 onStop = controller::stopTalking,
             )
+            if (state.conversationActive) {
+                Button(onClick = controller::stopConversation, colors = ButtonDefaults.buttonColors(containerColor = Copper)) {
+                    Text("Avsluta samtal")
+                }
+                if (state.status == VoiceStatus.Speaking || state.status == VoiceStatus.Processing) {
+                    OutlinedButton(onClick = controller::interruptAndListen) {
+                        Text("Avbryt och tala")
+                    }
+                }
+                Text(
+                    when {
+                        state.interruptionListening -> "Samtalsläge: du kan avbryta Skinnskattaren genom att tala"
+                        state.microphoneActive -> "Samtalsläge: lyssnar efter din röst"
+                        else -> "Samtalsläge: Skinnskattaren svarar"
+                    },
+                    color = Forest,
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                Button(
+                    onClick = controller::startConversation,
+                    enabled = state.canTalk && hasPermission,
+                ) { Text("Starta samtal") }
+            }
             Text(state.status.name, style = MaterialTheme.typography.titleMedium, color = if (state.status == VoiceStatus.Error) Color.Red else Forest)
             if (state.errorMessage != null) Text(state.errorMessage!!, color = Color.Red, textAlign = TextAlign.Center)
             if (state.droppedCaptureFrames > 0) Text("Tappade mikrofonblock: ${state.droppedCaptureFrames}", color = Color.Red)

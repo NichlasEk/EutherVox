@@ -13,6 +13,8 @@ import kotlinx.coroutines.launch
 import se.euther.euthervox.audio.AudioStreamFormat
 import se.euther.euthervox.audio.PcmAudioTrackSink
 import se.euther.euthervox.audio.PcmMicrophoneSource
+import se.euther.euthervox.audio.SpeechDetection
+import se.euther.euthervox.audio.SpeechEndDetector
 import se.euther.euthervox.audio.StreamingAudioSink
 import se.euther.euthervox.actions.AndroidDeviceActionExecutor
 import se.euther.euthervox.actions.DeviceActionExecutor
@@ -56,6 +58,8 @@ data class VoiceUiState(
     val canTalk: Boolean = false,
     val pendingAction: ServerEvent.ActionRequest? = null,
     val actionMessage: String? = null,
+    val conversationActive: Boolean = false,
+    val interruptionListening: Boolean = false,
 )
 
 private data class Timeline(
@@ -82,11 +86,16 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var transport: VoiceTransport? = null
     private var connectionJob: Job? = null
     private var timeoutJob: Job? = null
+    private var nextConversationTurnJob: Job? = null
+    private var bargeInJob: Job? = null
     private var address = ""
     private var nodeName = "android-phone"
     private var shouldReconnect = false
     private var ready = false
     private var utteranceId: String? = null
+    private var endpointDetector: SpeechEndDetector? = null
+    @Volatile private var automaticEndpointHandled = false
+    private var cancelledUtteranceId: String? = null
     @Volatile private var serverActionInProgress = false
     private var timeline = Timeline()
 
@@ -138,13 +147,21 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     fun disconnect() {
         shouldReconnect = false
         ready = false
+        nextConversationTurnJob?.cancel()
+        nextConversationTurnJob = null
+        bargeInJob?.cancel()
+        bargeInJob = null
         stopResources()
         connectionJob?.cancel()
         connectionJob = null
         val old = transport
         transport = null
         scope.launch { old?.close() }
-        mutableState.value = mutableState.value.copy(connectionLabel = "Ej ansluten", status = VoiceStatus.Idle, canTalk = false, microphoneActive = false)
+        mutableState.value = mutableState.value.copy(
+            connectionLabel = "Ej ansluten", status = VoiceStatus.Idle, canTalk = false,
+            microphoneActive = false, conversationActive = false,
+            interruptionListening = false,
+        )
     }
 
     fun forgetCredentials() {
@@ -154,15 +171,77 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun startTalking() {
+        beginUtterance(automaticEndpoint = false)
+    }
+
+    fun startConversation() {
+        if (!ready || utteranceId != null || mutableState.value.conversationActive) return
+        mutableState.value = mutableState.value.copy(
+            conversationActive = true,
+            actionMessage = "Samtalsläge aktivt – jag lyssnar tills du gör en kort paus.",
+            errorMessage = null,
+        )
+        beginUtterance(automaticEndpoint = true)
+    }
+
+    fun stopConversation() {
+        nextConversationTurnJob?.cancel()
+        nextConversationTurnJob = null
+        bargeInJob?.cancel()
+        bargeInJob = null
+        val activeId = utteranceId
+        mutableState.value = mutableState.value.copy(
+            conversationActive = false,
+            interruptionListening = false,
+            actionMessage = "Samtalet avslutades.",
+        )
+        if (activeId != null) {
+            microphone.stop()
+            speaker.stop()
+            endpointDetector = null
+            scope.launch { transport?.sendText(responseCancel(activeId)) }
+        }
+        finishUtterance(scheduleConversation = false, expectedUtteranceId = activeId)
+    }
+
+    fun interruptAndListen() {
+        if (!mutableState.value.conversationActive) return
+        val activeId = utteranceId ?: run {
+            scheduleNextConversationTurn(0)
+            return
+        }
+        cancelledUtteranceId = activeId
+        bargeInJob?.cancel()
+        bargeInJob = null
+        endpointDetector = null
+        microphone.stop()
+        speaker.stop()
+        mutableState.value = mutableState.value.copy(interruptionListening = false, microphoneActive = false)
+        scope.launch {
+            transport?.sendText(responseCancel(activeId))
+            finishUtterance(scheduleConversation = false, expectedUtteranceId = activeId)
+            delay(150)
+            if (mutableState.value.conversationActive) beginUtterance(automaticEndpoint = true)
+        }
+    }
+
+    private fun beginUtterance(automaticEndpoint: Boolean) {
         if (!ready || utteranceId != null) return
         serverActionInProgress = false
+        nextConversationTurnJob?.cancel()
+        nextConversationTurnJob = null
+        bargeInJob?.cancel()
+        bargeInJob = null
         val id = UUID.randomUUID().toString()
         utteranceId = id
+        endpointDetector = if (automaticEndpoint) SpeechEndDetector() else null
+        automaticEndpointHandled = false
         timeline = Timeline(buttonDown = now())
         logTime("button_press", timeline.buttonDown)
         mutableState.value = mutableState.value.copy(
             status = VoiceStatus.Listening, microphoneActive = true, partialTranscript = "",
-            finalTranscript = "", responseText = "", latencies = Latencies(), errorMessage = null, droppedCaptureFrames = 0,
+            finalTranscript = "", responseText = "", latencies = Latencies(), errorMessage = null,
+            droppedCaptureFrames = 0, interruptionListening = false,
         )
         scope.launch {
             if (transport?.sendText(audioStart(id)) != true) {
@@ -181,8 +260,14 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                         if (transport?.trySendAudio(frame) != true) {
                             mutableState.value = mutableState.value.copy(droppedCaptureFrames = mutableState.value.droppedCaptureFrames + 1)
                         }
+                        when (endpointDetector?.accept(frame)) {
+                            SpeechDetection.EndOfSpeech -> handleAutomaticEndpoint(id)
+                            SpeechDetection.NoSpeechTimeout -> handleNoSpeechTimeout(id)
+                            else -> Unit
+                        }
                     },
                     onFirstFrame = { updateLatencies() },
+                    echoCancellation = automaticEndpoint,
                 )
             }.onFailure { fail(it.message ?: "Mikrofonfel") }
         }
@@ -190,6 +275,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     fun stopTalking(cancelledGesture: Boolean = false) {
         val id = utteranceId ?: return
+        endpointDetector = null
         microphone.stop()
         timeline.audioEnd = now()
         logTime("last_microphone_frame", timeline.lastMic)
@@ -205,6 +291,10 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     fun cancelResponse() {
         val id = utteranceId ?: return
+        if (mutableState.value.conversationActive) {
+            interruptAndListen()
+            return
+        }
         microphone.stop()
         speaker.stop()
         scope.launch { transport?.sendText(responseCancel(id)) }
@@ -212,6 +302,9 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun onPause() {
+        mutableState.value = mutableState.value.copy(conversationActive = false, interruptionListening = false)
+        nextConversationTurnJob?.cancel()
+        bargeInJob?.cancel()
         if (utteranceId != null) cancelResponse() else stopResources()
     }
 
@@ -227,6 +320,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     override suspend fun onBinary(data: ByteArray) {
+        if (cancelledUtteranceId != null) return
         val id = utteranceId ?: return
         if (timeline.firstTts == 0L) {
             timeline.firstTts = now()
@@ -239,6 +333,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     override suspend fun onClosed(cause: Throwable?) {
         ready = false
+        nextConversationTurnJob?.cancel()
         stopResources()
         if (cause?.message?.contains("(401)") == true) {
             tokenStore.clear()
@@ -249,6 +344,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 errorMessage = "Sessionen avvisades. Logga in igen i Inställningar.",
                 canTalk = false,
                 microphoneActive = false,
+                conversationActive = false,
+                interruptionListening = false,
             )
             return
         }
@@ -256,6 +353,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             mutableState.value = mutableState.value.copy(
                 connectionLabel = "Frånkopplad: ${cause?.message ?: "servern stängde"}",
                 status = VoiceStatus.Connecting, canTalk = false, microphoneActive = false,
+                conversationActive = false,
+                interruptionListening = false,
             )
         }
     }
@@ -289,6 +388,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             }
             is ServerEvent.TextFinal -> mutableState.value = mutableState.value.copy(responseText = event.text)
             is ServerEvent.TtsStart -> {
+                if (event.utteranceId != utteranceId || event.utteranceId == cancelledUtteranceId) return
+                cancelledUtteranceId = null
                 timeoutJob?.cancel()
                 timeoutJob = null
                 mutableState.value = mutableState.value.copy(status = VoiceStatus.Speaking)
@@ -298,6 +399,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                         timeline.playbackStart = now()
                         logTime("audio_playback_start", timeline.playbackStart)
                         updateLatencies()
+                        startBargeInMonitoring(event.utteranceId)
                     },
                     onPlaybackError = { message ->
                         scope.launch {
@@ -307,10 +409,16 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 )
             }
             is ServerEvent.TtsEnd -> {
+                if (event.utteranceId != utteranceId || event.utteranceId == cancelledUtteranceId) return
                 logTime("last_tts_frame", timeline.lastTts)
-                speaker.finish { if (!serverActionInProgress) finishUtterance() }
+                speaker.finish {
+                    if (!serverActionInProgress) finishUtterance(expectedUtteranceId = event.utteranceId)
+                }
             }
-            is ServerEvent.Cancelled -> finishUtterance()
+            is ServerEvent.Cancelled -> {
+                if (event.utteranceId == cancelledUtteranceId) cancelledUtteranceId = null
+                finishUtterance(expectedUtteranceId = event.utteranceId)
+            }
             is ServerEvent.ActionRequest -> handleAction(event)
             is ServerEvent.ActionStatus -> {
                 serverActionInProgress = true
@@ -407,13 +515,105 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
-    private fun finishUtterance() {
+    private fun finishUtterance(scheduleConversation: Boolean = true, expectedUtteranceId: String? = null) {
+        if (expectedUtteranceId != null && utteranceId != expectedUtteranceId) return
         serverActionInProgress = false
         timeoutJob?.cancel()
         timeoutJob = null
+        endpointDetector = null
+        bargeInJob?.cancel()
+        bargeInJob = null
         microphone.stop()
         utteranceId = null
-        mutableState.value = mutableState.value.copy(status = VoiceStatus.Idle, microphoneActive = false, canTalk = ready)
+        mutableState.value = mutableState.value.copy(
+            status = VoiceStatus.Idle,
+            microphoneActive = false,
+            interruptionListening = false,
+            canTalk = ready,
+        )
+        if (scheduleConversation && mutableState.value.conversationActive && mutableState.value.pendingAction == null) {
+            scheduleNextConversationTurn()
+        }
+    }
+
+    private fun scheduleNextConversationTurn(delayMs: Long = 350) {
+        nextConversationTurnJob?.cancel()
+        nextConversationTurnJob = scope.launch {
+            delay(delayMs)
+            if (
+                ready && utteranceId == null && mutableState.value.conversationActive &&
+                mutableState.value.pendingAction == null
+            ) {
+                beginUtterance(automaticEndpoint = true)
+            }
+        }
+    }
+
+    private fun startBargeInMonitoring(id: String) {
+        if (!mutableState.value.conversationActive || !microphone.supportsEchoCancellation) return
+        bargeInJob?.cancel()
+        bargeInJob = scope.launch {
+            delay(500)
+            if (
+                utteranceId != id || !mutableState.value.conversationActive ||
+                mutableState.value.status != VoiceStatus.Speaking
+            ) return@launch
+            val detector = SpeechEndDetector(
+                minimumSpeechRms = 800.0,
+                speechStartMs = 160,
+                trailingSilenceMs = 1_000,
+                noSpeechTimeoutMs = 120_000,
+            )
+            var triggered = false
+            runCatching {
+                microphone.start(
+                    onFrame = { frame ->
+                        if (!triggered && detector.accept(frame) == SpeechDetection.SpeechStarted) {
+                            triggered = true
+                            scope.launch {
+                                if (utteranceId == id && mutableState.value.conversationActive) interruptAndListen()
+                            }
+                        }
+                    },
+                    onFirstFrame = {
+                        mutableState.value = mutableState.value.copy(
+                            microphoneActive = true,
+                            interruptionListening = true,
+                        )
+                    },
+                    echoCancellation = true,
+                )
+            }.onFailure { error ->
+                Log.w("EutherVoxAudio", "Automatiskt talavbrott kunde inte startas", error)
+                mutableState.value = mutableState.value.copy(
+                    microphoneActive = false,
+                    interruptionListening = false,
+                )
+            }
+        }
+    }
+
+    private fun handleAutomaticEndpoint(id: String) {
+        if (automaticEndpointHandled || utteranceId != id) return
+        automaticEndpointHandled = true
+        scope.launch { stopTalking() }
+    }
+
+    private fun handleNoSpeechTimeout(id: String) {
+        if (automaticEndpointHandled || utteranceId != id) return
+        automaticEndpointHandled = true
+        endpointDetector = null
+        microphone.stop()
+        mutableState.value = mutableState.value.copy(
+            conversationActive = false,
+            microphoneActive = false,
+            interruptionListening = false,
+            status = VoiceStatus.Idle,
+            actionMessage = "Samtalet avslutades eftersom jag inte hörde något.",
+            canTalk = ready,
+        )
+        scope.launch { transport?.sendText(responseCancel(id)) }
+        utteranceId = null
     }
 
     private fun armTimeout(id: String, timeoutMs: Long, message: String) {
@@ -429,15 +629,24 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     private fun stopResources() {
         serverActionInProgress = false
+        endpointDetector = null
+        bargeInJob?.cancel()
+        bargeInJob = null
         microphone.stop()
         speaker.stop()
         timeoutJob?.cancel()
+        nextConversationTurnJob?.cancel()
         utteranceId = null
+        cancelledUtteranceId = null
     }
 
     private fun fail(message: String, recoverable: Boolean = true) {
         stopResources()
-        mutableState.value = mutableState.value.copy(status = VoiceStatus.Error, errorMessage = message, microphoneActive = false, canTalk = false)
+        mutableState.value = mutableState.value.copy(
+            status = VoiceStatus.Error, errorMessage = message, microphoneActive = false,
+            canTalk = false, conversationActive = false,
+            interruptionListening = false,
+        )
         if (recoverable) scope.launch {
             delay(2_000)
             if (ready) mutableState.value = mutableState.value.copy(status = VoiceStatus.Idle, errorMessage = null, canTalk = true)
