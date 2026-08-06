@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import logging
 from uuid import UUID
+
+
+LOG = logging.getLogger("euthervox.cast")
 
 
 @dataclass(frozen=True)
@@ -21,6 +25,9 @@ class CastService:
     def __init__(self, settings: dict):
         self.enabled = bool(settings.get("enabled", False))
         self.timeout_seconds = float(settings.get("timeout_seconds", 8.0))
+        self.operation_timeout_seconds = float(
+            settings.get("operation_timeout_seconds", self.timeout_seconds * 2 + 2)
+        )
         self.targets: dict[str, CastTarget] = {}
         for room, raw in dict(settings.get("rooms", {})).items():
             try:
@@ -49,14 +56,45 @@ class CastService:
         if not video_ids:
             raise ValueError("Inga spelbara YouTube-träffar hittades")
         async with self._lock:
-            await asyncio.to_thread(self._play, room, video_ids[0], video_ids[1:])
+            try:
+                await asyncio.wait_for(
+                    asyncio.to_thread(self._play, room, video_ids[0]),
+                    timeout=self.operation_timeout_seconds,
+                )
+            except TimeoutError as error:
+                self._discard_connection(room)
+                raise RuntimeError(
+                    f"Cast svarade inte inom {self.operation_timeout_seconds:g} sekunder"
+                ) from error
+            except Exception:
+                self._discard_connection(room)
+                raise
+            if len(video_ids) > 1:
+                LOG.info(
+                    "cast_started room=%s first_video=%s deferred_tracks=%d",
+                    room,
+                    video_ids[0],
+                    len(video_ids) - 1,
+                )
 
-    def _play(self, room: str, first_video_id: str, queued_ids: tuple[str, ...]) -> None:
+    def _play(self, room: str, first_video_id: str) -> None:
         try:
             import pychromecast
-            from pychromecast.controllers.youtube import YouTubeController
+            from pychromecast.const import MESSAGE_TYPE
+            from pychromecast.controllers.youtube import TYPE_GET_SCREEN_ID, YouTubeController
         except ImportError as error:
             raise RuntimeError("PyChromecast är inte installerat") from error
+
+        timeout_seconds = self.timeout_seconds
+
+        class TimedYouTubeController(YouTubeController):
+            def update_screen_id(controller_self) -> None:
+                controller_self.status_update_event.clear()
+                controller_self.send_message({MESSAGE_TYPE: TYPE_GET_SCREEN_ID})
+                if not controller_self.status_update_event.wait(timeout_seconds):
+                    controller_self.status_update_event.clear()
+                    raise RuntimeError("Nest svarade inte på YouTube-sessionens handskakning")
+                controller_self.status_update_event.clear()
 
         target = self.targets.get(room.casefold())
         if not self.enabled or not target:
@@ -70,9 +108,17 @@ class CastService:
                 timeout=self.timeout_seconds,
             )
             cast.wait(timeout=self.timeout_seconds)
-            controller = YouTubeController()
+            controller = TimedYouTubeController(timeout=self.timeout_seconds)
             cast.register_handler(controller)
-            self._connections[target.room] = (cast, controller)
         controller.play_video(first_video_id)
-        for video_id in queued_ids:
-            controller.add_to_queue(video_id)
+        self._connections[target.room] = (cast, controller)
+
+    def _discard_connection(self, room: str) -> None:
+        connection = self._connections.pop(room.casefold(), None)
+        if not connection:
+            return
+        cast, _controller = connection
+        try:
+            cast.disconnect(timeout=0)
+        except Exception:
+            LOG.debug("cast_disconnect_failed room=%s", room, exc_info=True)

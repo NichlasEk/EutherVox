@@ -35,6 +35,7 @@ directory = "state/playlists"
 
 [cast]
 enabled = false
+operation_timeout_seconds = 18
 
 [mcp]
 enabled = false

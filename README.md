@@ -158,6 +158,8 @@ Sätt ihop en spellista med svensk punk på Kök 2.
 
 Cast är avstängt i mockkonfigurationen. Real-beta-konfigurationen mappar aliaset `köket` till `Kök 2` på det lokala nätet. IP och Cast-UUID är enhetsmetadata, inte autentiseringshemligheter. Lägg till framtida rum under separata `[cast.rooms."alias"]`-tabeller.
 
+Första Cast-starten skickar endast den första sökträffen. YouTube-controllerns session och första uppspelningskommando har en hård tidsgräns; en mottagare som bara startar med ett pling men aldrig slutför handskakningen kastas ur anslutningscachen och ger telefonfallback i stället för en fastlåst app. Automatisk köning sker först i en senare slice när första uppspelningen kan verifieras stabilt på Nest Mini.
+
 ## MCP och modellstyrda verktyg
 
 Version 0.7 har ett riktigt MCP-servergränssnitt och Ollama tool-calling ovanpå samma vitlistade verktygsregister. Den deterministiska kommandotolkaren körs först för lägsta möjliga latens. Om den inte känner igen ett musikrelaterat yttrande får Qwen välja mellan `music_play` och `playlist_create`. Ett exempel som nu går genom modellverktyget är:
@@ -209,7 +211,7 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - En lokal lista som skapats utan OAuth innehåller tills vidare bara titel och stämningsfråga. Separat kommandoflöde för att synka en äldre lokal lista efter OAuth-koppling återstår.
 - YouTube Data API:s standardkvot begränsar hur många sökningar och låtinfogningar som kan göras per dygn.
 - Cast-adaptern använder PyChromecasts inofficiella YouTube-controller eftersom Google saknar ett publikt API för att välja YouTube Music-mottagare. Den är därför beta, konfigurationsstyrd och faller tillbaka till telefonen.
-- Cast-volym, paus/nästa och dirigering till fler rum återstår.
+- Cast-kö, volym, paus/nästa och dirigering till fler rum återstår.
 - MCP-servern använder än så länge stdio och utför inte fristående åtgärder; autentiserad Streamable HTTP kan läggas till när en extern agent behöver fjärrstyra EutherVox.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.
 - `ws://` är okrypterat och ska bara användas på betrott LAN. Den publika betarutten använder EutherOxide-inloggning och `wss://`.

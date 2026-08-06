@@ -53,6 +53,7 @@ directory = "state/playlists"
 [cast]
 enabled = true
 timeout_seconds = 8
+operation_timeout_seconds = 18
 
 [mcp]
 enabled = true

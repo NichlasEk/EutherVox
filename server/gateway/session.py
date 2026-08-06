@@ -338,7 +338,6 @@ class VoiceSession:
                         if not self.cast or not self.cast.configured(output_room):
                             raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {output_room}")
                         await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": action.acknowledgement})
-                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": action.acknowledgement})
                         await self.send_json({
                             "type": "action.status",
                             "action_id": action.action_id,
@@ -349,6 +348,11 @@ class VoiceSession:
                         tracks = await self.youtube.find_tracks(self.authenticated_user, preview)
                         await self.cast.play_youtube_tracks(output_room, tuple(track.provider_id for track in tracks))
                         await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": action.acknowledgement,
+                        })
+                        await self.send_json({
                             "type": "action.completed",
                             "action_id": action.action_id,
                             "status": "completed",
@@ -358,9 +362,23 @@ class VoiceSession:
                         return
                     except Exception as error:
                         LOG.exception("media_cast_failed session=%s room=%s", self.session_id, output_room)
-                        action = replace(
-                            action,
-                            acknowledgement=f"Cast till {output_room} misslyckades ({error}). Jag öppnar musiken på telefonen i stället.",
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "failed",
+                            "message": str(error),
+                        })
+                        fallback_arguments = dict(action.arguments)
+                        fallback_arguments.pop("output_room", None)
+                        action = DeviceAction(
+                            action_id=str(uuid4()),
+                            name="media.play",
+                            target_node=action.target_node,
+                            arguments=fallback_arguments,
+                            acknowledgement=(
+                                f"Cast till {output_room} misslyckades ({error}). "
+                                "Jag öppnar musiken på telefonen i stället."
+                            ),
                         )
                 await self.send_json({
                     "type": "assistant.text.delta",

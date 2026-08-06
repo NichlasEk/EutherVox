@@ -269,7 +269,8 @@ def test_tool_planner_is_used_when_deterministic_parser_does_not_match():
 
         action = next(item for item in sent if isinstance(item, dict) and item.get("type") == "action.request")
         assert action["name"] == "media.play"
-        assert action["arguments"]["output_room"] == "köket"
+        assert action["arguments"]["query"] == "mörk synth"
+        assert "output_room" not in action["arguments"]
         assert not any(isinstance(item, bytes) for item in sent)
 
     asyncio.run(scenario())
@@ -501,5 +502,57 @@ def test_direct_music_request_casts_search_results_to_room():
         controls = [item for item in sent if isinstance(item, dict)]
         assert not any(item.get("type") == "action.request" for item in controls)
         assert controls[-1]["type"] == "action.completed"
+
+    asyncio.run(scenario())
+
+
+def test_direct_cast_failure_returns_phone_action_instead_of_hanging():
+    class MusicStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Spela mörk synth i köket"
+
+    class FakeYouTube:
+        def authorized(self, user: str) -> bool:
+            return True
+
+        def preview(self, query: str) -> PlaylistPreview:
+            return PlaylistPreview("Mörk synth", query, 1)
+
+        async def find_tracks(self, user: str, preview: PlaylistPreview):
+            return (PlaylistTrack("youtube", "video-1", "Ett"),)
+
+    class FailingCast:
+        def configured(self, room: str) -> bool:
+            return room == "köket"
+
+        def display_name(self, room: str) -> str:
+            return "Kök 2"
+
+        async def play_youtube_tracks(self, room: str, video_ids: tuple[str, ...]):
+            raise RuntimeError("Cast svarade inte inom 18 sekunder")
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = MusicStt()
+        session.youtube = FakeYouTube()
+        session.cast = FailingCast()
+        session.authenticated_user = "nichlas"
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "cast-fallback"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "cast-fallback"}))
+        await session.response_task
+
+        controls = [item for item in sent if isinstance(item, dict)]
+        finals = [item for item in controls if item.get("type") == "assistant.text.final"]
+        fallback = next(item for item in controls if item.get("type") == "action.request")
+        failed = next(item for item in controls if item.get("type") == "action.completed")
+        assert len(finals) == 1
+        assert "Cast till köket misslyckades" in finals[0]["text"]
+        assert failed["status"] == "failed"
+        assert failed["action_id"] != fallback["action_id"]
+        assert fallback["name"] == "media.play"
+        assert "output_room" not in fallback["arguments"]
+        assert fallback["target"]["node_name"] == "unknown"
 
     asyncio.run(scenario())
