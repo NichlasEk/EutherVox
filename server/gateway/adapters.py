@@ -25,6 +25,7 @@ class Character:
     pitch: float
     max_initial_sentence_words: int
     music_acknowledgements: tuple[str, ...]
+    music_control_acknowledgements: dict[str, str]
 
 
 class SpeechToTextEngine(Protocol):
@@ -61,6 +62,9 @@ class TomlCharacterProvider:
             pitch=float(data["voice"]["pitch"]),
             max_initial_sentence_words=int(data["behavior"]["max_initial_sentence_words"]),
             music_acknowledgements=tuple(str(item) for item in data.get("music", {}).get("acknowledgements", [])),
+            music_control_acknowledgements={
+                str(key): str(value) for key, value in data.get("music", {}).get("control_acknowledgements", {}).items()
+            },
         )
 
 
@@ -68,6 +72,16 @@ def render_music_acknowledgement(character: Character, query: str, room: str) ->
     templates = character.music_acknowledgements or ("{query}. Jag spelar den i {room}.",)
     selector = sum(query.casefold().encode("utf-8")) % len(templates)
     return templates[selector].replace("{query}", query).replace("{room}", room)
+
+
+def render_music_control_acknowledgement(character: Character, command: str, room: str) -> str:
+    defaults = {
+        "pause": "Jag pausar musiken i {room}.",
+        "resume": "Jag fortsätter musiken i {room}.",
+        "stop": "Jag stoppar musiken i {room}.",
+    }
+    template = character.music_control_acknowledgements.get(command, defaults[command])
+    return template.replace("{room}", room)
 
 
 class MockSpeechToTextEngine:

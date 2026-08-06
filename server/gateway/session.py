@@ -9,7 +9,14 @@ import time
 from typing import Awaitable, Callable
 from uuid import uuid4
 
-from .adapters import CharacterProvider, SpeechToTextEngine, TextGenerationEngine, TextToSpeechEngine, render_music_acknowledgement
+from .adapters import (
+    CharacterProvider,
+    SpeechToTextEngine,
+    TextGenerationEngine,
+    TextToSpeechEngine,
+    render_music_acknowledgement,
+    render_music_control_acknowledgement,
+)
 from .actions import ActionPlanner, DeviceAction
 from .cast import CastService
 from .config import GatewayConfig
@@ -331,6 +338,44 @@ class VoiceSession:
                         self._reset()
                         return
                 output_room = str(action.arguments.get("output_room", ""))
+                if action.name in {"media.pause", "media.resume", "media.stop"}:
+                    command = action.name.removeprefix("media.")
+                    try:
+                        if not self.cast:
+                            raise RuntimeError("Cast-tjänsten är inte konfigurerad")
+                        await self.send_json({
+                            "type": "action.status",
+                            "action_id": action.action_id,
+                            "status": "running",
+                            "message": "Styr uppspelningen…",
+                        })
+                        controlled_room = await self.cast.control_playback(command, output_room)
+                        character = self.characters.get(self.character_name)
+                        acknowledgement = render_music_control_acknowledgement(character, command, controlled_room)
+                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": acknowledgement})
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": acknowledgement})
+                        try:
+                            await self._stream_action_speech(utterance_id, acknowledgement, character)
+                        except Exception:
+                            LOG.exception("music_control_tts_failed session=%s command=%s", self.session_id, command)
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "completed",
+                            "message": acknowledgement,
+                        })
+                    except Exception as error:
+                        LOG.exception("media_control_failed session=%s command=%s room=%s", self.session_id, command, output_room or "auto")
+                        failure_message = f"Jag kunde inte styra musiken: {error}"
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": failure_message})
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "failed",
+                            "message": failure_message,
+                        })
+                    self._reset()
+                    return
                 if action.name == "media.play" and output_room:
                     try:
                         if not self.authenticated_user or not self.youtube or not self.youtube.authorized(self.authenticated_user):

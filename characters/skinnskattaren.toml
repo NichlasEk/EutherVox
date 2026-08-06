@@ -25,3 +25,8 @@ acknowledgements = [
   "Gott val. {query} får eka genom {room}.",
   "{query}. Dimman kan vänta. Nu får {room} lite oväsen.",
 ]
+
+[music.control_acknowledgements]
+pause = "Jag håller tonen stilla i {room}."
+resume = "Då låter jag järnet sjunga vidare i {room}."
+stop = "Tystnad över berget. Musiken är stoppad i {room}."

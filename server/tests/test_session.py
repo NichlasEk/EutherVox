@@ -11,6 +11,7 @@ from gateway.adapters import (
     TomlCharacterProvider,
     _cached_whisper_snapshot,
     render_music_acknowledgement,
+    render_music_control_acknowledgement,
 )
 from gateway.actions import ActionPlanner
 from gateway.config import load_config
@@ -80,6 +81,15 @@ def test_skinnskattaren_music_acknowledgement_comes_from_character_profile():
     assert "köket" in acknowledgement
 
 
+def test_skinnskattaren_music_control_acknowledgement_comes_from_character_profile():
+    config = load_config(ROOT / "config.example.toml")
+    character = TomlCharacterProvider(config.profile_dir).get("skinnskattaren")
+
+    acknowledgement = render_music_control_acknowledgement(character, "resume", "köket")
+
+    assert acknowledgement == "Då låter jag järnet sjunga vidare i köket."
+
+
 def test_cached_whisper_snapshot_avoids_remote_model_lookup(tmp_path: Path):
     repository = tmp_path / "models--Systran--faster-whisper-small"
     (repository / "refs").mkdir(parents=True)
@@ -134,6 +144,34 @@ def test_action_planner_extracts_kitchen_output_from_music_and_playlist_requests
     assert music.arguments == {"provider": "youtube_music", "query": "Ghost", "output_room": "köket"}
     assert playlist is not None
     assert playlist.arguments == {"provider": "euthervox", "query": "mörk synth", "output_room": "köket"}
+
+
+def test_action_planner_accepts_natural_media_control_commands():
+    examples = {
+        "Pausa musiken i köket": ("media.pause", {"output_room": "köket"}),
+        "Sätt på paus": ("media.pause", {}),
+        "Kan du pausa den?": ("media.pause", {}),
+        "Fortsätt": ("media.resume", {}),
+        "Kan du fortsätta spela musiken i Kök 2?": ("media.resume", {"output_room": "köket"}),
+        "Återuppta uppspelningen": ("media.resume", {}),
+        "Spela vidare i köket": ("media.resume", {"output_room": "köket"}),
+        "Stoppa musiken": ("media.stop", {}),
+        "Kan du stoppa upp spelningen i köket?": ("media.stop", {"output_room": "köket"}),
+        "Kan du stänga av musiken i köket?": ("media.stop", {"output_room": "köket"}),
+        "Sluta spela nu": ("media.stop", {}),
+    }
+
+    for transcript, (expected_name, expected_arguments) in examples.items():
+        action = ActionPlanner().plan(transcript, "pixel")
+        assert action is not None, transcript
+        assert action.name == expected_name
+        assert action.arguments == expected_arguments
+
+
+def test_action_planner_does_not_mistake_conversation_about_controls_for_commands():
+    assert ActionPlanner().plan("Hur pausar man musiken?", "pixel") is None
+    assert ActionPlanner().plan("Vad betyder återuppta?", "pixel") is None
+    assert ActionPlanner().plan("Jag pausade musiken igår", "pixel") is None
 
 
 def test_action_planner_accepts_natural_and_observed_stt_music_requests():
@@ -571,6 +609,43 @@ def test_direct_music_request_casts_search_results_to_room():
         assert any(item.get("type") == "tts.start" for item in controls)
         assert any(isinstance(item, bytes) for item in sent)
         assert controls[-1]["type"] == "action.completed"
+
+    asyncio.run(scenario())
+
+
+def test_music_control_runs_on_server_and_speaks_character_acknowledgement():
+    class ControlStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Kan du pausa musiken?"
+
+    class FakeCast:
+        controlled = None
+
+        async def control_playback(self, command: str, requested_room: str = "") -> str:
+            self.controlled = (command, requested_room)
+            return "köket"
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = ControlStt()
+        session.cast = FakeCast()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "control-pause"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "control-pause"}))
+        await session.response_task
+
+        assert session.cast.controlled == ("pause", "")
+        controls = [item for item in sent if isinstance(item, dict)]
+        assert any(item.get("type") == "action.status" and item.get("status") == "running" for item in controls)
+        final = next(item for item in controls if item.get("type") == "assistant.text.final")
+        assert final["text"] == "Jag håller tonen stilla i köket."
+        assert any(item.get("type") == "tts.start" for item in controls)
+        assert any(isinstance(item, bytes) for item in sent)
+        completed = next(item for item in controls if item.get("type") == "action.completed")
+        assert completed["status"] == "completed"
+        assert not any(item.get("type") == "action.request" for item in controls)
+        assert session.phase is Phase.READY
 
     asyncio.run(scenario())
 

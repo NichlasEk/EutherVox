@@ -61,6 +61,35 @@ class CastService:
         target = self.targets.get(room.casefold())
         return target.friendly_name if target else room
 
+    def resolve_control_room(self, requested_room: str = "") -> str:
+        room = requested_room.casefold().strip()
+        if room:
+            if room not in self.targets:
+                raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {requested_room}")
+            return room
+        active_rooms = [candidate for candidate in self._connections if candidate in self.targets]
+        if len(active_rooms) == 1:
+            return active_rooms[0]
+        if len(self.targets) == 1:
+            return next(iter(self.targets))
+        if not self.targets:
+            raise RuntimeError("Ingen Cast-enhet är konfigurerad")
+        raise RuntimeError("Ange vilket rum som ska styras")
+
+    async def control_playback(self, command: str, requested_room: str = "") -> str:
+        if command not in {"pause", "resume", "stop"}:
+            raise ValueError(f"Okänt mediakommando: {command}")
+        room = self.resolve_control_room(requested_room)
+        async with self._lock:
+            operation = asyncio.create_task(asyncio.to_thread(self._control_playback_sync, room, command))
+            try:
+                await asyncio.wait_for(operation, timeout=self.operation_timeout_seconds)
+            except TimeoutError as error:
+                if operation.done() and not operation.cancelled():
+                    raise RuntimeError(f"Cast-kommandot avbröts internt: {error}") from error
+                raise RuntimeError(f"Cast svarade inte inom {self.operation_timeout_seconds:g} sekunder") from error
+        return room
+
     async def play_youtube_tracks(self, room: str, video_ids: tuple[str, ...]) -> None:
         if not video_ids:
             raise ValueError("Inga spelbara YouTube-träffar hittades")
@@ -193,6 +222,53 @@ class CastService:
             audio.title,
         )
 
+    def _control_playback_sync(self, room: str, command: str) -> None:
+        try:
+            import pychromecast
+        except ImportError as error:
+            raise RuntimeError("PyChromecast är inte installerat") from error
+        target = self.targets.get(room)
+        if not self.enabled or not target:
+            raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {room}")
+        existing = self._connections.get(room)
+        created = existing is None
+        if existing:
+            cast, controller = existing
+        else:
+            cast = pychromecast.get_chromecast_from_host(
+                (target.host, target.port, target.uuid, target.model_name, target.friendly_name),
+                timeout=self.timeout_seconds,
+            )
+            cast.wait(timeout=self.timeout_seconds)
+            controller = cast.media_controller
+        try:
+            self._sync_media_status(controller, room)
+            self._apply_media_control(cast, controller, command, room)
+        except Exception:
+            if created:
+                self._disconnect(cast, room)
+            else:
+                self._discard_connection(room)
+            raise
+        if command == "stop":
+            if created:
+                self._disconnect(cast, room)
+            else:
+                self._discard_connection(room)
+        else:
+            self._connections[room] = (cast, controller)
+
+    def _apply_media_control(self, cast: object, controller: object, command: str, room: str) -> None:
+        if not controller.status.media_session_id:
+            raise RuntimeError(f"Ingen aktiv uppspelning finns i {room}")
+        if command == "pause":
+            controller.pause(timeout=self.playback_confirmation_seconds)
+        elif command == "resume":
+            controller.play(timeout=self.playback_confirmation_seconds)
+        else:
+            cast.quit_app(timeout=self.playback_confirmation_seconds)
+        LOG.info("cast_audio_control room=%s command=%s", room, command)
+
     def _sync_media_status(self, controller: object, room: str) -> None:
         response_received = threading.Event()
 
@@ -255,6 +331,9 @@ class CastService:
         if not connection:
             return
         cast, _controller = connection
+        self._disconnect(cast, room)
+
+    def _disconnect(self, cast: object, room: str) -> None:
         try:
             cast.disconnect(timeout=0)
         except Exception:

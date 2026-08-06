@@ -59,6 +59,66 @@ def test_repeated_room_request_rotates_away_from_previous_first_track():
     asyncio.run(scenario())
 
 
+def test_control_without_room_uses_only_configured_target():
+    service = make_service()
+
+    assert service.resolve_control_room() == "köket"
+    assert service.resolve_control_room("KÖKET") == "köket"
+
+
+def test_media_controls_use_controller_and_stop_receiver():
+    class FakeStatus:
+        media_session_id = 42
+
+    class FakeController:
+        status = FakeStatus()
+        pause_calls = 0
+        play_calls = 0
+
+        def pause(self, timeout: float):
+            assert timeout == 0.02
+            self.pause_calls += 1
+
+        def play(self, timeout: float):
+            assert timeout == 0.02
+            self.play_calls += 1
+
+    class FakeCast:
+        quit_calls = 0
+
+        def quit_app(self, timeout: float):
+            assert timeout == 0.02
+            self.quit_calls += 1
+
+    service = make_service(playback_confirmation_seconds=0.02)
+    cast = FakeCast()
+    controller = FakeController()
+
+    service._apply_media_control(cast, controller, "pause", "köket")
+    service._apply_media_control(cast, controller, "resume", "köket")
+    service._apply_media_control(cast, controller, "stop", "köket")
+
+    assert controller.pause_calls == 1
+    assert controller.play_calls == 1
+    assert cast.quit_calls == 1
+
+
+def test_media_control_requires_an_active_session():
+    class FakeStatus:
+        media_session_id = None
+
+    class FakeController:
+        status = FakeStatus()
+
+    service = make_service(playback_confirmation_seconds=0.02)
+
+    try:
+        service._apply_media_control(object(), FakeController(), "pause", "köket")
+        assert False, "RuntimeError expected"
+    except RuntimeError as error:
+        assert "Ingen aktiv uppspelning" in str(error)
+
+
 def test_cast_timeout_discards_cached_connection_and_returns_error():
     class FakeCast:
         disconnected = False

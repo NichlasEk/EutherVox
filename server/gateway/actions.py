@@ -38,6 +38,12 @@ class ActionPlanner:
         re.IGNORECASE,
     )
     _TRACK_NOUN_PREFIX = re.compile(r"^(?:låten\s+med\s+namnet|låten)\s+", re.IGNORECASE)
+    _MEDIA_CONTROL = re.compile(
+        r"^\s*(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?"
+        r"(?P<command>pausa|pause|sätt(?:a)?\s+på\s+paus|fortsätt(?:a)?(?:\s+spela)?|spela\s+vidare|återuppta|resume|stoppa|stäng(?:a)?\s+av|sluta\s+spela)"
+        r"(?:\s+(?:musiken|låten|upp\s*spelningen|spelningen|den))?(?:\s+(?:tack|nu))?\s*[.!?]*\s*$",
+        re.IGNORECASE,
+    )
     _YOUTUBE_SUFFIX = re.compile(r"\s+(?:på|i)\s+youtube\s+music\s*$", re.IGNORECASE)
     _OUTPUT_SUFFIX = re.compile(r"\s+(?:i|på|till)\s+(?P<room>köket|kök\s*2)\s*$", re.IGNORECASE)
     _PLAYLIST_AFTER_NOUN = re.compile(
@@ -67,6 +73,26 @@ class ActionPlanner:
 
     def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
         command = self._CONVERSATION_PREFIX.sub("", transcript)
+        control_text, control_room = self._extract_output(command.strip(" .!?"))
+        control = self._MEDIA_CONTROL.match(control_text)
+        if control:
+            spoken_command = control.group("command").casefold()
+            if spoken_command in {"pausa", "pause", "sätt på paus", "sätta på paus"}:
+                action_name, verb = "media.pause", "pausar"
+            elif spoken_command in {"fortsätt", "fortsätta", "fortsätt spela", "fortsätta spela", "spela vidare", "återuppta", "resume"}:
+                action_name, verb = "media.resume", "fortsätter"
+            else:
+                action_name, verb = "media.stop", "stoppar"
+            arguments: dict[str, object] = {}
+            if control_room:
+                arguments["output_room"] = control_room
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name=action_name,
+                target_node=node_name,
+                arguments=arguments,
+                acknowledgement=f"Jag {verb} musiken" + (f" i {control_room}." if control_room else "."),
+            )
         playlist_command = self._YOUTUBE_SUFFIX.sub("", command.strip(" .!?"))
         playlist_command, output_room = self._extract_output(playlist_command)
         playlist = (
