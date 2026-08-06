@@ -36,6 +36,13 @@ def normalize_music_search_query(query: str) -> str:
     return clean or query.strip(" .!?")
 
 
+def is_on_demand_music_result(item: dict) -> bool:
+    snippet = item.get("snippet", {})
+    title = str(snippet.get("title", ""))
+    broadcast = str(snippet.get("liveBroadcastContent", "none")).casefold()
+    return broadcast not in {"live", "upcoming"} and not re.search(r"\b24\s*/\s*7\b", title)
+
+
 @dataclass(frozen=True)
 class PlaylistPreview:
     title: str
@@ -136,7 +143,7 @@ class YouTubePlaylistService:
         tracks = tuple(
             PlaylistTrack("youtube", item["id"]["videoId"], str(item.get("snippet", {}).get("title", "")))
             for item in search.json().get("items", [])
-            if item.get("id", {}).get("videoId")
+            if item.get("id", {}).get("videoId") and is_on_demand_music_result(item)
         )
         if not tracks:
             raise RuntimeError("YouTube hittade inga musikträffar")

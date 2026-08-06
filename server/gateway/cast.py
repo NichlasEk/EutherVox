@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 import logging
+import threading
 import time
 from uuid import UUID
 
@@ -51,6 +52,7 @@ class CastService:
             self.targets[target.room] = target
         self._lock = asyncio.Lock()
         self._connections: dict[str, tuple[object, object]] = {}
+        self._last_video_ids: dict[str, str] = {}
 
     def configured(self, room: str) -> bool:
         return self.enabled and room.casefold() in self.targets
@@ -62,16 +64,19 @@ class CastService:
     async def play_youtube_tracks(self, room: str, video_ids: tuple[str, ...]) -> None:
         if not video_ids:
             raise ValueError("Inga spelbara YouTube-träffar hittades")
+        room_key = room.casefold()
+        previous_video_id = self._last_video_ids.get(room_key, "")
+        selected_video_id = next((video_id for video_id in video_ids if video_id != previous_video_id), video_ids[0])
         async with self._lock:
             try:
                 if self.backend == "direct_audio":
                     audio = await asyncio.wait_for(
-                        self.audio_resolver.resolve(video_ids[0]),
+                        self.audio_resolver.resolve(selected_video_id),
                         timeout=self.resolver_timeout_seconds,
                     )
                     operation = asyncio.to_thread(self._play_direct_audio, room, audio)
                 elif self.backend == "youtube_controller":
-                    operation = asyncio.to_thread(self._play_youtube_controller, room, video_ids[0])
+                    operation = asyncio.to_thread(self._play_youtube_controller, room, selected_video_id)
                 else:
                     raise RuntimeError(f"Okänd Cast-backend: {self.backend}")
                 operation_task = asyncio.create_task(operation)
@@ -89,11 +94,12 @@ class CastService:
             except Exception:
                 self._discard_connection(room)
                 raise
+            self._last_video_ids[room_key] = selected_video_id
             if len(video_ids) > 1:
                 LOG.info(
                     "cast_started room=%s first_video=%s deferred_tracks=%d",
                     room,
-                    video_ids[0],
+                    selected_video_id,
                     len(video_ids) - 1,
                 )
 
@@ -157,6 +163,8 @@ class CastService:
             LOG.info("cast_audio_connected room=%s", target.room)
         controller = cast.media_controller
         try:
+            self._sync_media_status(controller, target.room)
+            self._reset_existing_receiver(cast, controller, target.room)
             controller.play_media(
                 audio.url,
                 audio.content_type,
@@ -165,7 +173,7 @@ class CastService:
                 stream_type="BUFFERED",
             )
             LOG.info("cast_audio_media_sent room=%s video_id=%s", target.room, audio.video_id)
-            self._confirm_playback(controller, target.room)
+            self._confirm_playback(controller, target.room, audio.url)
         except Exception:
             if created:
                 try:
@@ -182,8 +190,40 @@ class CastService:
             audio.title,
         )
 
-    def _confirm_playback(self, controller: object, room: str) -> None:
+    def _sync_media_status(self, controller: object, room: str) -> None:
+        response_received = threading.Event()
+
+        def status_response(_success: bool, _response: object) -> None:
+            response_received.set()
+
+        controller.update_status(callback_function=status_response)
+        if not response_received.wait(timeout=self.playback_confirmation_seconds):
+            raise RuntimeError("Nest svarade inte på mediastatusförfrågan")
+        LOG.info(
+            "cast_audio_synced room=%s player_state=%s media_session=%s",
+            room,
+            controller.status.player_state,
+            controller.status.media_session_id or "none",
+        )
+
+    def _reset_existing_receiver(self, cast: object, controller: object, room: str) -> None:
+        if not controller.status.media_session_id:
+            return
+        LOG.info(
+            "cast_audio_replace room=%s player_state=%s media_session=%s",
+            room,
+            controller.status.player_state,
+            controller.status.media_session_id,
+        )
+        cast.quit_app(timeout=self.playback_confirmation_seconds)
+        LOG.info("cast_audio_receiver_reset room=%s", room)
+
+    def _confirm_playback(self, controller: object, room: str, expected_content_id: str) -> None:
         controller.block_until_active(timeout=self.playback_confirmation_seconds)
+        load_deadline = time.monotonic() + self.playback_confirmation_seconds
+        while controller.status.content_id != expected_content_id and time.monotonic() < load_deadline:
+            controller.update_status()
+            time.sleep(0.2)
         status = controller.status
         LOG.info(
             "cast_audio_status room=%s player_state=%s media_session=%s",
@@ -193,6 +233,8 @@ class CastService:
         )
         if not status.media_session_id:
             raise RuntimeError("Nest skapade ingen mediasession")
+        if status.content_id != expected_content_id:
+            raise RuntimeError("Nest bekräftade inte det nya mediet")
         if not status.player_is_playing:
             LOG.info("cast_audio_resume room=%s player_state=%s", room, status.player_state)
             deadline = time.monotonic() + self.playback_confirmation_seconds

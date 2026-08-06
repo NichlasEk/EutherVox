@@ -9,7 +9,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request
 
 from gateway.main import OAuthHttpHandler
-from gateway.youtube import YouTubePlaylistService, normalize_music_search_query
+from gateway.youtube import YouTubePlaylistService, is_on_demand_music_result, normalize_music_search_query
 
 
 class FakeYouTube:
@@ -35,6 +35,12 @@ def test_music_search_query_repairs_common_stt_joins_and_fillers():
     assert normalize_music_search_query("lite mörkcyberpunk") == "mörk cyberpunk"
     assert normalize_music_search_query("Något lugnt synthwave.") == "lugnt synthwave"
     assert normalize_music_search_query("Ghost") == "Ghost"
+
+
+def test_music_search_skips_live_radio_and_24_7_streams():
+    assert not is_on_demand_music_result({"snippet": {"title": "Cyberpunk Radio", "liveBroadcastContent": "live"}})
+    assert not is_on_demand_music_result({"snippet": {"title": "Cyberpunk music 24/7", "liveBroadcastContent": "none"}})
+    assert is_on_demand_music_result({"snippet": {"title": "Cyberpunk Mix", "liveBroadcastContent": "none"}})
 
 
 def test_oauth_start_redirects_to_google():

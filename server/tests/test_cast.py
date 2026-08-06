@@ -40,6 +40,20 @@ def test_cast_starts_only_first_track_without_blocking_on_queue():
     asyncio.run(scenario())
 
 
+def test_repeated_room_request_rotates_away_from_previous_first_track():
+    async def scenario():
+        service = make_service()
+        calls = []
+        service._play_youtube_controller = lambda room, video_id: calls.append((room, video_id))
+
+        await service.play_youtube_tracks("köket", ("video-1", "video-2", "video-3"))
+        await service.play_youtube_tracks("köket", ("video-1", "video-2", "video-3"))
+
+        assert calls == [("köket", "video-1"), ("köket", "video-2")]
+
+    asyncio.run(scenario())
+
+
 def test_cast_timeout_discards_cached_connection_and_returns_error():
     class FakeCast:
         disconnected = False
@@ -112,6 +126,7 @@ def test_direct_audio_backend_resolves_and_casts_only_first_track():
 def test_paused_cast_session_is_explicitly_resumed():
     class FakeStatus:
         media_session_id = 42
+        content_id = "https://media.example/new.m4a"
         player_state = "PAUSED"
         player_is_playing = False
 
@@ -134,9 +149,90 @@ def test_paused_cast_session_is_explicitly_resumed():
     service = make_service(playback_confirmation_seconds=0.02)
     controller = FakeController()
 
-    service._confirm_playback(controller, "köket")
+    service._confirm_playback(controller, "köket", "https://media.example/new.m4a")
 
     assert controller.play_calls == 1
+
+
+def test_existing_media_session_resets_receiver_before_replacement():
+    class FakeStatus:
+        media_session_id = 41
+        player_state = "PAUSED"
+
+    class FakeController:
+        status = FakeStatus()
+
+    class FakeCast:
+        quit_calls = 0
+
+        def quit_app(self, timeout: float):
+            assert timeout == 0.02
+            self.quit_calls += 1
+
+    service = make_service(playback_confirmation_seconds=0.02)
+    controller = FakeController()
+    cast = FakeCast()
+
+    service._reset_existing_receiver(cast, controller, "köket")
+
+    assert cast.quit_calls == 1
+
+
+def test_media_status_is_synchronized_before_replacement_decision():
+    class FakeStatus:
+        media_session_id = None
+        player_state = "UNKNOWN"
+
+    class FakeController:
+        status = FakeStatus()
+
+        def update_status(self, *, callback_function):
+            self.status.media_session_id = 41
+            self.status.player_state = "PAUSED"
+            callback_function(True, {})
+
+    service = make_service(playback_confirmation_seconds=0.02)
+    controller = FakeController()
+
+    service._sync_media_status(controller, "köket")
+
+    assert controller.status.media_session_id == 41
+    assert controller.status.player_state == "PAUSED"
+
+
+def test_existing_session_is_not_resumed_before_new_media_is_loaded():
+    class FakeStatus:
+        media_session_id = 41
+        content_id = "https://media.example/old.m4a"
+        player_state = "PAUSED"
+        player_is_playing = False
+
+    class FakeController:
+        status = FakeStatus()
+        update_calls = 0
+        played_content_id = ""
+
+        def block_until_active(self, timeout: float):
+            assert timeout == 0.05
+
+        def update_status(self):
+            self.update_calls += 1
+            self.status.media_session_id = 42
+            self.status.content_id = "https://media.example/new.m4a"
+
+        def play(self, timeout: float):
+            assert timeout == 0.05
+            self.played_content_id = self.status.content_id
+            self.status.player_state = "PLAYING"
+            self.status.player_is_playing = True
+
+    service = make_service(playback_confirmation_seconds=0.05)
+    controller = FakeController()
+
+    service._confirm_playback(controller, "köket", "https://media.example/new.m4a")
+
+    assert controller.update_calls >= 1
+    assert controller.played_content_id == "https://media.example/new.m4a"
 
 
 def test_youtube_audio_resolver_accepts_only_googlevideo_https_streams():
