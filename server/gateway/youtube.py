@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,8 @@ import time
 from urllib.parse import urlencode
 
 import httpx
+
+from .playlists import LocalPlaylist, PlaylistTrack
 
 
 YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube"
@@ -38,31 +41,31 @@ class YouTubePlaylistService:
         self.enabled = bool(settings.get("enabled", False))
         self.client_id = os.environ.get(str(settings.get("client_id_env", "EUTHERVOX_GOOGLE_CLIENT_ID")), "")
         self.client_secret = os.environ.get(str(settings.get("client_secret_env", "EUTHERVOX_GOOGLE_CLIENT_SECRET")), "")
-        self.owner_username = os.environ.get(str(settings.get("owner_username_env", "EUTHERVOX_YOUTUBE_OWNER")), "")
         self.redirect_uri = str(settings.get("redirect_uri", ""))
-        token_path = Path(str(settings.get("token_path", "state/youtube-token.json")))
-        self.token_path = token_path if token_path.is_absolute() else config_dir / token_path
+        token_dir = Path(str(settings.get("token_directory", "state/youtube-tokens")))
+        self.token_dir = token_dir if token_dir.is_absolute() else config_dir / token_dir
         self.playlist_size = min(25, max(5, int(settings.get("playlist_size", 15))))
-        self._states: dict[str, float] = {}
+        self._states: dict[str, tuple[float, str]] = {}
         self._lock = asyncio.Lock()
 
     @property
     def configured(self) -> bool:
         return self.enabled and bool(self.client_id and self.client_secret and self.redirect_uri)
 
-    @property
-    def authorized(self) -> bool:
-        return self.configured and self.token_path.is_file()
+    def authorized(self, authenticated_user: str) -> bool:
+        return self.configured and self._token_path(authenticated_user).is_file()
 
     def can_use(self, authenticated_user: str) -> bool:
-        return bool(self.owner_username) and secrets.compare_digest(authenticated_user.casefold(), self.owner_username.casefold())
+        return bool(authenticated_user.strip())
 
-    def authorization_url(self) -> str:
+    def authorization_url(self, authenticated_user: str) -> str:
         if not self.configured:
             raise RuntimeError("YouTube OAuth är inte konfigurerat på servern")
+        if not self.can_use(authenticated_user):
+            raise RuntimeError("En verifierad användare krävs")
         self._discard_expired_states()
         state = secrets.token_urlsafe(32)
-        self._states[state] = time.monotonic() + 600
+        self._states[state] = (time.monotonic() + 600, authenticated_user)
         return "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode({
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
@@ -73,11 +76,13 @@ class YouTubePlaylistService:
             "state": state,
         })
 
-    async def complete_authorization(self, code: str, state: str) -> None:
+    async def complete_authorization(self, code: str, state: str, authenticated_user: str) -> None:
         self._discard_expired_states()
-        expires = self._states.pop(state, None)
-        if expires is None or expires < time.monotonic():
+        pending = self._states.pop(state, None)
+        if pending is None or pending[0] < time.monotonic():
             raise ValueError("OAuth-state saknas eller har gått ut")
+        if not secrets.compare_digest(pending[1].casefold(), authenticated_user.casefold()):
+            raise ValueError("OAuth-state tillhör en annan användare")
         async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
             response = await client.post("https://oauth2.googleapis.com/token", data={
                 "client_id": self.client_id,
@@ -90,34 +95,47 @@ class YouTubePlaylistService:
             token = response.json()
         if not token.get("refresh_token"):
             raise RuntimeError("Google returnerade ingen refresh token")
-        self._write_token(token)
+        self._write_token(authenticated_user, token)
 
     def preview(self, query: str) -> PlaylistPreview:
         clean = query.strip(" .!?")
         title = f"EutherVox – {clean[:60]}"
         return PlaylistPreview(title=title, query=clean, track_count=self.playlist_size)
 
-    async def create_playlist(self, preview: PlaylistPreview) -> CreatedPlaylist:
+    async def find_tracks(self, authenticated_user: str, preview: PlaylistPreview) -> tuple[PlaylistTrack, ...]:
+        access_token = await self._access_token(authenticated_user)
+        headers = {"Authorization": f"Bearer {access_token}"}
+        async with httpx.AsyncClient(timeout=30, trust_env=False, headers=headers) as client:
+            search = await client.get("https://www.googleapis.com/youtube/v3/search", params={
+                "part": "snippet",
+                "type": "video",
+                "videoCategoryId": "10",
+                "maxResults": preview.track_count,
+                "q": preview.query,
+            })
+            search.raise_for_status()
+        tracks = tuple(
+            PlaylistTrack("youtube", item["id"]["videoId"], str(item.get("snippet", {}).get("title", "")))
+            for item in search.json().get("items", [])
+            if item.get("id", {}).get("videoId")
+        )
+        if not tracks:
+            raise RuntimeError("YouTube hittade inga musikträffar")
+        return tracks
+
+    async def create_playlist(self, authenticated_user: str, playlist: LocalPlaylist) -> CreatedPlaylist:
         async with self._lock:
-            access_token = await self._access_token()
+            access_token = await self._access_token(authenticated_user)
             headers = {"Authorization": f"Bearer {access_token}"}
             async with httpx.AsyncClient(timeout=30, trust_env=False, headers=headers) as client:
-                search = await client.get("https://www.googleapis.com/youtube/v3/search", params={
-                    "part": "snippet",
-                    "type": "video",
-                    "videoCategoryId": "10",
-                    "maxResults": preview.track_count,
-                    "q": preview.query,
-                })
-                search.raise_for_status()
-                video_ids = [item["id"]["videoId"] for item in search.json().get("items", []) if item.get("id", {}).get("videoId")]
+                video_ids = [track.provider_id for track in playlist.tracks if track.provider == "youtube"]
                 if not video_ids:
-                    raise RuntimeError("YouTube hittade inga musikträffar")
+                    raise RuntimeError("Den lokala spellistan saknar YouTube-träffar")
                 created = await client.post(
                     "https://www.googleapis.com/youtube/v3/playlists",
                     params={"part": "snippet,status"},
                     json={
-                        "snippet": {"title": preview.title, "description": f"Skapad av EutherVox från: {preview.query}"},
+                        "snippet": {"title": playlist.title, "description": f"Skapad av EutherVox från: {playlist.query}"},
                         "status": {"privacyStatus": "private"},
                     },
                 )
@@ -132,12 +150,13 @@ class YouTubePlaylistService:
                     )
                     response.raise_for_status()
                     added += 1
-        return CreatedPlaylist(playlist_id, preview.title, added)
+        return CreatedPlaylist(playlist_id, playlist.title, added)
 
-    async def _access_token(self) -> str:
-        if not self.authorized:
+    async def _access_token(self, authenticated_user: str) -> str:
+        token_path = self._token_path(authenticated_user)
+        if not self.authorized(authenticated_user):
             raise RuntimeError("YouTube-kontot är inte kopplat")
-        token = json.loads(self.token_path.read_text(encoding="utf-8"))
+        token = json.loads(token_path.read_text(encoding="utf-8"))
         if token.get("access_token") and float(token.get("expires_at", 0)) > time.time() + 60:
             return str(token["access_token"])
         async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
@@ -150,18 +169,24 @@ class YouTubePlaylistService:
             response.raise_for_status()
             refreshed = response.json()
         token.update(refreshed)
-        self._write_token(token)
+        self._write_token(authenticated_user, token)
         return str(token["access_token"])
 
-    def _write_token(self, token: dict) -> None:
+    def _write_token(self, authenticated_user: str, token: dict) -> None:
         stored = dict(token)
         stored["expires_at"] = time.time() + int(stored.get("expires_in", 3600))
-        self.token_path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.token_path.with_suffix(".tmp")
+        self.token_dir.mkdir(parents=True, exist_ok=True)
+        self.token_dir.chmod(0o700)
+        token_path = self._token_path(authenticated_user)
+        temporary = token_path.with_suffix(".tmp")
         temporary.write_text(json.dumps(stored), encoding="utf-8")
         temporary.chmod(0o600)
-        temporary.replace(self.token_path)
+        temporary.replace(token_path)
+
+    def _token_path(self, authenticated_user: str) -> Path:
+        key = hashlib.sha256(authenticated_user.casefold().encode()).hexdigest()[:24]
+        return self.token_dir / f"{key}.json"
 
     def _discard_expired_states(self) -> None:
         now = time.monotonic()
-        self._states = {state: expiry for state, expiry in self._states.items() if expiry >= now}
+        self._states = {state: pending for state, pending in self._states.items() if pending[0] >= now}

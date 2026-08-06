@@ -45,8 +45,8 @@ class ActionPlanner:
                     action_id=str(uuid4()),
                     name="playlist.create",
                     target_node=node_name,
-                    arguments={"provider": "youtube", "query": query},
-                    acknowledgement=f"Jag kan skapa en privat spellista med {query}. Bekräfta i appen.",
+                    arguments={"provider": "euthervox", "query": query},
+                    acknowledgement=f"Jag kan skapa en privat lista med {query} och spegla den till YouTube Music när kontot är kopplat. Bekräfta i appen.",
                     requires_confirmation=True,
                 )
         if re.match(r"^\s*spela\s+in\b", transcript, re.IGNORECASE):

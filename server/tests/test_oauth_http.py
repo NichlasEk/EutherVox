@@ -2,26 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
 from gateway.main import OAuthHttpHandler
+from gateway.youtube import YouTubePlaylistService
 
 
 class FakeYouTube:
     configured = True
-    authorized = False
 
     def can_use(self, authenticated_user: str) -> bool:
-        return authenticated_user == "nichlas"
+        return bool(authenticated_user)
 
-    def authorization_url(self) -> str:
+    def authorized(self, authenticated_user: str) -> bool:
+        return False
+
+    def authorization_url(self, authenticated_user: str) -> str:
+        assert authenticated_user == "nichlas"
         return "https://accounts.google.com/test"
 
-    async def complete_authorization(self, code: str, state: str) -> None:
+    async def complete_authorization(self, code: str, state: str, authenticated_user: str) -> None:
         assert code == "code-1"
         assert state == "state-1"
+        assert authenticated_user == "nichlas"
 
 
 def test_oauth_start_redirects_to_google():
@@ -49,12 +56,41 @@ def test_oauth_status_is_machine_readable_and_not_cached():
     asyncio.run(scenario())
 
 
-def test_oauth_start_rejects_non_owner():
+def test_oauth_start_rejects_unauthenticated_request():
     async def scenario():
         response = await OAuthHttpHandler(FakeYouTube())(
             None,
-            Request("/euthervox/oauth/start", Headers({"X-Euther-User": "someone-else"})),
+            Request("/euthervox/oauth/start", Headers()),
         )
         assert response.status_code == 403
 
     asyncio.run(scenario())
+
+
+def test_oauth_tokens_and_state_are_bound_to_each_user(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GOOGLE_CLIENT_ID", "client")
+    monkeypatch.setenv("TEST_GOOGLE_CLIENT_SECRET", "secret")
+    service = YouTubePlaylistService({
+        "enabled": True,
+        "client_id_env": "TEST_GOOGLE_CLIENT_ID",
+        "client_secret_env": "TEST_GOOGLE_CLIENT_SECRET",
+        "redirect_uri": "https://example.test/callback",
+        "token_directory": str(tmp_path / "tokens"),
+    }, tmp_path)
+    service._write_token("anna", {"access_token": "anna-token", "refresh_token": "anna-refresh"})
+    service._write_token("bo", {"access_token": "bo-token", "refresh_token": "bo-refresh"})
+
+    assert service.authorized("anna")
+    assert service.authorized("bo")
+    assert len(list((tmp_path / "tokens").glob("*.json"))) == 2
+
+    state = parse_qs(urlsplit(service.authorization_url("anna")).query)["state"][0]
+
+    async def wrong_user():
+        try:
+            await service.complete_authorization("unused", state, "bo")
+            assert False, "User-bound OAuth state should be rejected"
+        except ValueError as error:
+            assert "annan användare" in str(error)
+
+    asyncio.run(wrong_user())

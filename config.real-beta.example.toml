@@ -46,7 +46,9 @@ frame_ms = 20
 enabled = true
 client_id_env = "EUTHERVOX_GOOGLE_CLIENT_ID"
 client_secret_env = "EUTHERVOX_GOOGLE_CLIENT_SECRET"
-owner_username_env = "EUTHERVOX_YOUTUBE_OWNER"
 redirect_uri = "https://apothictech.se/euthervox/oauth/callback"
-token_path = "state/youtube-token.json"
+token_directory = "state/youtube-tokens"
 playlist_size = 15
+
+[playlists]
+directory = "state/playlists"

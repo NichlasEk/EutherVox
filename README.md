@@ -118,15 +118,17 @@ Gatewayen tolkar bara tydliga yttranden som börjar med `spela` eller `spela upp
 
 Detta är medvetet nodneutralt: en framtida rumsnod kan implementera samma `action.request` och `action.result` utan att känna till STT- eller figurmodellerna.
 
-## Privata humörspellistor
+## Privata humörspellistor: lokalt original + YouTube-brygga
 
-Version 0.4 kan skapa en privat YouTube-spellista efter uttrycklig bekräftelse. Exempel:
+Version 0.5 använder ett hybridflöde. EutherVox sparar först en privat, användarknuten TOML-lista på gatewayen. Om samma användare har kopplat sitt Google-konto söker gatewayen låtar, sparar de providerneutrala referenserna lokalt, skapar en privat spegling i YouTube och öppnar den i YouTube Music. Exempel:
 
 ```text
 Skapa en spellista med mörk svensk synth för verkstaden.
 ```
 
-Appen visar sökningen och knapparna `Skapa privat spellista` och `Avbryt`. Efter godkännande söker gatewayen endast musikvideor, skapar en privat lista, lägger till träffarna och öppnar resultatet i YouTube Music. Google-lösenord hanteras aldrig av EutherVox. OAuth-token lagras med filrättighet 0600 på gatewaymaskinen; klientuppgifter läses endast ur systemd-miljön.
+Appen visar sökningen och knapparna `Skapa privat lista` och `Avbryt`. Utan OAuth sparas fortfarande listans titel och stämningsfråga lokalt och YouTube Music får frågan som vanlig uppspelningssökning. Med OAuth får användaren dessutom en exakt privat YouTube-lista som är lätt att öppna på telefonen och senare casta till rumsnoder.
+
+Varje lista ligger under `state/playlists/` som en läsbar TOML-fil med ägare, lokal UUID, fråga, tidsstämplar, låtreferenser och eventuell YouTube-listidentifierare. Filnamnets användardel är hashad, katalogen får rättighet 0700 och filerna 0600. TOML-listan är systemets original; YouTube-listan är en spelbar spegling som kan återskapas. Rått ljud lagras aldrig.
 
 ### Engångskonfiguration för Google
 
@@ -138,10 +140,9 @@ Appen visar sökningen och knapparna `Skapa privat spellista` och `Avbryt`. Efte
 ```dotenv
 EUTHERVOX_GOOGLE_CLIENT_ID=din-klient-id
 EUTHERVOX_GOOGLE_CLIENT_SECRET=din-klienthemlighet
-EUTHERVOX_YOUTUBE_OWNER=ditt-eutheroxide-användarnamn
 ```
 
-Skydda filen med `chmod 600`, installera om `deploy/euthervox-gateway.service`, kör `systemctl --user daemon-reload` och starta om gatewayen. Öppna sedan Inställningar i appen och tryck `Koppla YouTube-konto`. OAuth-start, callback och status ligger under `/euthervox/oauth/` och ska skyddas av samma EutherOxide-behörighet som WebSocket-rutten. EutherOxide måste vidarebefordra den verifierade identiteten i `X-Euther-User`; gatewayen jämför den mot `EUTHERVOX_YOUTUBE_OWNER` för både OAuth och spellistskapande.
+Skydda filen med `chmod 600`, installera om `deploy/euthervox-gateway.service`, kör `systemctl --user daemon-reload` och starta om gatewayen. Öppna sedan Inställningar i appen och tryck `Koppla YouTube-konto`. OAuth-start, callback och status ligger under `/euthervox/oauth/` och ska skyddas av samma EutherOxide-behörighet som WebSocket-rutten. EutherOxide vidarebefordrar den verifierade identiteten i `X-Euther-User`; gatewayen binder OAuth-state och token till den användaren. Tokenfilerna lagras hashat och separat under `state/youtube-tokens/` med rättighet 0600.
 
 ## Tester
 
@@ -167,6 +168,7 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - Endast ett aktivt yttrande per WebSocket stöds avsiktligt.
 - Musikstarten använder Androids dokumenterade sök-/uppspelnings-intent. Exakt träff och om uppspelningen startar direkt bestäms av den installerade YouTube Music-versionen och måste provas på fysisk telefon.
 - Låtvalet är en första beta: en YouTube-sökning i musikkategorin används, inte YouTube Musics privata rekommendationsmotor. Granska därför listan efter skapande.
+- En lokal lista som skapats utan OAuth innehåller tills vidare bara titel och stämningsfråga. Separat kommandoflöde för att synka en äldre lokal lista efter OAuth-koppling återstår.
 - YouTube Data API:s standardkvot begränsar hur många sökningar och låtinfogningar som kan göras per dygn.
 - Kökontroll, paus/nästa och dirigering till andra noder återstår.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.

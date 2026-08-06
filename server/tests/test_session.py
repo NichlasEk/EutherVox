@@ -13,6 +13,7 @@ from gateway.adapters import (
 )
 from gateway.actions import ActionPlanner
 from gateway.config import load_config
+from gateway.playlists import PlaylistTrack, TomlPlaylistStore
 from gateway.session import Phase, ProtocolError, VoiceSession
 from gateway.youtube import CreatedPlaylist, PlaylistPreview
 
@@ -164,28 +165,36 @@ def test_music_command_returns_action_without_tts():
     asyncio.run(scenario())
 
 
-def test_playlist_creation_requires_confirmation_then_opens_result():
+def test_playlist_creation_requires_confirmation_then_opens_result(tmp_path: Path):
     class PlaylistStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
             return "Skapa en spellista med mörk svensk synth"
 
     class FakeYouTube:
         configured = True
-        authorized = True
 
         def can_use(self, authenticated_user: str) -> bool:
+            return bool(authenticated_user)
+
+        def authorized(self, authenticated_user: str) -> bool:
             return authenticated_user == "nichlas"
 
         def preview(self, query: str) -> PlaylistPreview:
             return PlaylistPreview("EutherVox – mörk svensk synth", query, 15)
 
-        async def create_playlist(self, preview: PlaylistPreview) -> CreatedPlaylist:
-            return CreatedPlaylist("PL-test", preview.title, 12)
+        async def find_tracks(self, authenticated_user: str, preview: PlaylistPreview):
+            assert authenticated_user == "nichlas"
+            return (PlaylistTrack("youtube", "video-1", "Testlåt"),)
+
+        async def create_playlist(self, authenticated_user: str, playlist) -> CreatedPlaylist:
+            assert playlist.tracks[0].provider_id == "video-1"
+            return CreatedPlaylist("PL-test", playlist.title, 1)
 
     async def scenario():
         session, sent = make_session()
         session.stt = PlaylistStt()
         session.youtube = FakeYouTube()
+        session.playlists = TomlPlaylistStore({"directory": str(tmp_path / "playlists")}, ROOT)
         session.authenticated_user = "nichlas"
         await session.handle_text(start_message())
         await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "playlist-1"}))
@@ -205,28 +214,25 @@ def test_playlist_creation_requires_confirmation_then_opens_result():
         assert any(item.get("type") == "action.completed" and item.get("status") == "completed" for item in controls)
         opened = next(item for item in controls if item.get("name") == "media.open")
         assert opened["arguments"]["uri"] == "https://music.youtube.com/playlist?list=PL-test"
+        stored = session.playlists.latest("nichlas")
+        assert stored is not None
+        assert stored.owner == "nichlas"
+        assert stored.youtube_playlist_id == "PL-test"
+        assert stored.tracks[0].title == "Testlåt"
         assert session.phase is Phase.READY
 
     asyncio.run(scenario())
 
 
-def test_playlist_proposal_is_not_sent_to_non_owner():
+def test_playlist_proposal_is_not_sent_without_authenticated_user(tmp_path: Path):
     class PlaylistStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
             return "Skapa en spellista med mörk svensk synth"
 
-    class OwnerOnlyYouTube:
-        configured = True
-        authorized = True
-
-        def can_use(self, authenticated_user: str) -> bool:
-            return authenticated_user == "nichlas"
-
     async def scenario():
         session, sent = make_session()
         session.stt = PlaylistStt()
-        session.youtube = OwnerOnlyYouTube()
-        session.authenticated_user = "someone-else"
+        session.playlists = TomlPlaylistStore({"directory": str(tmp_path / "playlists")}, ROOT)
         await session.handle_text(start_message())
         await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "playlist-denied"}))
         await session.handle_binary(bytes(640))
@@ -236,6 +242,47 @@ def test_playlist_proposal_is_not_sent_to_non_owner():
         controls = [item for item in sent if isinstance(item, dict)]
         assert not any(item.get("type") == "action.request" for item in controls)
         assert controls[-1]["type"] == "assistant.text.final"
-        assert "inte behörighet" in controls[-1]["text"]
+        assert "Logga in" in controls[-1]["text"]
 
     asyncio.run(scenario())
+
+
+def test_playlist_is_saved_locally_without_youtube_oauth(tmp_path: Path):
+    class PlaylistStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Skapa en spellista med dimmig skogsmusik"
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = PlaylistStt()
+        session.authenticated_user = "anna"
+        session.playlists = TomlPlaylistStore({"directory": str(tmp_path / "playlists")}, ROOT)
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "local-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "local-1"}))
+        await session.response_task
+        proposal = next(item for item in sent if isinstance(item, dict) and item.get("name") == "playlist.create")
+        await session.handle_text(json.dumps({"type": "action.confirm", "action_id": proposal["action_id"]}))
+        await session.response_task
+
+        stored = session.playlists.latest("anna")
+        assert stored is not None
+        assert stored.query == "dimmig skogsmusik"
+        assert stored.youtube_playlist_id == ""
+        controls = [item for item in sent if isinstance(item, dict)]
+        fallback = next(item for item in controls if item.get("name") == "media.play")
+        assert fallback["arguments"]["query"] == "dimmig skogsmusik"
+        assert "Koppla YouTube-kontot" in next(item for item in controls if item.get("type") == "action.completed")["message"]
+
+    asyncio.run(scenario())
+
+
+def test_toml_playlist_store_separates_users(tmp_path: Path):
+    store = TomlPlaylistStore({"directory": str(tmp_path / "playlists")}, ROOT)
+    anna = store.create("anna", "Annas lista", "lugn musik")
+    bo = store.create("bo", "Bos lista", "snabb musik")
+
+    assert store.latest("anna") == anna
+    assert store.latest("bo") == bo
+    assert len(list((tmp_path / "playlists").glob("*.toml"))) == 2

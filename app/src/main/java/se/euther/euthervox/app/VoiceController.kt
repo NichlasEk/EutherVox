@@ -329,7 +329,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private fun handleAction(event: ServerEvent.ActionRequest) {
         val activeUtterance = utteranceId
         if (event.requiresConfirmation) {
-            if (event.name != "playlist.create" || event.targetNode != nodeName) {
+            if (event.name != "playlist.create" || event.provider != "euthervox" || event.targetNode != nodeName) {
                 scope.launch {
                     transport?.sendText(actionResult(event.actionId, event.utteranceId, "rejected", "Okänd bekräftelseåtgärd"))
                 }
@@ -340,7 +340,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             mutableState.value = mutableState.value.copy(
                 status = VoiceStatus.Processing,
                 pendingAction = event,
-                actionMessage = "Skapa en privat spellista med: ${event.query}?",
+                actionMessage = "Spara en privat lista med: ${event.query}? Den speglas till YouTube Music om ditt konto är kopplat.",
                 canTalk = false,
             )
             return
@@ -372,7 +372,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         val action = mutableState.value.pendingAction ?: return
         mutableState.value = mutableState.value.copy(
             pendingAction = null,
-            actionMessage = "Skapar spellistan…",
+            actionMessage = "Sparar listan…",
             status = VoiceStatus.Processing,
             canTalk = false,
         )

@@ -137,7 +137,7 @@ fun EutherVoxApp() {
                         Text(state.actionMessage!!)
                         if (state.pendingAction != null) {
                             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Button(onClick = controller::confirmPendingAction) { Text("Skapa privat spellista") }
+                                Button(onClick = controller::confirmPendingAction) { Text("Skapa privat lista") }
                                 OutlinedButton(onClick = controller::rejectPendingAction) { Text("Avbryt") }
                             }
                         }

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 import json
 import logging
@@ -12,6 +12,7 @@ from uuid import uuid4
 from .adapters import CharacterProvider, SpeechToTextEngine, TextGenerationEngine, TextToSpeechEngine
 from .actions import ActionPlanner, DeviceAction
 from .config import GatewayConfig
+from .playlists import TomlPlaylistStore
 from .youtube import YouTubePlaylistService
 
 
@@ -45,6 +46,7 @@ class VoiceSession:
     send_json: SendJson
     send_binary: SendBinary
     youtube: YouTubePlaylistService | None = None
+    playlists: TomlPlaylistStore | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -175,33 +177,64 @@ class VoiceSession:
 
     async def _execute_confirmed_action(self, action: DeviceAction) -> None:
         try:
-            if action.name != "playlist.create" or not self.youtube:
+            if action.name != "playlist.create" or not self.playlists or not self.authenticated_user:
                 raise RuntimeError("Spellistetjänsten är inte konfigurerad")
             query = str(action.arguments["query"])
-            preview = self.youtube.preview(query)
+            preview = self.youtube.preview(query) if self.youtube else None
+            title = preview.title if preview else f"EutherVox – {query[:60]}"
             await self.send_json({
                 "type": "action.status",
                 "action_id": action.action_id,
                 "status": "running",
-                "message": f"Söker musik och skapar {preview.title}…",
+                "message": f"Sparar {title} privat för {self.authenticated_user}…",
             })
-            created = await self.youtube.create_playlist(preview)
+            local = self.playlists.create(self.authenticated_user, title, query)
+            created = None
+            bridge_error = ""
+            if self.youtube and self.youtube.configured and self.youtube.authorized(self.authenticated_user):
+                try:
+                    tracks = await self.youtube.find_tracks(self.authenticated_user, preview)
+                    local = self.playlists.save(replace(local, tracks=tracks))
+                    created = await self.youtube.create_playlist(self.authenticated_user, local)
+                    local = self.playlists.save(replace(local, youtube_playlist_id=created.playlist_id))
+                except Exception as error:
+                    bridge_error = str(error)
+                    LOG.exception("youtube_playlist_bridge_failed session=%s local_playlist=%s", self.session_id, local.playlist_id)
+
+            if created:
+                message = f"{local.title} sparades privat och speglades till YouTube Music med {created.track_count} låtar."
+            elif bridge_error:
+                message = f"{local.title} sparades privat. YouTube-synkningen misslyckades: {bridge_error}"
+            else:
+                message = f"{local.title} sparades privat. Koppla YouTube-kontot för en spelbar spegling."
             await self.send_json({
                 "type": "action.completed",
                 "action_id": action.action_id,
                 "status": "completed",
-                "message": f"{created.title} skapades med {created.track_count} låtar.",
+                "message": message,
             })
-            open_action = DeviceAction(
+            playback_arguments = (
+                {"provider": "youtube_music", "uri": local.youtube_music_url}
+                if local.youtube_music_url
+                else {"provider": "youtube_music", "query": local.query}
+            )
+            playback_action = DeviceAction(
                 action_id=str(uuid4()),
-                name="media.open",
+                name="media.open" if local.youtube_music_url else "media.play",
                 target_node=action.target_node,
-                arguments={"provider": "youtube_music", "uri": created.music_url},
+                arguments=playback_arguments,
                 acknowledgement="Spellistan är klar.",
             )
-            self.pending_actions.add(open_action.action_id)
-            await self.send_json(open_action.to_message(self.utterance_id or ""))
-            LOG.info("playlist_created session=%s playlist=%s tracks=%d", self.session_id, created.playlist_id, created.track_count)
+            self.pending_actions.add(playback_action.action_id)
+            await self.send_json(playback_action.to_message(self.utterance_id or ""))
+            LOG.info(
+                "playlist_saved session=%s local_playlist=%s youtube_playlist=%s owner=%s tracks=%d",
+                self.session_id,
+                local.playlist_id,
+                local.youtube_playlist_id or "none",
+                self.authenticated_user,
+                len(local.tracks),
+            )
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -240,27 +273,19 @@ class VoiceSession:
             action = self.action_planner.plan(transcript, self.node_name)
             if action:
                 if action.name == "playlist.create":
-                    if not self.youtube or not self.youtube.can_use(self.authenticated_user):
+                    if not self.authenticated_user:
                         await self.send_json({
                             "type": "assistant.text.final",
                             "utterance_id": utterance_id,
-                            "text": "Ditt EutherOxide-konto har inte behörighet till det kopplade YouTube-kontot.",
+                            "text": "Logga in med ditt EutherOxide-konto så att spellistan kan knytas privat till dig.",
                         })
                         self._reset()
                         return
-                    if not self.youtube or not self.youtube.configured:
+                    if not self.playlists:
                         await self.send_json({
                             "type": "assistant.text.final",
                             "utterance_id": utterance_id,
-                            "text": "YouTube OAuth är inte konfigurerat på servern ännu.",
-                        })
-                        self._reset()
-                        return
-                    if not self.youtube.authorized:
-                        await self.send_json({
-                            "type": "assistant.text.final",
-                            "utterance_id": utterance_id,
-                            "text": "Koppla ditt YouTube-konto i appens inställningar först.",
+                            "text": "Den lokala spellistetjänsten är inte konfigurerad.",
                         })
                         self._reset()
                         return

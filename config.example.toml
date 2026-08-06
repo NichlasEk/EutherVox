@@ -29,3 +29,6 @@ provider = "mock"
 
 [youtube]
 enabled = false
+
+[playlists]
+directory = "state/playlists"
