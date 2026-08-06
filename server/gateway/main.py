@@ -56,8 +56,14 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
                 if not error.recoverable:
                     await socket.close(code=1002, reason=error.code)
                     break
-    except ConnectionClosed:
-        pass
+    except ConnectionClosed as error:
+        LOG.info(
+            "connection_closed session=%s code=%s reason=%r phase=%s",
+            session.session_id,
+            error.code,
+            error.reason,
+            session.phase.value,
+        )
     finally:
         await session.close()
         LOG.info("session_closed session=%s", session.session_id)

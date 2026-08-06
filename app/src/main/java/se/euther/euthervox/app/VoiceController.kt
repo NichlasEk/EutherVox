@@ -198,14 +198,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             transport?.sendText(audioEnd(id))
             if (cancelledGesture) transport?.sendText(responseCancel(id))
         }
-        timeoutJob?.cancel()
-        timeoutJob = scope.launch {
-            delay(15_000)
-            if (utteranceId == id) {
-                transport?.sendText(responseCancel(id))
-                fail("Servern svarade inte inom 15 sekunder")
-            }
-        }
+        armTimeout(id, 15_000, "Servern svarade inte inom 15 sekunder")
     }
 
     fun cancelResponse() {
@@ -309,18 +302,24 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             }
             is ServerEvent.Cancelled -> finishUtterance()
             is ServerEvent.ActionRequest -> handleAction(event)
-            is ServerEvent.ActionStatus -> mutableState.value = mutableState.value.copy(
-                status = VoiceStatus.Processing,
-                actionMessage = event.message,
-                canTalk = false,
-            )
-            is ServerEvent.ActionCompleted -> mutableState.value = mutableState.value.copy(
-                status = if (event.status == "completed") VoiceStatus.Idle else VoiceStatus.Error,
-                actionMessage = event.message,
-                errorMessage = if (event.status == "completed") null else event.message,
-                pendingAction = null,
-                canTalk = ready,
-            )
+            is ServerEvent.ActionStatus -> {
+                utteranceId?.let { armTimeout(it, 45_000, "Åtgärden svarade inte inom 45 sekunder") }
+                mutableState.value = mutableState.value.copy(
+                    status = VoiceStatus.Processing,
+                    actionMessage = event.message,
+                    canTalk = false,
+                )
+            }
+            is ServerEvent.ActionCompleted -> {
+                finishUtterance()
+                mutableState.value = mutableState.value.copy(
+                    status = if (event.status == "completed") VoiceStatus.Idle else VoiceStatus.Error,
+                    actionMessage = event.message,
+                    errorMessage = if (event.status == "completed") null else event.message,
+                    pendingAction = null,
+                    canTalk = ready,
+                )
+            }
             is ServerEvent.Error -> fail("${event.code}: ${event.message}", event.recoverable)
             is ServerEvent.Unknown -> Unit
         }
@@ -402,6 +401,17 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         microphone.stop()
         utteranceId = null
         mutableState.value = mutableState.value.copy(status = VoiceStatus.Idle, microphoneActive = false, canTalk = ready)
+    }
+
+    private fun armTimeout(id: String, timeoutMs: Long, message: String) {
+        timeoutJob?.cancel()
+        timeoutJob = scope.launch {
+            delay(timeoutMs)
+            if (utteranceId == id) {
+                transport?.sendText(responseCancel(id))
+                fail(message)
+            }
+        }
     }
 
     private fun stopResources() {
