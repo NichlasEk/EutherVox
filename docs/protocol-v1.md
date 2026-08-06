@@ -20,6 +20,8 @@ Det finns ingen identifierare inuti en binär frame i version 1. Kopplingen är 
 - Ett nytt `audio.start` innan föregående yttrande är avslutat ger `SESSION_BUSY`.
 - `response.cancel(U)` avbryter pipeline/uppspelning och återför servern till `READY`.
 
+Version 0.9 får fortsätta skicka `assistant.text.delta(U)` efter `tts.start(U)`: gatewayen startar TTS när första stabila meningen är klar och genererar återstående text parallellt. Binärljudet är fortfarande en enda sammanhängande TTS-ström mellan exakt ett `tts.start(U)` och ett `tts.end(U)`.
+
 Detta lämpar sig även för Raspberry Pi-noder: varje nod håller sin egen anslutning och behöver inte multiplexera nod- eller yttrande-ID i ljudframes. En framtida multiplexad version måste lägga till ett binärt frame-headerfält och höja protokollversionen.
 
 ## Ljud

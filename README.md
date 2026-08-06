@@ -1,4 +1,4 @@
-# EutherVox 0.7 beta
+# EutherVox 0.9 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -86,6 +86,20 @@ I appens inställningar anger du datorns LAN-adress, exempelvis `ws://192.168.1.
 6. Tryck `Avbryt uppspelning` under tonen och kontrollera `response.cancel` i serverloggen.
 7. Stoppa gatewayen och starta den igen för att kontrollera automatisk återanslutning.
 
+## Naturligare samtalsläge
+
+Version 0.9 behåller push-to-talk och lägger till ett uttryckligen aktiverat samtalsläge:
+
+1. Tryck `Starta samtal` och börja tala.
+2. Telefonen upptäcker tal och cirka 650 ms avslutande tystnad lokalt och skickar då `audio.end`.
+3. Gatewayen behåller de senaste tio fråge-/svarsparen i WebSocket-sessionens RAM. De skickas till Qwen som riktig rollhistorik, men skrivs inte till disk.
+4. När modellens första fullständiga mening är klar börjar Piper syntetisera den samtidigt som nästa mening genereras.
+5. Efter avslutad uppspelning återgår appen automatiskt till lyssning.
+6. Tryck `Avbryt och tala`, eller börja tala om telefonens Android-implementation erbjuder fungerande akustisk ekosläckning.
+7. Tryck `Avsluta samtal` för att stoppa mikrofon, uppspelning och aktuell respons.
+
+Om ingen börjar tala inom tio sekunder avslutas samtalsläget automatiskt. Vid app-paus, rotation, frånkoppling eller fel stängs AudioRecord och AudioTrack precis som i push-to-talk-läget. Automatiskt talavbrott använder `VOICE_COMMUNICATION`, Androids `AcousticEchoCanceler` och `NoiseSuppressor`; om ekosläckning saknas används den manuella avbrottsknappen. Mikrofonindikatorn är aktiv även när appen lyssnar lokalt efter ett avbrott, men dessa monitorblock skickas inte till servern.
+
 ## Struktur
 
 ```text
@@ -103,7 +117,7 @@ server/gateway/
 └── config.py                      TOML-konfiguration
 ```
 
-Android spelar inte in till fil och loggar inte rått ljud. Mikrofonen startas först efter `audio.start` och frigörs vid finger upp, avbruten gest, paus eller fel. En begränsad kö mellan AudioRecord och WebSocket gör att nätverksstopp inte blockerar ljudinläsningen; tappade block visas i UI.
+Android spelar inte in till fil och loggar inte rått ljud. Mikrofonen startas först efter push-to-talk eller ett uttryckligt `Starta samtal` och frigörs vid finger upp, `Avsluta samtal`, app-paus eller fel. En begränsad kö mellan AudioRecord och WebSocket gör att nätverksstopp inte blockerar ljudinläsningen; tappade block visas i UI.
 
 ## Spela musik på telefonen
 
@@ -219,6 +233,8 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - Standardprofilen `config.example.toml` är fortfarande den deterministiska mock-kedjan; välj uttryckligen en real-beta-konfiguration för riktigt tal.
 - Den riktiga STT-profilen skickar i denna slice sin första `stt.partial` precis före `stt.final`; inkrementell avkodning medan knappen hålls inne återstår.
 - Endast ett aktivt yttrande per WebSocket stöds avsiktligt.
+- Samtalsminnet lever endast under aktuell WebSocket-session och omfattar högst tio turer/12 000 tecken; det är inte ett beständigt långtidsminne.
+- Automatiskt röstavbrott beror på telefonens akustiska ekosläckning och behöver kalibreras på fysisk hårdvara. Den manuella `Avbryt och tala`-knappen är den stabila reservvägen.
 - Musikstarten använder Androids dokumenterade sök-/uppspelnings-intent. Exakt träff och om uppspelningen startar direkt bestäms av den installerade YouTube Music-versionen och måste provas på fysisk telefon.
 - Låtvalet är en första beta: en YouTube-sökning i musikkategorin används, inte YouTube Musics privata rekommendationsmotor. Granska därför listan efter skapande.
 - En lokal lista som skapats utan OAuth innehåller tills vidare bara titel och stämningsfråga. Separat kommandoflöde för att synka en äldre lokal lista efter OAuth-koppling återstår.
