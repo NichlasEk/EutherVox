@@ -24,6 +24,7 @@ class Character:
     speed: float
     pitch: float
     max_initial_sentence_words: int
+    music_acknowledgements: tuple[str, ...]
 
 
 class SpeechToTextEngine(Protocol):
@@ -59,7 +60,14 @@ class TomlCharacterProvider:
             speed=float(data["voice"]["speed"]),
             pitch=float(data["voice"]["pitch"]),
             max_initial_sentence_words=int(data["behavior"]["max_initial_sentence_words"]),
+            music_acknowledgements=tuple(str(item) for item in data.get("music", {}).get("acknowledgements", [])),
         )
+
+
+def render_music_acknowledgement(character: Character, query: str, room: str) -> str:
+    templates = character.music_acknowledgements or ("{query}. Jag spelar den i {room}.",)
+    selector = sum(query.casefold().encode("utf-8")) % len(templates)
+    return templates[selector].replace("{query}", query).replace("{room}", room)
 
 
 class MockSpeechToTextEngine:

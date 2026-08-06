@@ -19,3 +19,9 @@ pitch = -0.08
 acknowledge_immediately = true
 max_initial_sentence_words = 18
 
+[music]
+acknowledgements = [
+  "{query}. Ett gott val med järn i ådrorna. Jag släpper fram den i {room}.",
+  "Gott val. {query} får eka genom {room}.",
+  "{query}. Dimman kan vänta. Nu får {room} lite oväsen.",
+]

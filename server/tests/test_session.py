@@ -10,6 +10,7 @@ from gateway.adapters import (
     MockTextToSpeechEngine,
     TomlCharacterProvider,
     _cached_whisper_snapshot,
+    render_music_acknowledgement,
 )
 from gateway.actions import ActionPlanner
 from gateway.config import load_config
@@ -67,6 +68,16 @@ def test_real_beta_model_paths_are_resolved_from_config_location():
     assert Path(config.stt_settings["download_root"]).is_absolute()
     assert Path(config.tts_settings["model_path"]).is_absolute()
     assert config.stt_settings["language"] == "sv"
+
+
+def test_skinnskattaren_music_acknowledgement_comes_from_character_profile():
+    config = load_config(ROOT / "config.example.toml")
+    character = TomlCharacterProvider(config.profile_dir).get("skinnskattaren")
+
+    acknowledgement = render_music_acknowledgement(character, "November Rain", "köket")
+
+    assert "November Rain" in acknowledgement
+    assert "köket" in acknowledgement
 
 
 def test_cached_whisper_snapshot_avoids_remote_model_lookup(tmp_path: Path):
@@ -324,7 +335,8 @@ def test_tool_planner_is_used_when_deterministic_parser_does_not_match():
         assert session.cast.played == ("köket", ("video-1",))
         assert not any(isinstance(item, dict) and item.get("type") == "action.request" for item in sent)
         assert any(isinstance(item, dict) and item.get("type") == "action.completed" for item in sent)
-        assert not any(isinstance(item, bytes) for item in sent)
+        assert any(isinstance(item, bytes) for item in sent)
+        assert any(isinstance(item, dict) and item.get("type") == "tts.start" for item in sent)
 
     asyncio.run(scenario())
 
@@ -554,6 +566,10 @@ def test_direct_music_request_casts_search_results_to_room():
         assert session.cast.played == ("köket", ("video-1", "video-2"))
         controls = [item for item in sent if isinstance(item, dict)]
         assert not any(item.get("type") == "action.request" for item in controls)
+        comment = next(item for item in controls if item.get("type") == "assistant.text.final")
+        assert "Ghost" in comment["text"]
+        assert any(item.get("type") == "tts.start" for item in controls)
+        assert any(isinstance(item, bytes) for item in sent)
         assert controls[-1]["type"] == "action.completed"
 
     asyncio.run(scenario())
@@ -599,9 +615,10 @@ def test_direct_cast_failure_stays_on_requested_room_and_finishes_cleanly():
         controls = [item for item in sent if isinstance(item, dict)]
         finals = [item for item in controls if item.get("type") == "assistant.text.final"]
         failed = next(item for item in controls if item.get("type") == "action.completed")
-        assert len(finals) == 1
-        assert "Kök 2" in finals[0]["text"]
-        assert "Cast svarade inte" in finals[0]["text"]
+        assert len(finals) == 2
+        assert "mörk synth" in finals[0]["text"]
+        assert "Kök 2" in finals[-1]["text"]
+        assert "Cast svarade inte" in finals[-1]["text"]
         assert failed["status"] == "failed"
         assert failed["action_id"]
         assert not any(item.get("type") == "action.request" for item in controls)

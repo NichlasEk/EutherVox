@@ -87,6 +87,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var shouldReconnect = false
     private var ready = false
     private var utteranceId: String? = null
+    @Volatile private var serverActionInProgress = false
     private var timeline = Timeline()
 
     fun connect(serverAddress: String, requestedNodeName: String, username: String = "", password: String = "") {
@@ -154,6 +155,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     fun startTalking() {
         if (!ready || utteranceId != null) return
+        serverActionInProgress = false
         val id = UUID.randomUUID().toString()
         utteranceId = id
         timeline = Timeline(buttonDown = now())
@@ -298,11 +300,12 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             }
             is ServerEvent.TtsEnd -> {
                 logTime("last_tts_frame", timeline.lastTts)
-                speaker.finish { finishUtterance() }
+                speaker.finish { if (!serverActionInProgress) finishUtterance() }
             }
             is ServerEvent.Cancelled -> finishUtterance()
             is ServerEvent.ActionRequest -> handleAction(event)
             is ServerEvent.ActionStatus -> {
+                serverActionInProgress = true
                 utteranceId?.let { armTimeout(it, 45_000, "Åtgärden svarade inte inom 45 sekunder") }
                 mutableState.value = mutableState.value.copy(
                     status = VoiceStatus.Processing,
@@ -311,6 +314,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 )
             }
             is ServerEvent.ActionCompleted -> {
+                serverActionInProgress = false
                 finishUtterance()
                 mutableState.value = mutableState.value.copy(
                     status = if (event.status == "completed") VoiceStatus.Idle else VoiceStatus.Error,
@@ -396,6 +400,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     private fun finishUtterance() {
+        serverActionInProgress = false
         timeoutJob?.cancel()
         timeoutJob = null
         microphone.stop()
@@ -415,6 +420,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     private fun stopResources() {
+        serverActionInProgress = false
         microphone.stop()
         speaker.stop()
         timeoutJob?.cancel()

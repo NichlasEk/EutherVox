@@ -9,7 +9,7 @@ import time
 from typing import Awaitable, Callable
 from uuid import uuid4
 
-from .adapters import CharacterProvider, SpeechToTextEngine, TextGenerationEngine, TextToSpeechEngine
+from .adapters import CharacterProvider, SpeechToTextEngine, TextGenerationEngine, TextToSpeechEngine, render_music_acknowledgement
 from .actions import ActionPlanner, DeviceAction
 from .cast import CastService
 from .config import GatewayConfig
@@ -337,21 +337,27 @@ class VoiceSession:
                             raise RuntimeError("YouTube-kontot är inte kopplat")
                         if not self.cast or not self.cast.configured(output_room):
                             raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {output_room}")
-                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": action.acknowledgement})
+                        character = self.characters.get(self.character_name)
+                        spoken_acknowledgement = render_music_acknowledgement(
+                            character,
+                            str(action.arguments["query"]),
+                            output_room,
+                        )
+                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken_acknowledgement})
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken_acknowledgement})
                         await self.send_json({
                             "type": "action.status",
                             "action_id": action.action_id,
                             "status": "running",
                             "message": f"Söker musik och ansluter till {self.cast.display_name(output_room)}…",
                         })
+                        try:
+                            await self._stream_action_speech(utterance_id, spoken_acknowledgement, character)
+                        except Exception:
+                            LOG.exception("music_acknowledgement_tts_failed session=%s", self.session_id)
                         preview = self.youtube.preview(str(action.arguments["query"]))
                         tracks = await self.youtube.find_tracks(self.authenticated_user, preview)
                         await self.cast.play_youtube_tracks(output_room, tuple(track.provider_id for track in tracks))
-                        await self.send_json({
-                            "type": "assistant.text.final",
-                            "utterance_id": utterance_id,
-                            "text": action.acknowledgement,
-                        })
                         await self.send_json({
                             "type": "action.completed",
                             "action_id": action.action_id,
@@ -446,6 +452,18 @@ class VoiceSession:
             LOG.exception("response_failed session=%s utterance=%s", self.session_id, utterance_id)
             await self.send_json({"type": "error", "code": "PIPELINE_FAILED", "message": str(error), "recoverable": True})
             self._reset()
+
+    async def _stream_action_speech(self, utterance_id: str, text: str, character: object) -> None:
+        await self.send_json({
+            "type": "tts.start",
+            "utterance_id": utterance_id,
+            "audio": {"codec": "pcm_s16le", "sample_rate": self.tts.sample_rate, "channels": 1},
+        })
+        try:
+            async for frame in self.tts.synthesize(text, character, self.tts.sample_rate):
+                await self.send_binary(frame)
+        finally:
+            await self.send_json({"type": "tts.end", "utterance_id": utterance_id})
 
     def _reset(self) -> None:
         self.phase = Phase.READY
