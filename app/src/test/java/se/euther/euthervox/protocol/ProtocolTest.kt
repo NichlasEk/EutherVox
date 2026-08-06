@@ -46,6 +46,14 @@ class ProtocolTest {
         assertEquals("completed", json["status"].asString)
     }
 
+    @Test fun parsesCastRoomFromPlaylistAction() {
+        val event = parseServerEvent(
+            """{"type":"action.request","action_id":"a2","utterance_id":"u2","name":"playlist.create","target":{"kind":"node","node_name":"pixel"},"arguments":{"provider":"euthervox","query":"mörk synth","output_room":"köket"},"requires_confirmation":true}"""
+        )
+
+        assertEquals("köket", (event as ServerEvent.ActionRequest).outputRoom)
+    }
+
     @Test fun serializesActionConfirmation() {
         val json = JsonParser.parseString(actionConfirm("a1")).asJsonObject
         assertEquals("action.confirm", json["type"].asString)

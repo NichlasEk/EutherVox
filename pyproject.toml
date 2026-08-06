@@ -3,7 +3,11 @@ name = "euthervox-gateway"
 version = "0.1.0"
 description = "Local streaming voice gateway for EutherVox"
 requires-python = ">=3.11"
-dependencies = ["websockets>=14,<17", "httpx>=0.28,<1"]
+dependencies = [
+    "websockets>=14,<17",
+    "httpx>=0.28,<1",
+    "pychromecast>=14,<16",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]

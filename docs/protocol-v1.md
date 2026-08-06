@@ -68,7 +68,8 @@ Första åtgärden spelar musik på noden som tog emot yttrandet:
   "target": {"kind": "node", "node_name": "android-phone"},
   "arguments": {
     "provider": "youtube_music",
-    "query": "något mörkt och lugnt"
+    "query": "något mörkt och lugnt",
+    "output_room": "köket"
   },
   "requires_confirmation": false
 }
@@ -91,6 +92,8 @@ Noden rapporterar resultatet separat:
 En beständig åtgärd, exempelvis `playlist.create`, har alltid `requires_confirmation: true`. Klienten visar argumenten men kör ingenting. Godkännande skickas som `{"type":"action.confirm","action_id":"..."}`; avslag skickas som `action.result` med `status: rejected`. Servern rapporterar arbetet med `action.status` och exakt ett avslutande `action.completed`.
 
 `playlist.create` skapar alltid först en privat lokal lista bunden till den verifierade identiteten från `X-Euther-User`. Argumentets provider är därför `euthervox`. Om användarens OAuth-koppling finns skapar servern även en privat YouTube-spegling och skickar `media.open` med dess `https://music.youtube.com/`-länk. Utan OAuth skickas i stället `media.play` med den lokala listans fråga; den lokala listan bevaras och inget Google-konto ändras.
+
+Det valfria `arguments.output_room` är ett serverkonfigurerat alias, inte ett godtyckligt värdnamn eller en IP från klienten. I version 1 stöds `köket`, som gatewayen mappar till en fast Cast-enhet. Om server-Cast lyckas skickas `action.status` och `action.completed` utan en efterföljande telefonåtgärd. Om Cast misslyckas behålls samma vitlistade telefonfallback som ovan.
 
 ## Ordning och backpressure
 

@@ -340,7 +340,11 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             mutableState.value = mutableState.value.copy(
                 status = VoiceStatus.Processing,
                 pendingAction = event,
-                actionMessage = "Spara en privat lista med: ${event.query}? Den speglas till YouTube Music om ditt konto är kopplat.",
+                actionMessage = if (event.outputRoom.isNotBlank()) {
+                    "Spara en privat lista med: ${event.query} och spela den i ${event.outputRoom}?"
+                } else {
+                    "Spara en privat lista med: ${event.query}? Den speglas till YouTube Music om ditt konto är kopplat."
+                },
                 canTalk = false,
             )
             return

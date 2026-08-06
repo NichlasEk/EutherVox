@@ -32,3 +32,6 @@ enabled = false
 
 [playlists]
 directory = "state/playlists"
+
+[cast]
+enabled = false

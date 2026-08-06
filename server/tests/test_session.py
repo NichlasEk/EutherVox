@@ -115,6 +115,16 @@ def test_action_planner_extracts_youtube_music_query_and_target():
     assert action.requires_confirmation is False
 
 
+def test_action_planner_extracts_kitchen_output_from_music_and_playlist_requests():
+    music = ActionPlanner().plan("Spela Ghost i köket", "pixel")
+    playlist = ActionPlanner().plan("Skapa en spellista med mörk synth på Kök 2", "pixel")
+
+    assert music is not None
+    assert music.arguments == {"provider": "youtube_music", "query": "Ghost", "output_room": "köket"}
+    assert playlist is not None
+    assert playlist.arguments == {"provider": "euthervox", "query": "mörk synth", "output_room": "köket"}
+
+
 def test_action_planner_does_not_treat_recording_as_music_playback():
     assert ActionPlanner().plan("Spela in det här", "pixel") is None
 
@@ -339,3 +349,110 @@ def test_toml_playlist_store_separates_users(tmp_path: Path):
     assert store.latest("anna") == anna
     assert store.latest("bo") == bo
     assert len(list((tmp_path / "playlists").glob("*.toml"))) == 2
+
+
+def test_confirmed_playlist_casts_to_configured_room_without_phone_fallback(tmp_path: Path):
+    class PlaylistStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Skapa en spellista med mörk synth i köket"
+
+    class FakeYouTube:
+        configured = True
+
+        def authorized(self, user: str) -> bool:
+            return True
+
+        def preview(self, query: str) -> PlaylistPreview:
+            return PlaylistPreview("EutherVox – mörk synth", query, 15)
+
+        async def find_tracks(self, user: str, preview: PlaylistPreview):
+            return (PlaylistTrack("youtube", "video-1", "Testlåt"),)
+
+        async def create_playlist(self, user: str, playlist) -> CreatedPlaylist:
+            return CreatedPlaylist("PL-kitchen", playlist.title, 1)
+
+    class FakeCast:
+        played = None
+
+        def configured(self, room: str) -> bool:
+            return room == "köket"
+
+        def display_name(self, room: str) -> str:
+            return "Kök 2"
+
+        async def play_youtube_tracks(self, room: str, video_ids: tuple[str, ...]):
+            self.played = (room, video_ids)
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = PlaylistStt()
+        session.youtube = FakeYouTube()
+        session.cast = FakeCast()
+        session.authenticated_user = "nichlas"
+        session.playlists = TomlPlaylistStore({"directory": str(tmp_path / "playlists")}, ROOT)
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "cast-list"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "cast-list"}))
+        await session.response_task
+        proposal = next(item for item in sent if isinstance(item, dict) and item.get("name") == "playlist.create")
+        assert proposal["arguments"]["output_room"] == "köket"
+        await session.handle_text(json.dumps({"type": "action.confirm", "action_id": proposal["action_id"]}))
+        await session.response_task
+
+        assert session.cast.played == ("köket", ("video-1",))
+        controls = [item for item in sent if isinstance(item, dict)]
+        assert not any(item.get("name") in {"media.open", "media.play"} for item in controls)
+        assert "Kök 2" in next(item for item in controls if item.get("type") == "action.completed")["message"]
+
+    asyncio.run(scenario())
+
+
+def test_direct_music_request_casts_search_results_to_room():
+    class MusicStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Spela Ghost i köket"
+
+    class FakeYouTube:
+        def authorized(self, user: str) -> bool:
+            return True
+
+        def preview(self, query: str) -> PlaylistPreview:
+            return PlaylistPreview("Ghost", query, 2)
+
+        async def find_tracks(self, user: str, preview: PlaylistPreview):
+            return (
+                PlaylistTrack("youtube", "video-1", "Ett"),
+                PlaylistTrack("youtube", "video-2", "Två"),
+            )
+
+    class FakeCast:
+        played = None
+
+        def configured(self, room: str) -> bool:
+            return room == "köket"
+
+        def display_name(self, room: str) -> str:
+            return "Kök 2"
+
+        async def play_youtube_tracks(self, room: str, video_ids: tuple[str, ...]):
+            self.played = (room, video_ids)
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = MusicStt()
+        session.youtube = FakeYouTube()
+        session.cast = FakeCast()
+        session.authenticated_user = "nichlas"
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "cast-direct"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "cast-direct"}))
+        await session.response_task
+
+        assert session.cast.played == ("köket", ("video-1", "video-2"))
+        controls = [item for item in sent if isinstance(item, dict)]
+        assert not any(item.get("type") == "action.request" for item in controls)
+        assert controls[-1]["type"] == "action.completed"
+
+    asyncio.run(scenario())

@@ -177,6 +177,12 @@ fun EutherVoxApp() {
                     },
                     enabled = address.isNotBlank(),
                 ) { Text("Koppla YouTube-konto") }
+                OutlinedButton(
+                    onClick = {
+                        context.packageManager.getLaunchIntentForPackage("com.google.android.apps.youtube.music")?.let(context::startActivity)
+                    },
+                ) { Text("Öppna YouTube Music / Cast") }
+                Text("Manuell reservväg: välj Cast-symbolen i YouTube Music och anslut till Kök 2.", style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = { password = ""; controller.forgetCredentials() }) { Text("Glöm sparad inloggning") }
             }
         },

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from .adapters import CharacterProvider, SpeechToTextEngine, TextGenerationEngine, TextToSpeechEngine
 from .actions import ActionPlanner, DeviceAction
+from .cast import CastService
 from .config import GatewayConfig
 from .playlists import TomlPlaylistStore
 from .youtube import YouTubePlaylistService
@@ -47,6 +48,7 @@ class VoiceSession:
     send_binary: SendBinary
     youtube: YouTubePlaylistService | None = None
     playlists: TomlPlaylistStore | None = None
+    cast: CastService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -180,6 +182,7 @@ class VoiceSession:
             if action.name != "playlist.create" or not self.playlists or not self.authenticated_user:
                 raise RuntimeError("Spellistetjänsten är inte konfigurerad")
             query = str(action.arguments["query"])
+            output_room = str(action.arguments.get("output_room", ""))
             preview = self.youtube.preview(query) if self.youtube else None
             title = preview.title if preview else f"EutherVox – {query[:60]}"
             await self.send_json({
@@ -191,6 +194,8 @@ class VoiceSession:
             local = self.playlists.create(self.authenticated_user, title, query)
             created = None
             bridge_error = ""
+            cast_succeeded = False
+            cast_error = ""
             if self.youtube and self.youtube.configured and self.youtube.authorized(self.authenticated_user):
                 try:
                     tracks = await self.youtube.find_tracks(self.authenticated_user, preview)
@@ -201,7 +206,30 @@ class VoiceSession:
                     bridge_error = str(error)
                     LOG.exception("youtube_playlist_bridge_failed session=%s local_playlist=%s", self.session_id, local.playlist_id)
 
-            if created:
+            if created and output_room:
+                try:
+                    if not self.cast or not self.cast.configured(output_room):
+                        raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {output_room}")
+                    await self.send_json({
+                        "type": "action.status",
+                        "action_id": action.action_id,
+                        "status": "running",
+                        "message": f"Ansluter till {self.cast.display_name(output_room)}…",
+                    })
+                    await self.cast.play_youtube_tracks(
+                        output_room,
+                        tuple(track.provider_id for track in local.tracks),
+                    )
+                    cast_succeeded = True
+                except Exception as error:
+                    cast_error = str(error)
+                    LOG.exception("playlist_cast_failed session=%s room=%s", self.session_id, output_room)
+
+            if created and cast_succeeded:
+                message = f"{local.title} sparades privat och spelar nu på {self.cast.display_name(output_room)}."
+            elif created and cast_error:
+                message = f"{local.title} sparades privat. Cast misslyckades ({cast_error}); öppnar listan på telefonen."
+            elif created:
                 message = f"{local.title} sparades privat och speglades till YouTube Music med {created.track_count} låtar."
             elif bridge_error:
                 message = f"{local.title} sparades privat. YouTube-synkningen misslyckades: {bridge_error}"
@@ -213,6 +241,15 @@ class VoiceSession:
                 "status": "completed",
                 "message": message,
             })
+            if cast_succeeded:
+                LOG.info(
+                    "playlist_cast session=%s local_playlist=%s room=%s youtube_playlist=%s",
+                    self.session_id,
+                    local.playlist_id,
+                    output_room,
+                    local.youtube_playlist_id,
+                )
+                return
             playback_arguments = (
                 {"provider": "youtube_music", "uri": local.youtube_music_url}
                 if local.youtube_music_url
@@ -289,6 +326,38 @@ class VoiceSession:
                         })
                         self._reset()
                         return
+                output_room = str(action.arguments.get("output_room", ""))
+                if action.name == "media.play" and output_room:
+                    try:
+                        if not self.authenticated_user or not self.youtube or not self.youtube.authorized(self.authenticated_user):
+                            raise RuntimeError("YouTube-kontot är inte kopplat")
+                        if not self.cast or not self.cast.configured(output_room):
+                            raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {output_room}")
+                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": action.acknowledgement})
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": action.acknowledgement})
+                        await self.send_json({
+                            "type": "action.status",
+                            "action_id": action.action_id,
+                            "status": "running",
+                            "message": f"Söker musik och ansluter till {self.cast.display_name(output_room)}…",
+                        })
+                        preview = self.youtube.preview(str(action.arguments["query"]))
+                        tracks = await self.youtube.find_tracks(self.authenticated_user, preview)
+                        await self.cast.play_youtube_tracks(output_room, tuple(track.provider_id for track in tracks))
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "completed",
+                            "message": f"Spelar på {self.cast.display_name(output_room)}.",
+                        })
+                        self._reset()
+                        return
+                    except Exception as error:
+                        LOG.exception("media_cast_failed session=%s room=%s", self.session_id, output_room)
+                        action = replace(
+                            action,
+                            acknowledgement=f"Cast till {output_room} misslyckades ({error}). Jag öppnar musiken på telefonen i stället.",
+                        )
                 await self.send_json({
                     "type": "assistant.text.delta",
                     "utterance_id": utterance_id,

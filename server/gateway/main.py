@@ -13,6 +13,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Request, Response
 
 from .adapters import TomlCharacterProvider, build_engines
+from .cast import CastService
 from .config import GatewayConfig, load_config
 from .playlists import TomlPlaylistStore
 from .session import ProtocolError, VoiceSession
@@ -22,7 +23,7 @@ from .youtube import YouTubePlaylistService
 LOG = logging.getLogger("euthervox.gateway")
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -37,6 +38,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         send_binary=socket.send,
         youtube=youtube,
         playlists=playlists,
+        cast=cast,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -108,6 +110,7 @@ async def run(config: GatewayConfig) -> None:
     engines = build_engines(config)
     youtube = YouTubePlaylistService(config.youtube_settings, config.config_dir)
     playlists = TomlPlaylistStore(config.playlist_settings, config.config_dir)
+    cast = CastService(config.cast_settings)
     for name, engine in (("stt", engines[0]), ("llm", engines[1])):
         warmup = getattr(engine, "warmup", None)
         if warmup:
@@ -122,7 +125,7 @@ async def run(config: GatewayConfig) -> None:
     )
     oauth_http = OAuthHttpHandler(youtube)
     async with serve(
-        lambda socket: handle_connection(socket, config, engines, youtube, playlists),
+        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast),
         config.host,
         config.port,
         max_size=2**20,

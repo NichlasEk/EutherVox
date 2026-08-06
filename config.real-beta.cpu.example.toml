@@ -49,3 +49,14 @@ playlist_size = 15
 
 [playlists]
 directory = "state/playlists"
+
+[cast]
+enabled = true
+timeout_seconds = 8
+
+[cast.rooms."köket"]
+friendly_name = "Kök 2"
+host = "192.168.32.5"
+port = 8009
+uuid = "513b23e1-0384-d9e8-8eeb-c31f9c7b656e"
+model_name = "Google Nest Mini"

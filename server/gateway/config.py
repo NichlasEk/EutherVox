@@ -32,6 +32,7 @@ class GatewayConfig:
     tts_settings: dict
     youtube_settings: dict
     playlist_settings: dict
+    cast_settings: dict
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -49,6 +50,7 @@ def load_config(path: str | Path) -> GatewayConfig:
     tts_settings = dict(raw["tts"])
     youtube_settings = dict(raw.get("youtube", {}))
     playlist_settings = dict(raw.get("playlists", {}))
+    cast_settings = dict(raw.get("cast", {}))
     for settings, key in ((stt_settings, "download_root"), (tts_settings, "model_path")):
         if key in settings:
             value = Path(settings[key])
@@ -80,4 +82,5 @@ def load_config(path: str | Path) -> GatewayConfig:
         tts_settings=tts_settings,
         youtube_settings=youtube_settings,
         playlist_settings=playlist_settings,
+        cast_settings=cast_settings,
     )

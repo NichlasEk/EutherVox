@@ -31,6 +31,7 @@ class ActionPlanner:
 
     _PLAY = re.compile(r"^\s*spela(?:\s+upp)?\s+(.+?)\s*[.!?]*\s*$", re.IGNORECASE)
     _YOUTUBE_SUFFIX = re.compile(r"\s+(?:på|i)\s+youtube\s+music\s*$", re.IGNORECASE)
+    _OUTPUT_SUFFIX = re.compile(r"\s+(?:i|på|till)\s+(?P<room>köket|kök\s*2)\s*$", re.IGNORECASE)
     _PLAYLIST_AFTER_NOUN = re.compile(
         r"^\s*(?:(?:skulle\s+du\s+kunna|kan\s+du)\s+)?(?:skapa|gör(?:a)?|fixa|sätt(?:a)?\s+ihop)(?:\s+mig)?(?:\s+en)?\s+spell?ist[ae](?:\s+(?:med|för|som|av)\s+)(.+?)\s*[.!?]*\s*$",
         re.IGNORECASE,
@@ -58,6 +59,7 @@ class ActionPlanner:
 
     def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
         playlist_command = self._YOUTUBE_SUFFIX.sub("", transcript.strip(" .!?"))
+        playlist_command, output_room = self._extract_output(playlist_command)
         playlist = (
             self._PLAYLIST_AFTER_NOUN.match(playlist_command)
             or self._PLAYLIST_BEFORE_NOUN.match(playlist_command)
@@ -69,12 +71,19 @@ class ActionPlanner:
         if playlist:
             query = playlist.group(1).strip(" .!?")
             if query:
+                arguments = {"provider": "euthervox", "query": query}
+                if output_room:
+                    arguments["output_room"] = output_room
                 return DeviceAction(
                     action_id=str(uuid4()),
                     name="playlist.create",
                     target_node=node_name,
-                    arguments={"provider": "euthervox", "query": query},
-                    acknowledgement=f"Jag kan skapa en privat lista med {query} och spegla den till YouTube Music när kontot är kopplat. Bekräfta i appen.",
+                    arguments=arguments,
+                    acknowledgement=(
+                        f"Jag kan skapa en privat lista med {query} och spela den i {output_room}. Bekräfta i appen."
+                        if output_room
+                        else f"Jag kan skapa en privat lista med {query} och spegla den till YouTube Music när kontot är kopplat. Bekräfta i appen."
+                    ),
                     requires_confirmation=True,
                 )
         if re.match(r"^\s*spela\s+in\b", transcript, re.IGNORECASE):
@@ -83,12 +92,25 @@ class ActionPlanner:
         if not match:
             return None
         query = self._YOUTUBE_SUFFIX.sub("", match.group(1)).strip(" .!?")
+        query, output_room = self._extract_output(query)
         if not query:
             return None
+        arguments = {"provider": "youtube_music", "query": query}
+        if output_room:
+            arguments["output_room"] = output_room
         return DeviceAction(
             action_id=str(uuid4()),
             name="media.play",
             target_node=node_name,
-            arguments={"provider": "youtube_music", "query": query},
-            acknowledgement=f"Jag skickar {query} till YouTube Music.",
+            arguments=arguments,
+            acknowledgement=(
+                f"Jag spelar {query} i {output_room}." if output_room else f"Jag skickar {query} till YouTube Music."
+            ),
         )
+
+    def _extract_output(self, text: str) -> tuple[str, str]:
+        match = self._OUTPUT_SUFFIX.search(text)
+        if not match:
+            return text, ""
+        room = "köket" if match.group("room").casefold().replace(" ", "") in {"köket", "kök2"} else match.group("room").casefold()
+        return text[:match.start()].strip(" .!?"), room

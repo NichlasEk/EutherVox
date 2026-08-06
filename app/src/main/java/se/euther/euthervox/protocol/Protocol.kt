@@ -61,6 +61,7 @@ sealed interface ServerEvent {
         val query: String,
         val uri: String,
         val requiresConfirmation: Boolean,
+        val outputRoom: String = "",
     ) : ServerEvent
     data class ActionStatus(val actionId: String, val status: String, val message: String) : ServerEvent
     data class ActionCompleted(val actionId: String, val status: String, val message: String) : ServerEvent
@@ -92,6 +93,7 @@ fun parseServerEvent(raw: String): ServerEvent {
             query = json["arguments"].asJsonObject["query"]?.asString.orEmpty(),
             uri = json["arguments"].asJsonObject["uri"]?.asString.orEmpty(),
             requiresConfirmation = json["requires_confirmation"]?.asBoolean ?: true,
+            outputRoom = json["arguments"].asJsonObject["output_room"]?.asString.orEmpty(),
         )
         "action.status" -> ServerEvent.ActionStatus(
             json["action_id"].asString,

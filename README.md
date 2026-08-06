@@ -120,7 +120,7 @@ Detta är medvetet nodneutralt: en framtida rumsnod kan implementera samma `acti
 
 ## Privata humörspellistor: lokalt original + YouTube-brygga
 
-Version 0.5 använder ett hybridflöde. EutherVox sparar först en privat, användarknuten TOML-lista på gatewayen. Om samma användare har kopplat sitt Google-konto söker gatewayen låtar, sparar de providerneutrala referenserna lokalt, skapar en privat spegling i YouTube och öppnar den i YouTube Music. Exempel:
+Version 0.6 använder ett hybridflöde. EutherVox sparar först en privat, användarknuten TOML-lista på gatewayen. Om samma användare har kopplat sitt Google-konto söker gatewayen låtar, sparar de providerneutrala referenserna lokalt, skapar en privat spegling i YouTube och öppnar den i YouTube Music. Exempel:
 
 ```text
 Skapa en spellista med mörk svensk synth för verkstaden.
@@ -143,6 +143,20 @@ EUTHERVOX_GOOGLE_CLIENT_SECRET=din-klienthemlighet
 ```
 
 Skydda filen med `chmod 600`, installera om `deploy/euthervox-gateway.service`, kör `systemctl --user daemon-reload` och starta om gatewayen. Öppna sedan Inställningar i appen och tryck `Koppla YouTube-konto`. OAuth-start, callback och status ligger under `/euthervox/oauth/` och ska skyddas av samma EutherOxide-behörighet som WebSocket-rutten. EutherOxide vidarebefordrar den verifierade identiteten i `X-Euther-User`; gatewayen binder OAuth-state och token till den användaren. Tokenfilerna lagras hashat och separat under `state/youtube-tokens/` med rättighet 0600.
+
+### Cast till rumsenhet
+
+Version 0.6 har en experimentell, konfigurationsstyrd Cast-adapter. Säg exempelvis:
+
+```text
+Spela Ghost i köket.
+Skapa en mörk synthspellista i köket.
+Sätt ihop en spellista med svensk punk på Kök 2.
+```
+
+`output_room` normaliseras till `köket`. Gatewayen söker musik med den användarens OAuth, ansluter direkt till den uttryckligen konfigurerade Nest-enheten och använder YouTube Cast-controllern. Vid fel öppnas YouTube Music på telefonen som tidigare. Appens inställningar har även `Öppna YouTube Music / Cast` för manuell val av högtalare och volym.
+
+Cast är avstängt i mockkonfigurationen. Real-beta-konfigurationen mappar aliaset `köket` till `Kök 2` på det lokala nätet. IP och Cast-UUID är enhetsmetadata, inte autentiseringshemligheter. Lägg till framtida rum under separata `[cast.rooms."alias"]`-tabeller.
 
 ## Tester
 
@@ -170,7 +184,8 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - Låtvalet är en första beta: en YouTube-sökning i musikkategorin används, inte YouTube Musics privata rekommendationsmotor. Granska därför listan efter skapande.
 - En lokal lista som skapats utan OAuth innehåller tills vidare bara titel och stämningsfråga. Separat kommandoflöde för att synka en äldre lokal lista efter OAuth-koppling återstår.
 - YouTube Data API:s standardkvot begränsar hur många sökningar och låtinfogningar som kan göras per dygn.
-- Kökontroll, paus/nästa och dirigering till andra noder återstår.
+- Cast-adaptern använder PyChromecasts inofficiella YouTube-controller eftersom Google saknar ett publikt API för att välja YouTube Music-mottagare. Den är därför beta, konfigurationsstyrd och faller tillbaka till telefonen.
+- Cast-volym, paus/nästa och dirigering till fler rum återstår.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.
 - `ws://` är okrypterat och ska bara användas på betrott LAN. Den publika betarutten använder EutherOxide-inloggning och `wss://`.
 - Ingen wake word, bakgrundsavlyssning eller långtidsminne finns.
