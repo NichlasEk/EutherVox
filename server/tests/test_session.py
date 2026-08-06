@@ -144,6 +144,43 @@ def test_action_planner_accepts_hyphenated_playlist_description():
     assert action.arguments["query"] == "mörk svensk synth"
 
 
+def test_action_planner_accepts_real_stt_playlist_phrasings():
+    examples = {
+        "Kan du göra en cool cyberpunkts spellista?": "cool cyberpunkts",
+        "Kan du göra en kul spelliste åt mig?": "kul",
+        "Cyberpunk spellista": "Cyberpunk",
+        "Kan du göra en cyberpunk spelista på YouTube Music?": "cyberpunk",
+        "Kan du göra en cool cyberpunk spelista?": "cool cyberpunk",
+    }
+
+    for transcript, expected_query in examples.items():
+        action = ActionPlanner().plan(transcript, "pixel")
+        assert action is not None, transcript
+        assert action.name == "playlist.create"
+        assert action.arguments["query"] == expected_query
+
+
+def test_action_planner_accepts_more_natural_playlist_requests():
+    examples = {
+        "Fixa en glad funk-spellista": "glad funk",
+        "Sätt ihop en spellista med svensk punk": "svensk punk",
+        "Skulle du kunna skapa en lugn kvällsspellista?": "lugn kvälls",
+        "Ge mig en mörk ambient spellista": "mörk ambient",
+        "Jag vill ha en snabb träningsspellista": "snabb tränings",
+        "Jag skulle vilja ha en spellista med gammal synth": "gammal synth",
+    }
+
+    for transcript, expected_query in examples.items():
+        action = ActionPlanner().plan(transcript, "pixel")
+        assert action is not None, transcript
+        assert action.arguments["query"] == expected_query
+
+
+def test_action_planner_does_not_create_playlist_from_explanatory_question():
+    assert ActionPlanner().plan("Vad är en spellista?", "pixel") is None
+    assert ActionPlanner().plan("Kan du berätta om en spellista?", "pixel") is None
+
+
 def test_music_command_returns_action_without_tts():
     class MusicStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
