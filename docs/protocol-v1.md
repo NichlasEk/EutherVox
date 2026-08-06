@@ -1,0 +1,59 @@
+# EutherVox WebSocket protocol v1
+
+En WebSocket-anslutning motsvarar exakt en session. JSON-textframes är kontrollplanet och binära frames är ljudplanet. Alla UUID:n är opaka strängar.
+
+## Tillstånd och binär frame-koppling
+
+```text
+CONNECTED --session.start--> READY --audio.start(U)--> RECORDING(U)
+    RECORDING(U) --binary PCM* + audio.end(U)--> PROCESSING(U)
+    PROCESSING(U) --stt/text + tts.start(U)--> SPEAKING(U)
+    SPEAKING(U) --binary PCM* + tts.end(U)--> READY
+```
+
+Det finns ingen identifierare inuti en binär frame i version 1. Kopplingen är tillståndsbaserad och entydig eftersom endast ett yttrande får vara aktivt per anslutning:
+
+- Binära frames från klienten mellan `audio.start(U)` och `audio.end(U)` är mikrofonljud för yttrande `U`.
+- Binära frames från servern mellan `tts.start(U)` och `tts.end(U)` är TTS-ljud för yttrande `U`.
+- Binärt klientljud i andra tillstånd ger `UNEXPECTED_AUDIO`.
+- Ett nytt `audio.start` innan föregående yttrande är avslutat ger `SESSION_BUSY`.
+- `response.cancel(U)` avbryter pipeline/uppspelning och återför servern till `READY`.
+
+Detta lämpar sig även för Raspberry Pi-noder: varje nod håller sin egen anslutning och behöver inte multiplexera nod- eller yttrande-ID i ljudframes. En framtida multiplexad version måste lägga till ett binärt frame-headerfält och höja protokollversionen.
+
+## Ljud
+
+Klient till server:
+
+```toml
+codec = "pcm_s16le"
+sample_rate = 16000
+channels = 1
+frame_ms = 20
+frame_bytes = 640
+```
+
+Server till klient annonseras i `tts.start`. Prototypen använder mono `pcm_s16le` vid 24000 Hz och skickar normalt 20 ms/960 byte per frame. Klienten startar AudioTrack efter cirka 120 ms eller när en kort ström tar slut.
+
+## Kontrollmeddelanden
+
+Meddelandena och fälten följer exemplen i arbetsuppdraget:
+
+- Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`.
+- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `response.cancelled`, `error`.
+
+`session.start.input_audio` valideras innan `session.ready`. Alla yttrandemeddelanden ska använda samma `utterance_id` som aktiverades med `audio.start`.
+
+Fel har formen:
+
+```json
+{"type":"error","code":"STT_FAILED","message":"Speech recognition failed","recoverable":true}
+```
+
+Vid ett återhämtningsbart fel kan anslutningen behållas och klienten återgå till Idle. Protokollversion- eller ljudformatsfel är inte återhämtningsbara och servern stänger anslutningen med WebSocket-kod 1002.
+
+## Ordning och backpressure
+
+Kontroll- och binärframes använder samma WebSocket och bevarar därmed ordningen. Klientens ljudtråd väntar aldrig på nätverket: 20 ms-block läggs i en liten begränsad kö. Om kön är full tappas blocket och räknaren visas i UI. Serverns utgående TTS iterator inväntar varje `send`, vilket ger naturlig backpressure utan att hela svaret buffras.
+
+Rått ljud ska inte loggas eller sparas. Textloggning styrs av `server.text_logging`; prototypens strukturerade standardlogg innehåller session, yttrande, byte-/frameantal och tider, inte ljuddata.

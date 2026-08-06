@@ -1,0 +1,2 @@
+"""EutherVox local WebSocket gateway."""
+

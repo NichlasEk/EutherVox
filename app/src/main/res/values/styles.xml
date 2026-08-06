@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.EutherVox" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F2EBDD</item>
+        <item name="android:navigationBarColor">#19231D</item>
+    </style>
+</resources>
+

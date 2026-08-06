@@ -1,0 +1,24 @@
+[project]
+name = "euthervox-gateway"
+version = "0.1.0"
+description = "Local streaming voice gateway for EutherVox"
+requires-python = ">=3.11"
+dependencies = ["websockets>=14,<17"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+euthervox-gateway = "gateway.main:cli"
+
+[tool.pytest.ini_options]
+testpaths = ["server/tests"]
+pythonpath = ["server"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["server/gateway"]
+

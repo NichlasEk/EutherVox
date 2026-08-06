@@ -1,0 +1,29 @@
+[server]
+host = "0.0.0.0"
+port = 8788
+text_logging = true
+response_timeout_seconds = 15.0
+
+[audio.input]
+sample_rate = 16000
+channels = 1
+frame_ms = 20
+
+[audio.output]
+sample_rate = 24000
+channels = 1
+buffer_ms = 120
+
+[character]
+default = "skinnskattaren"
+profile_dir = "characters"
+
+[stt]
+provider = "mock"
+
+[llm]
+provider = "mock"
+
+[tts]
+provider = "mock"
+
