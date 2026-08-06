@@ -125,8 +125,27 @@ def test_action_planner_extracts_kitchen_output_from_music_and_playlist_requests
     assert playlist.arguments == {"provider": "euthervox", "query": "mörk synth", "output_room": "köket"}
 
 
+def test_action_planner_accepts_natural_and_observed_stt_music_requests():
+    examples = {
+        "Kan du spela cyberpunk i köket?": "cyberpunk",
+        "Skulle du kunna spela Ghost på Kök 2?": "Ghost",
+        "Jag vill spela mörk synth i köket": "mörk synth",
+        "Jag spelar Cyberpunk i köket.": "Cyberpunk",
+        "Sätt på svensk punk i köket": "svensk punk",
+        "Dra igång ambient i köket": "ambient",
+    }
+
+    for transcript, expected_query in examples.items():
+        action = ActionPlanner().plan(transcript, "pixel")
+        assert action is not None, transcript
+        assert action.name == "media.play"
+        assert action.arguments["query"] == expected_query
+        assert action.arguments["output_room"] == "köket"
+
+
 def test_action_planner_does_not_treat_recording_as_music_playback():
     assert ActionPlanner().plan("Spela in det här", "pixel") is None
+    assert ActionPlanner().plan("Kan du spela in det här?", "pixel") is None
 
 
 def test_action_planner_proposes_private_playlist_with_confirmation():

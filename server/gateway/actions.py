@@ -29,7 +29,10 @@ class DeviceAction:
 class ActionPlanner:
     """Deterministic allowlisted commands that must never depend on LLM prose."""
 
-    _PLAY = re.compile(r"^\s*spela(?:\s+upp)?\s+(.+?)\s*[.!?]*\s*$", re.IGNORECASE)
+    _PLAY = re.compile(
+        r"^\s*(?:(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?spela(?:\s+upp)?|jag\s+(?:vill\s+(?:att\s+du\s+)?spela|spelar)|sätt\s+på|dra\s+igång)\s+(.+?)\s*[.!?]*\s*$",
+        re.IGNORECASE,
+    )
     _YOUTUBE_SUFFIX = re.compile(r"\s+(?:på|i)\s+youtube\s+music\s*$", re.IGNORECASE)
     _OUTPUT_SUFFIX = re.compile(r"\s+(?:i|på|till)\s+(?P<room>köket|kök\s*2)\s*$", re.IGNORECASE)
     _PLAYLIST_AFTER_NOUN = re.compile(
@@ -90,6 +93,8 @@ class ActionPlanner:
             return None
         match = self._PLAY.match(transcript)
         if not match:
+            return None
+        if re.match(r"^\s*in\b", match.group(1), re.IGNORECASE):
             return None
         query = self._YOUTUBE_SUFFIX.sub("", match.group(1)).strip(" .!?")
         query, output_room = self._extract_output(query)
