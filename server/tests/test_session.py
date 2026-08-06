@@ -826,6 +826,55 @@ def test_wikipedia_request_without_topic_asks_for_clarification_without_lookup()
         assert any(item.get("type") == "tts.start" for item in controls)
         assert any(isinstance(item, bytes) for item in sent)
         assert not any(item.get("type") == "action.status" for item in controls)
+        assert session.pending_wikipedia_mode == "summary"
+
+    asyncio.run(scenario())
+
+
+def test_wikipedia_clarification_uses_the_next_utterance_as_topic():
+    class SequentialStt:
+        transcripts = iter(("Kan du köra på Wikipedia?", "Akvariefiskar"))
+
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return next(self.transcripts)
+
+    class FakeWikipedia:
+        queries = []
+
+        async def lookup(self, query: str) -> WikipediaArticle:
+            self.queries.append(query)
+            return WikipediaArticle(
+                "Akvariefiskar",
+                "Akvariefiskar är fiskar som hålls i akvarium.",
+                "https://sv.wikipedia.org/wiki/Akvariefiskar",
+            )
+
+    class GroundedLlm:
+        async def generate(self, transcript: str, character):
+            yield "Akvariefiskar hålls i akvarium."
+
+    async def scenario():
+        session, sent = make_session()
+        wikipedia = FakeWikipedia()
+        session.stt = SequentialStt()
+        session.wikipedia = wikipedia
+        session.llm = GroundedLlm()
+        await session.handle_text(start_message())
+
+        for utterance_id in ("wiki-question", "wiki-topic"):
+            await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": utterance_id}))
+            await session.handle_binary(bytes(640))
+            await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": utterance_id}))
+            await session.response_task
+
+        assert wikipedia.queries == ["Akvariefiskar"]
+        assert session.pending_wikipedia_mode is None
+        finals = [
+            item for item in sent
+            if isinstance(item, dict) and item.get("type") == "assistant.text.final"
+        ]
+        assert finals[0]["text"] == "Vad vill du att jag slår upp på Wikipedia?"
+        assert "Källa: Akvariefiskar" in finals[1]["text"]
 
     asyncio.run(scenario())
 

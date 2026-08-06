@@ -107,6 +107,7 @@ class VoiceSession:
     pending_actions: set[str] = field(default_factory=set)
     pending_confirmations: dict[str, DeviceAction] = field(default_factory=dict)
     conversation_history: list[tuple[str, str]] = field(default_factory=list)
+    pending_wikipedia_mode: str | None = None
 
     async def handle_text(self, raw: str) -> None:
         try:
@@ -351,7 +352,17 @@ class VoiceSession:
             if not initial_partial:
                 await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": transcript})
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
-            action = self.action_planner.plan(transcript, self.node_name)
+            if self.pending_wikipedia_mode:
+                action = DeviceAction(
+                    action_id=str(uuid4()),
+                    name="knowledge.wikipedia",
+                    target_node=self.node_name,
+                    arguments={"query": transcript, "mode": self.pending_wikipedia_mode},
+                    acknowledgement=f"Jag slår upp {transcript} på svenska Wikipedia.",
+                )
+                self.pending_wikipedia_mode = None
+            else:
+                action = self.action_planner.plan(transcript, self.node_name)
             if action is None and self.tool_planner is not None:
                 action = await self.tool_planner.plan(transcript, self.node_name)
             if action:
@@ -376,6 +387,7 @@ class VoiceSession:
                 if action.name == "knowledge.wikipedia":
                     query = str(action.arguments.get("query", "")).strip()
                     if not query:
+                        self.pending_wikipedia_mode = str(action.arguments.get("mode", "summary"))
                         clarification = "Vad vill du att jag slår upp på Wikipedia?"
                         character = self.characters.get(self.character_name)
                         await self.send_json({
