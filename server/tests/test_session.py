@@ -133,6 +133,10 @@ def test_action_planner_accepts_natural_and_observed_stt_music_requests():
         "Jag spelar Cyberpunk i köket.": "Cyberpunk",
         "Sätt på svensk punk i köket": "svensk punk",
         "Dra igång ambient i köket": "ambient",
+        "Jag vill höra Smells Like Teen Spirit i köket": "Smells Like Teen Spirit",
+        "Jag skulle vilja ha November Rain i köket": "November Rain",
+        "Kan jag få höra låten November Rain i köket?": "November Rain",
+        "Ge mig Smells Like Teen Spirit i köket": "Smells Like Teen Spirit",
     }
 
     for transcript, expected_query in examples.items():
@@ -141,6 +145,23 @@ def test_action_planner_accepts_natural_and_observed_stt_music_requests():
         assert action.name == "media.play"
         assert action.arguments["query"] == expected_query
         assert action.arguments["output_room"] == "köket"
+
+
+def test_action_planner_keeps_obscure_music_as_free_search_text():
+    requests = {
+        "Spela Les Rallizes Dénudés Night of the Assassins i köket": "Les Rallizes Dénudés Night of the Assassins",
+        "Jag vill höra Xavlegbmaofffassssitimiwoamndutroabcwapwaeiippohfffx i köket": "Xavlegbmaofffassssitimiwoamndutroabcwapwaeiippohfffx",
+        "Sätt på Boris Feedbacker i köket": "Boris Feedbacker",
+    }
+
+    for transcript, expected_query in requests.items():
+        action = ActionPlanner().plan(transcript, "pixel")
+        assert action is not None, transcript
+        assert action.arguments == {
+            "provider": "youtube_music",
+            "query": expected_query,
+            "output_room": "köket",
+        }
 
 
 def test_action_planner_ignores_conversational_prefix_before_music_command():

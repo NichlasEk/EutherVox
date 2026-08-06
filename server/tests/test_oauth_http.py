@@ -9,7 +9,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request
 
 from gateway.main import OAuthHttpHandler
-from gateway.youtube import YouTubePlaylistService, is_on_demand_music_result, normalize_music_search_query
+from gateway.youtube import YouTubePlaylistService, is_on_demand_music_result, normalize_music_search_query, rank_music_search_items
 
 
 class FakeYouTube:
@@ -41,6 +41,18 @@ def test_music_search_skips_live_radio_and_24_7_streams():
     assert not is_on_demand_music_result({"snippet": {"title": "Cyberpunk Radio", "liveBroadcastContent": "live"}})
     assert not is_on_demand_music_result({"snippet": {"title": "Cyberpunk music 24/7", "liveBroadcastContent": "none"}})
     assert is_on_demand_music_result({"snippet": {"title": "Cyberpunk Mix", "liveBroadcastContent": "none"}})
+
+
+def test_specific_song_search_prioritizes_official_result_over_cover():
+    items = [
+        {"id": {"videoId": "cover"}, "snippet": {"title": "Smells Like Teen Spirit cover"}},
+        {"id": {"videoId": "official"}, "snippet": {"title": "Nirvana - Smells Like Teen Spirit (Official Music Video)"}},
+        {"id": {"videoId": "reaction"}, "snippet": {"title": "Smells Like Teen Spirit reaction"}},
+    ]
+
+    ranked = rank_music_search_items(items, "Smells Like Teen Spirit")
+
+    assert ranked[0]["id"]["videoId"] == "official"
 
 
 def test_oauth_start_redirects_to_google():

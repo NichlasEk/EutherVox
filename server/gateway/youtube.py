@@ -43,6 +43,25 @@ def is_on_demand_music_result(item: dict) -> bool:
     return broadcast not in {"live", "upcoming"} and not re.search(r"\b24\s*/\s*7\b", title)
 
 
+def rank_music_search_items(items: list[dict], query: str) -> list[dict]:
+    normalized_query = " ".join(re.findall(r"[\wåäö]+", query.casefold()))
+    query_tokens = set(normalized_query.split())
+    unwanted = ("cover", "karaoke", "reaction", "tutorial", "live", "tribute", "instrumental")
+
+    def score(entry: tuple[int, dict]) -> tuple[int, int]:
+        index, item = entry
+        title = str(item.get("snippet", {}).get("title", "")).casefold()
+        normalized_title = " ".join(re.findall(r"[\wåäö]+", title))
+        title_tokens = set(normalized_title.split())
+        value = 100 if normalized_query and normalized_query in normalized_title else 0
+        value += 12 * len(query_tokens & title_tokens)
+        value += 20 if "official" in title_tokens else 0
+        value -= 35 * sum(term in title_tokens for term in unwanted)
+        return value, -index
+
+    return [item for _index, item in sorted(enumerate(items), key=score, reverse=True)]
+
+
 @dataclass(frozen=True)
 class PlaylistPreview:
     title: str
@@ -140,9 +159,10 @@ class YouTubePlaylistService:
                 "q": search_query,
             })
             search.raise_for_status()
+        ranked_items = rank_music_search_items(search.json().get("items", []), search_query)
         tracks = tuple(
             PlaylistTrack("youtube", item["id"]["videoId"], str(item.get("snippet", {}).get("title", "")))
-            for item in search.json().get("items", [])
+            for item in ranked_items
             if item.get("id", {}).get("videoId") and is_on_demand_music_result(item)
         )
         if not tracks:

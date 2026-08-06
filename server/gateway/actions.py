@@ -34,9 +34,10 @@ class ActionPlanner:
         re.IGNORECASE,
     )
     _PLAY = re.compile(
-        r"^\s*(?:(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?spela(?:\s+upp)?|jag\s+(?:vill\s+(?:att\s+du\s+)?spela|spelar)|sätt\s+på|dra\s+igång)\s+(.+?)\s*[.!?]*\s*$",
+        r"^\s*(?:(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?spela(?:\s+upp)?|jag\s+(?:(?:vill|skulle\s+vilja)\s+(?:(?:att\s+du\s+)?spela|ha|höra|lyssna\s+på)|spelar)|kan\s+jag\s+få\s+höra|ge\s+mig|sätt\s+på|dra\s+igång)\s+(.+?)\s*[.!?]*\s*$",
         re.IGNORECASE,
     )
+    _TRACK_NOUN_PREFIX = re.compile(r"^(?:låten\s+med\s+namnet|låten)\s+", re.IGNORECASE)
     _YOUTUBE_SUFFIX = re.compile(r"\s+(?:på|i)\s+youtube\s+music\s*$", re.IGNORECASE)
     _OUTPUT_SUFFIX = re.compile(r"\s+(?:i|på|till)\s+(?P<room>köket|kök\s*2)\s*$", re.IGNORECASE)
     _PLAYLIST_AFTER_NOUN = re.compile(
@@ -103,6 +104,7 @@ class ActionPlanner:
             return None
         query = self._YOUTUBE_SUFFIX.sub("", match.group(1)).strip(" .!?")
         query, output_room = self._extract_output(query)
+        query = self._TRACK_NOUN_PREFIX.sub("", query).strip(" .!?")
         if not query:
             return None
         arguments = {"provider": "youtube_music", "query": query}

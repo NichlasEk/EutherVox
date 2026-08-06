@@ -18,7 +18,7 @@ class OllamaToolPlanner:
     """Turns natural language into one validated action through Ollama tool calls."""
 
     _ACTION_HINT = re.compile(
-        r"\b(spela|lyssna|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång)\b",
+        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång)\b",
         re.IGNORECASE,
     )
 
@@ -51,6 +51,8 @@ class OllamaToolPlanner:
                         "Du väljer EutherVox-verktyg. Anropa exakt ett verktyg endast när användaren faktiskt ber "
                         "att spela musik eller skapa en spellista. Frågor och vanlig konversation får inget verktygsanrop. "
                         "Indirekta önskemål som 'jag är sugen på mörk cyberpunk i köket' betyder att musiken ska spelas nu. "
+                        "Önskemål om en bestämd låt, till exempel 'jag vill höra November Rain', ska anropa music_play "
+                        "och behålla låttitel och eventuell artist exakt i query. "
                         "Ord som spellista, lista eller mix betyder playlist_create när användaren ber att få en sådan sparad. "
                         f"Konfigurerade rum: {rooms}. Hitta inte på rum. Behåll genre och stämning i query eller description."
                     ),
