@@ -66,7 +66,10 @@ class CastService:
             raise ValueError("Inga spelbara YouTube-träffar hittades")
         room_key = room.casefold()
         previous_video_id = self._last_video_ids.get(room_key, "")
-        selected_video_id = next((video_id for video_id in video_ids if video_id != previous_video_id), video_ids[0])
+        if previous_video_id in video_ids:
+            selected_video_id = video_ids[(video_ids.index(previous_video_id) + 1) % len(video_ids)]
+        else:
+            selected_video_id = video_ids[0]
         async with self._lock:
             try:
                 if self.backend == "direct_audio":

@@ -48,8 +48,13 @@ def test_repeated_room_request_rotates_away_from_previous_first_track():
 
         await service.play_youtube_tracks("köket", ("video-1", "video-2", "video-3"))
         await service.play_youtube_tracks("köket", ("video-1", "video-2", "video-3"))
+        await service.play_youtube_tracks("köket", ("video-1", "video-2", "video-3"))
 
-        assert calls == [("köket", "video-1"), ("köket", "video-2")]
+        assert calls == [
+            ("köket", "video-1"),
+            ("köket", "video-2"),
+            ("köket", "video-3"),
+        ]
 
     asyncio.run(scenario())
 
