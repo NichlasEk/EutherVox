@@ -1,0 +1,120 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from uuid import UUID
+
+import httpx
+
+from gateway.cast import CastService
+from gateway.mcp_server import build_mcp_server
+from gateway.tool_planner import OllamaToolPlanner
+from gateway.tools import EutherVoxToolRegistry, ToolValidationError
+
+
+def make_registry() -> EutherVoxToolRegistry:
+    cast = CastService({
+        "enabled": True,
+        "rooms": {
+            "köket": {
+                "friendly_name": "Kök 2",
+                "host": "192.0.2.5",
+                "port": 8009,
+                "uuid": str(UUID(int=1)),
+                "model_name": "Google Nest Mini",
+            }
+        },
+    })
+    return EutherVoxToolRegistry(cast)
+
+
+def test_registry_creates_allowlisted_music_and_confirmed_playlist_actions():
+    registry = make_registry()
+
+    music = registry.create_action("music_play", {"query": " mörk   synth ", "output_room": "Kök 2"}, "pixel")
+    playlist = registry.create_action("playlist_create", {"description": "cyberpunk"}, "pixel")
+
+    assert music.name == "media.play"
+    assert music.arguments == {"provider": "youtube_music", "query": "mörk synth", "output_room": "köket"}
+    assert music.target_node == "pixel"
+    assert playlist.name == "playlist.create"
+    assert playlist.requires_confirmation is True
+
+
+def test_registry_rejects_unknown_tools_rooms_and_arguments():
+    registry = make_registry()
+
+    for name, arguments in (
+        ("shell", {"query": "id"}),
+        ("music_play", {"query": "ambient", "output_room": "serverrummet"}),
+        ("music_play", {"query": "ambient", "host": "192.0.2.9"}),
+    ):
+        try:
+            registry.create_action(name, arguments, "pixel")
+            assert False, (name, arguments)
+        except ToolValidationError:
+            pass
+
+
+def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
+    async def scenario():
+        registry = make_registry()
+        server = build_mcp_server(registry)
+        tools = await server.list_tools()
+
+        assert {tool.name for tool in tools} == {"cast_list_targets", "music_play", "playlist_create"}
+        target = registry.list_cast_targets()[0]
+        assert target == {"room": "köket", "display_name": "Kök 2", "model": "Google Nest Mini"}
+        assert "host" not in target
+
+    asyncio.run(scenario())
+
+
+def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert request.url.path == "/api/chat"
+        assert {tool["function"]["name"] for tool in payload["tools"]} == {"music_play", "playlist_create"}
+        return httpx.Response(200, json={
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": "music_play",
+                        "arguments": {"query": "mörk cyberpunk", "output_room": "köket"},
+                    }
+                }],
+            },
+            "done": True,
+        })
+
+    async def scenario():
+        planner = OllamaToolPlanner(
+            make_registry(),
+            "http://ollama.test",
+            "qwen-test",
+            transport=httpx.MockTransport(handler),
+        )
+        action = await planner.plan("Jag är sugen på mörk cyberpunk i köket", "pixel")
+        assert action is not None
+        assert action.name == "media.play"
+        assert action.arguments["output_room"] == "köket"
+
+    asyncio.run(scenario())
+
+
+def test_ollama_tool_planner_skips_non_actionable_conversation_without_request():
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("Ollama must not be called for ordinary conversation")
+
+    async def scenario():
+        planner = OllamaToolPlanner(
+            make_registry(),
+            "http://ollama.test",
+            "qwen-test",
+            transport=httpx.MockTransport(handler),
+        )
+        assert await planner.plan("Hur mår du i dag?", "pixel") is None
+
+    asyncio.run(scenario())

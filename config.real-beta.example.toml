@@ -57,6 +57,10 @@ directory = "state/playlists"
 enabled = true
 timeout_seconds = 8
 
+[mcp]
+enabled = true
+planner_timeout_seconds = 8
+
 [cast.rooms."köket"]
 friendly_name = "Kök 2"
 host = "192.168.32.5"

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Local streaming voice gateway for EutherVox"
 requires-python = ">=3.11"
 dependencies = [
+    "mcp>=2,<3",
     "websockets>=14,<17",
     "httpx>=0.28,<1",
     "pychromecast>=14,<16",
@@ -22,6 +23,7 @@ cuda = [
 
 [project.scripts]
 euthervox-gateway = "gateway.main:cli"
+euthervox-mcp = "gateway.mcp_server:cli"
 
 [tool.pytest.ini_options]
 testpaths = ["server/tests"]

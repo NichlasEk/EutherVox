@@ -1,4 +1,4 @@
-# EutherVox 0.4 beta
+# EutherVox 0.7 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -158,6 +158,30 @@ Sätt ihop en spellista med svensk punk på Kök 2.
 
 Cast är avstängt i mockkonfigurationen. Real-beta-konfigurationen mappar aliaset `köket` till `Kök 2` på det lokala nätet. IP och Cast-UUID är enhetsmetadata, inte autentiseringshemligheter. Lägg till framtida rum under separata `[cast.rooms."alias"]`-tabeller.
 
+## MCP och modellstyrda verktyg
+
+Version 0.7 har ett riktigt MCP-servergränssnitt och Ollama tool-calling ovanpå samma vitlistade verktygsregister. Den deterministiska kommandotolkaren körs först för lägsta möjliga latens. Om den inte känner igen ett musikrelaterat yttrande får Qwen välja mellan `music_play` och `playlist_create`. Ett exempel som nu går genom modellverktyget är:
+
+```text
+Jag är sugen på mörk cyberpunk i köket.
+```
+
+Modellens returvärde är aldrig direkt behörighet att agera. Registret avvisar okända verktyg, extra argument, okända rum, tomma frågor och godtyckliga nätverksmål. Nodnamn och autentiserad användare kommer från WebSocket-sessionen, inte från modellen. `playlist_create` behåller appens obligatoriska bekräftelse.
+
+Den fristående MCP-servern använder officiella MCP Python SDK 2 och kör stdio som standard:
+
+```bash
+uv run euthervox-mcp --config config.real-beta.example.toml
+```
+
+Den exponerar:
+
+- `cast_list_targets`: läser tillåtna rumsalias utan att lämna ut IP eller Cast-UUID.
+- `music_play`: skapar ett validerat uppspelningsförslag.
+- `playlist_create`: skapar ett validerat förslag som kräver bekräftelse.
+
+En extern MCP-klient får i denna första slice endast åtgärdsförslag. Faktisk körning sker fortfarande inne i en autentiserad EutherVox-session. Se [MCP-verktygsdesignen](docs/mcp-tools.md).
+
 ## Tester
 
 ```bash
@@ -186,6 +210,7 @@ Figurens personlighet och röstparametrar ligger separat i `characters/skinnskat
 - YouTube Data API:s standardkvot begränsar hur många sökningar och låtinfogningar som kan göras per dygn.
 - Cast-adaptern använder PyChromecasts inofficiella YouTube-controller eftersom Google saknar ett publikt API för att välja YouTube Music-mottagare. Den är därför beta, konfigurationsstyrd och faller tillbaka till telefonen.
 - Cast-volym, paus/nästa och dirigering till fler rum återstår.
+- MCP-servern använder än så länge stdio och utför inte fristående åtgärder; autentiserad Streamable HTTP kan läggas till när en extern agent behöver fjärrstyra EutherVox.
 - Prototypens WebSocket-klient stöder kompletta, ofragmenterade serverframes upp till 1 MiB.
 - `ws://` är okrypterat och ska bara användas på betrott LAN. Den publika betarutten använder EutherOxide-inloggning och `wss://`.
 - Ingen wake word, bakgrundsavlyssning eller långtidsminne finns.

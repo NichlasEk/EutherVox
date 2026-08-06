@@ -247,6 +247,34 @@ def test_music_command_returns_action_without_tts():
     asyncio.run(scenario())
 
 
+def test_tool_planner_is_used_when_deterministic_parser_does_not_match():
+    class NaturalMusicStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Jag är sugen på något mörkt synthigt i köket"
+
+    class FakeToolPlanner:
+        async def plan(self, transcript: str, node_name: str):
+            assert transcript == "Jag är sugen på något mörkt synthigt i köket"
+            return ActionPlanner().plan("Spela mörk synth i köket", node_name)
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = NaturalMusicStt()
+        session.tool_planner = FakeToolPlanner()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "tool-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "tool-1"}))
+        await session.response_task
+
+        action = next(item for item in sent if isinstance(item, dict) and item.get("type") == "action.request")
+        assert action["name"] == "media.play"
+        assert action["arguments"]["output_room"] == "köket"
+        assert not any(isinstance(item, bytes) for item in sent)
+
+    asyncio.run(scenario())
+
+
 def test_playlist_creation_requires_confirmation_then_opens_result(tmp_path: Path):
     class PlaylistStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:

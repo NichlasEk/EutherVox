@@ -18,12 +18,14 @@ from .config import GatewayConfig, load_config
 from .playlists import TomlPlaylistStore
 from .session import ProtocolError, VoiceSession
 from .youtube import YouTubePlaylistService
+from .tool_planner import OllamaToolPlanner
+from .tools import EutherVoxToolRegistry
 
 
 LOG = logging.getLogger("euthervox.gateway")
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -39,6 +41,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         youtube=youtube,
         playlists=playlists,
         cast=cast,
+        tool_planner=tool_planner,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -111,6 +114,15 @@ async def run(config: GatewayConfig) -> None:
     youtube = YouTubePlaylistService(config.youtube_settings, config.config_dir)
     playlists = TomlPlaylistStore(config.playlist_settings, config.config_dir)
     cast = CastService(config.cast_settings)
+    tool_registry = EutherVoxToolRegistry(cast)
+    tool_planner = None
+    if bool(config.mcp_settings.get("enabled", False)) and config.llm_provider == "ollama":
+        tool_planner = OllamaToolPlanner(
+            tool_registry,
+            base_url=str(config.llm_settings.get("base_url", "http://127.0.0.1:11434")),
+            model=str(config.llm_settings.get("model", "qwen3:4b-instruct")),
+            timeout_seconds=float(config.mcp_settings.get("planner_timeout_seconds", 8.0)),
+        )
     for name, engine in (("stt", engines[0]), ("llm", engines[1])):
         warmup = getattr(engine, "warmup", None)
         if warmup:
@@ -125,7 +137,7 @@ async def run(config: GatewayConfig) -> None:
     )
     oauth_http = OAuthHttpHandler(youtube)
     async with serve(
-        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast),
+        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner),
         config.host,
         config.port,
         max_size=2**20,

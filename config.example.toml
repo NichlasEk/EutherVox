@@ -35,3 +35,7 @@ directory = "state/playlists"
 
 [cast]
 enabled = false
+
+[mcp]
+enabled = false
+planner_timeout_seconds = 8

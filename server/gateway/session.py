@@ -15,6 +15,7 @@ from .cast import CastService
 from .config import GatewayConfig
 from .playlists import TomlPlaylistStore
 from .youtube import YouTubePlaylistService
+from .tool_planner import OllamaToolPlanner
 
 
 SendJson = Callable[[dict], Awaitable[None]]
@@ -49,6 +50,7 @@ class VoiceSession:
     youtube: YouTubePlaylistService | None = None
     playlists: TomlPlaylistStore | None = None
     cast: CastService | None = None
+    tool_planner: OllamaToolPlanner | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -308,6 +310,8 @@ class VoiceSession:
                 await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": transcript})
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
             action = self.action_planner.plan(transcript, self.node_name)
+            if action is None and self.tool_planner is not None:
+                action = await self.tool_planner.plan(transcript, self.node_name)
             if action:
                 if action.name == "playlist.create":
                     if not self.authenticated_user:
