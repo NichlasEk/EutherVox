@@ -68,6 +68,10 @@ api_url = "https://sv.wikipedia.org/w/api.php"
 timeout_seconds = 8
 max_extract_chars = 6000
 
+[conversation]
+history_turns = 10
+max_history_chars = 12000
+
 [cast.rooms."köket"]
 friendly_name = "Kök 2"
 host = "192.168.32.5"

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 import json
 import logging
+import re
 import time
 from typing import Awaitable, Callable
 from uuid import uuid4
@@ -29,6 +30,37 @@ from .wikipedia import WikipediaService
 SendJson = Callable[[dict], Awaitable[None]]
 SendBinary = Callable[[bytes], Awaitable[None]]
 LOG = logging.getLogger("euthervox.session")
+
+
+class SentenceChunker:
+    """Collect model deltas and release stable sentence-sized TTS chunks."""
+
+    def __init__(self, minimum_words: int = 4):
+        self.buffer = ""
+        self.minimum_words = minimum_words
+
+    def push(self, piece: str) -> list[str]:
+        self.buffer += piece
+        sentences: list[str] = []
+        search_from = 0
+        while True:
+            match = re.search(r"[.!?][\"”']?(?=\s|$)", self.buffer[search_from:])
+            if not match:
+                break
+            end = search_from + match.end()
+            candidate = self.buffer[:end].strip()
+            if len(candidate.split()) < self.minimum_words:
+                search_from = end
+                continue
+            sentences.append(candidate)
+            self.buffer = self.buffer[end:].lstrip()
+            search_from = 0
+        return sentences
+
+    def flush(self) -> str:
+        remainder = self.buffer.strip()
+        self.buffer = ""
+        return remainder
 
 
 class Phase(Enum):
@@ -74,6 +106,7 @@ class VoiceSession:
     action_planner: ActionPlanner = field(default_factory=ActionPlanner)
     pending_actions: set[str] = field(default_factory=set)
     pending_confirmations: dict[str, DeviceAction] = field(default_factory=dict)
+    conversation_history: list[tuple[str, str]] = field(default_factory=list)
 
     async def handle_text(self, raw: str) -> None:
         try:
@@ -397,6 +430,7 @@ class VoiceSession:
                             "status": "completed",
                             "message": f"Källa: {article.title}",
                         })
+                        self._remember_turn(transcript, spoken_response)
                     except Exception as error:
                         LOG.exception("wikipedia_lookup_failed session=%s", self.session_id)
                         failure_message = f"Jag kunde inte läsa Wikipedia just nu: {error}"
@@ -435,6 +469,7 @@ class VoiceSession:
                             "status": "completed",
                             "message": acknowledgement,
                         })
+                        self._remember_turn(transcript, acknowledgement)
                     except Exception as error:
                         LOG.exception("media_control_failed session=%s command=%s room=%s", self.session_id, command, output_room or "auto")
                         failure_message = f"Jag kunde inte styra musiken: {error}"
@@ -480,6 +515,7 @@ class VoiceSession:
                             "status": "completed",
                             "message": f"Spelar på {self.cast.display_name(output_room)}.",
                         })
+                        self._remember_turn(transcript, spoken_acknowledgement)
                         self._reset()
                         return
                     except Exception as error:
@@ -513,6 +549,7 @@ class VoiceSession:
                 else:
                     self.pending_actions.add(action.action_id)
                 await self.send_json(action.to_message(utterance_id))
+                self._remember_turn(transcript, action.acknowledgement)
                 LOG.info(
                     "action_request session=%s utterance=%s action=%s name=%s target=%s",
                     self.session_id,
@@ -524,9 +561,38 @@ class VoiceSession:
                 self._reset()
                 return
             character = self.characters.get(self.character_name)
-            pieces: list[str] = []
-            first_piece = True
-            async for piece in self.llm.generate(transcript, character):
+            response = await self._stream_generated_response(utterance_id, transcript, character)
+            if self.config.text_logging:
+                LOG.info("assistant_final session=%s utterance=%s text=%r", self.session_id, utterance_id, response)
+            self._remember_turn(transcript, response)
+            elapsed_ms = (time.monotonic_ns() - self.started_ns) // 1_000_000
+            LOG.info("response_end session=%s utterance=%s elapsed_ms=%d", self.session_id, utterance_id, elapsed_ms)
+            self._reset()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            LOG.exception("response_failed session=%s utterance=%s", self.session_id, utterance_id)
+            await self.send_json({"type": "error", "code": "PIPELINE_FAILED", "message": str(error), "recoverable": True})
+            self._reset()
+
+    async def _stream_generated_response(self, utterance_id: str, transcript: str, character: object) -> str:
+        chunker = SentenceChunker()
+        sentence_queue: asyncio.Queue[str | None] = asyncio.Queue()
+        tts_task: asyncio.Task | None = None
+        pieces: list[str] = []
+        first_piece = True
+
+        def ensure_tts_task() -> asyncio.Task:
+            nonlocal tts_task
+            if tts_task is None:
+                self.phase = Phase.SPEAKING
+                tts_task = asyncio.create_task(
+                    self._stream_sentence_queue(utterance_id, sentence_queue, character)
+                )
+            return tts_task
+
+        try:
+            async for piece in self._generate_with_history(transcript, character):
                 if first_piece:
                     first_piece = False
                     LOG.info(
@@ -537,37 +603,81 @@ class VoiceSession:
                     )
                 pieces.append(piece)
                 await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": piece})
-            response = "".join(pieces)
-            if self.config.text_logging:
-                LOG.info("assistant_final session=%s utterance=%s text=%r", self.session_id, utterance_id, response)
+                for sentence in chunker.push(piece):
+                    ensure_tts_task()
+                    await sentence_queue.put(sentence)
+            response = "".join(pieces).strip()
+            if not response:
+                raise RuntimeError("Modellen gav inget svar")
+            remainder = chunker.flush()
+            if remainder:
+                ensure_tts_task()
+                await sentence_queue.put(remainder)
             await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": response})
-            self.phase = Phase.SPEAKING
-            await self.send_json({
-                "type": "tts.start",
-                "utterance_id": utterance_id,
-                "audio": {"codec": "pcm_s16le", "sample_rate": self.tts.sample_rate, "channels": 1},
-            })
-            frames = 0
-            async for frame in self.tts.synthesize(response, character, self.tts.sample_rate):
-                if frames == 0:
-                    LOG.info(
-                        "metric session=%s utterance=%s event=first_tts_frame after_audio_end_ms=%d",
-                        self.session_id,
-                        utterance_id,
-                        (time.monotonic_ns() - self.audio_end_ns) // 1_000_000,
-                    )
-                await self.send_binary(frame)
-                frames += 1
-            await self.send_json({"type": "tts.end", "utterance_id": utterance_id})
-            elapsed_ms = (time.monotonic_ns() - self.started_ns) // 1_000_000
-            LOG.info("response_end session=%s utterance=%s tts_frames=%d elapsed_ms=%d", self.session_id, utterance_id, frames, elapsed_ms)
-            self._reset()
-        except asyncio.CancelledError:
+            await sentence_queue.put(None)
+            await ensure_tts_task()
+            return response
+        except BaseException:
+            if tts_task:
+                tts_task.cancel()
+                await asyncio.gather(tts_task, return_exceptions=True)
             raise
-        except Exception as error:
-            LOG.exception("response_failed session=%s utterance=%s", self.session_id, utterance_id)
-            await self.send_json({"type": "error", "code": "PIPELINE_FAILED", "message": str(error), "recoverable": True})
-            self._reset()
+
+    async def _stream_sentence_queue(
+        self,
+        utterance_id: str,
+        queue: asyncio.Queue[str | None],
+        character: object,
+    ) -> None:
+        await self.send_json({
+            "type": "tts.start",
+            "utterance_id": utterance_id,
+            "audio": {"codec": "pcm_s16le", "sample_rate": self.tts.sample_rate, "channels": 1},
+        })
+        frames = 0
+        try:
+            while True:
+                sentence = await queue.get()
+                if sentence is None:
+                    break
+                async for frame in self.tts.synthesize(sentence, character, self.tts.sample_rate):
+                    if frames == 0:
+                        LOG.info(
+                            "metric session=%s utterance=%s event=first_tts_frame after_audio_end_ms=%d",
+                            self.session_id,
+                            utterance_id,
+                            (time.monotonic_ns() - self.audio_end_ns) // 1_000_000,
+                        )
+                    await self.send_binary(frame)
+                    frames += 1
+        finally:
+            await self.send_json({"type": "tts.end", "utterance_id": utterance_id})
+        LOG.info("streamed_tts session=%s utterance=%s frames=%d", self.session_id, utterance_id, frames)
+
+    async def _generate_with_history(self, transcript: str, character: object):
+        generator = getattr(self.llm, "generate_with_history", None)
+        if generator:
+            async for piece in generator(transcript, character, tuple(self.conversation_history)):
+                yield piece
+            return
+        async for piece in self.llm.generate(transcript, character):
+            yield piece
+
+    def _remember_turn(self, user_text: str, assistant_text: str) -> None:
+        cleaned_user = " ".join(user_text.strip().split())
+        cleaned_assistant = " ".join(assistant_text.strip().split())
+        if not cleaned_user or not cleaned_assistant:
+            return
+        self.conversation_history.append((cleaned_user, cleaned_assistant))
+        max_turns = max(0, int(self.config.conversation_settings.get("history_turns", 10)))
+        max_chars = max(0, int(self.config.conversation_settings.get("max_history_chars", 12000)))
+        if max_turns == 0 or max_chars == 0:
+            self.conversation_history.clear()
+            return
+        while len(self.conversation_history) > max_turns:
+            self.conversation_history.pop(0)
+        while self.conversation_history and sum(len(user) + len(assistant) for user, assistant in self.conversation_history) > max_chars:
+            self.conversation_history.pop(0)
 
     async def _stream_action_speech(self, utterance_id: str, text: str, character: object) -> None:
         await self.send_json({

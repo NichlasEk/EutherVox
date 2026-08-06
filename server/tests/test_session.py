@@ -16,7 +16,7 @@ from gateway.adapters import (
 from gateway.actions import ActionPlanner, DeviceAction
 from gateway.config import load_config
 from gateway.playlists import PlaylistTrack, TomlPlaylistStore
-from gateway.session import Phase, ProtocolError, VoiceSession
+from gateway.session import Phase, ProtocolError, SentenceChunker, VoiceSession
 from gateway.youtube import CreatedPlaylist, PlaylistPreview
 from gateway.wikipedia import WikipediaArticle
 
@@ -62,6 +62,77 @@ def test_complete_mock_pipeline_streams_control_and_binary_audio():
         assert tts_start["audio"]["sample_rate"] == 24000
         assert any(isinstance(item, bytes) and len(item) == 960 for item in sent)
         assert session.phase is Phase.READY
+    asyncio.run(scenario())
+
+
+def test_sentence_chunker_releases_complete_sentences_and_keeps_remainder():
+    chunker = SentenceChunker()
+
+    assert chunker.push("Första meningen kommer ") == []
+    assert chunker.push("redan nu. Nästa är") == ["Första meningen kommer redan nu."]
+    assert chunker.flush() == "Nästa är"
+
+
+def test_tts_starts_after_first_sentence_before_model_finishes_response():
+    first_sentence_synthesized = asyncio.Event()
+
+    class StreamingLlm:
+        async def generate(self, transcript: str, character):
+            yield "Första meningen är färdig. "
+            await asyncio.wait_for(first_sentence_synthesized.wait(), timeout=1)
+            yield "Den andra kommer senare."
+
+    class CoordinatedTts:
+        sample_rate = 24_000
+
+        async def synthesize(self, text: str, character, sample_rate: int):
+            if text.startswith("Första"):
+                first_sentence_synthesized.set()
+            yield bytes(960)
+
+    async def scenario():
+        session, sent = make_session()
+        session.llm = StreamingLlm()
+        session.tts = CoordinatedTts()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "stream-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "stream-1"}))
+        await session.response_task
+
+        controls = [item for item in sent if isinstance(item, dict)]
+        tts_start_index = next(index for index, item in enumerate(controls) if item["type"] == "tts.start")
+        second_delta_index = next(
+            index for index, item in enumerate(controls)
+            if item["type"] == "assistant.text.delta" and item["text"].startswith("Den andra")
+        )
+        assert tts_start_index < second_delta_index
+
+    asyncio.run(scenario())
+
+
+def test_recent_turns_are_passed_to_history_aware_model():
+    class HistoryLlm:
+        histories = []
+
+        async def generate_with_history(self, transcript: str, character, history):
+            self.histories.append(history)
+            yield "Jag minns den här repliken."
+
+    async def scenario():
+        session, _sent = make_session()
+        llm = HistoryLlm()
+        session.llm = llm
+        await session.handle_text(start_message())
+        for index in (1, 2):
+            await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": f"memory-{index}"}))
+            await session.handle_binary(bytes(640))
+            await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": f"memory-{index}"}))
+            await session.response_task
+
+        assert llm.histories[0] == ()
+        assert llm.histories[1] == (("Var ligger min lödkolv?", "Jag minns den här repliken."),)
+
     asyncio.run(scenario())
 
 

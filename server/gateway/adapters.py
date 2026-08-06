@@ -217,6 +217,15 @@ class OllamaTextGenerationEngine:
             response.raise_for_status()
 
     async def generate(self, transcript: str, character: Character) -> AsyncIterator[str]:
+        async for piece in self.generate_with_history(transcript, character, ()):
+            yield piece
+
+    async def generate_with_history(
+        self,
+        transcript: str,
+        character: Character,
+        history: tuple[tuple[str, str], ...],
+    ) -> AsyncIterator[str]:
         system = (
             f"Du är {character.display_name}. {character.description}\n"
             "Svara alltid på tydlig svenska. Var stämningsfull men aldrig gåtfull när viktig information ges. "
@@ -225,14 +234,16 @@ class OllamaTextGenerationEngine:
             "Du har ingen kunskap om användarens saker eller deras platser utöver det som står i frågan. "
             "Hitta aldrig på en sakuppgift eller plats. Om en plats saknas ska du uttryckligen säga att du inte vet var saken ligger ännu och be om relevant information."
         )
+        messages = [{"role": "system", "content": system}]
+        for user_text, assistant_text in history:
+            messages.append({"role": "user", "content": user_text})
+            messages.append({"role": "assistant", "content": assistant_text})
+        messages.append({"role": "user", "content": transcript})
         payload = {
             "model": self.model,
             "stream": True,
             "keep_alive": "30m",
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": transcript},
-            ],
+            "messages": messages,
             "options": {"temperature": 0.65, "num_ctx": 4096, "num_predict": 96},
         }
         timeout = httpx.Timeout(self.timeout_seconds, connect=5.0)
