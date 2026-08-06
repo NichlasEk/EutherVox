@@ -50,6 +50,7 @@ class VoiceSession:
     response_task: asyncio.Task | None = None
     received_frames: int = 0
     started_ns: int = 0
+    audio_end_ns: int = 0
 
     async def handle_text(self, raw: str) -> None:
         try:
@@ -116,6 +117,7 @@ class VoiceSession:
         if self.phase is not Phase.RECORDING or message.get("utterance_id") != self.utterance_id:
             raise ProtocolError("UTTERANCE_MISMATCH", "audio.end does not match active utterance")
         self.phase = Phase.PROCESSING
+        self.audio_end_ns = time.monotonic_ns()
         pcm = bytes(self.audio)
         utterance_id = self.utterance_id
         LOG.info("audio_end session=%s utterance=%s bytes=%d frames=%d", self.session_id, utterance_id, len(pcm), self.received_frames)
@@ -132,17 +134,38 @@ class VoiceSession:
 
     async def _respond(self, utterance_id: str, pcm: bytes) -> None:
         try:
-            await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": "var ligger min"})
+            initial_partial = getattr(self.stt, "initial_partial", None)
+            if initial_partial:
+                await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": initial_partial})
             transcript = await asyncio.wait_for(
                 self.stt.transcribe(pcm, self.config.input_audio.sample_rate),
                 timeout=self.config.response_timeout_seconds,
             )
             if self.config.text_logging:
                 LOG.info("stt_final session=%s utterance=%s text=%r", self.session_id, utterance_id, transcript)
+            if not transcript:
+                raise ValueError("No speech was recognized")
+            LOG.info(
+                "metric session=%s utterance=%s event=stt_final after_audio_end_ms=%d",
+                self.session_id,
+                utterance_id,
+                (time.monotonic_ns() - self.audio_end_ns) // 1_000_000,
+            )
+            if not initial_partial:
+                await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": transcript})
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
             character = self.characters.get(self.character_name)
             pieces: list[str] = []
+            first_piece = True
             async for piece in self.llm.generate(transcript, character):
+                if first_piece:
+                    first_piece = False
+                    LOG.info(
+                        "metric session=%s utterance=%s event=first_response_text after_audio_end_ms=%d",
+                        self.session_id,
+                        utterance_id,
+                        (time.monotonic_ns() - self.audio_end_ns) // 1_000_000,
+                    )
                 pieces.append(piece)
                 await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": piece})
             response = "".join(pieces)
@@ -153,10 +176,17 @@ class VoiceSession:
             await self.send_json({
                 "type": "tts.start",
                 "utterance_id": utterance_id,
-                "audio": {"codec": "pcm_s16le", "sample_rate": self.config.output_audio.sample_rate, "channels": 1},
+                "audio": {"codec": "pcm_s16le", "sample_rate": self.tts.sample_rate, "channels": 1},
             })
             frames = 0
-            async for frame in self.tts.synthesize(response, character, self.config.output_audio.sample_rate):
+            async for frame in self.tts.synthesize(response, character, self.tts.sample_rate):
+                if frames == 0:
+                    LOG.info(
+                        "metric session=%s utterance=%s event=first_tts_frame after_audio_end_ms=%d",
+                        self.session_id,
+                        utterance_id,
+                        (time.monotonic_ns() - self.audio_end_ns) // 1_000_000,
+                    )
                 await self.send_binary(frame)
                 frames += 1
             await self.send_json({"type": "tts.end", "utterance_id": utterance_id})
@@ -175,3 +205,4 @@ class VoiceSession:
         self.utterance_id = None
         self.audio.clear()
         self.response_task = None
+        self.audio_end_ns = 0

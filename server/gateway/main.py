@@ -8,7 +8,7 @@ import logging
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
-from .adapters import MockSpeechToTextEngine, MockTextGenerationEngine, MockTextToSpeechEngine, TomlCharacterProvider
+from .adapters import TomlCharacterProvider, build_engines
 from .config import GatewayConfig, load_config
 from .session import ProtocolError, VoiceSession
 
@@ -16,15 +16,16 @@ from .session import ProtocolError, VoiceSession
 LOG = logging.getLogger("euthervox.gateway")
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
+    stt, llm, tts = engines or build_engines(config)
     session = VoiceSession(
         config=config,
-        stt=MockSpeechToTextEngine(),
-        llm=MockTextGenerationEngine(),
-        tts=MockTextToSpeechEngine(),
+        stt=stt,
+        llm=llm,
+        tts=tts,
         characters=TomlCharacterProvider(config.profile_dir),
         send_json=send_json,
         send_binary=socket.send,
@@ -49,7 +50,20 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig) -> 
 
 
 async def run(config: GatewayConfig) -> None:
-    async with serve(lambda socket: handle_connection(socket, config), config.host, config.port, max_size=2**20):
+    engines = build_engines(config)
+    for name, engine in (("stt", engines[0]), ("llm", engines[1])):
+        warmup = getattr(engine, "warmup", None)
+        if warmup:
+            await warmup()
+            LOG.info("engine_warm name=%s", name)
+    LOG.info(
+        "engines_ready stt=%s llm=%s tts=%s output_sample_rate=%d",
+        config.stt_provider,
+        config.llm_provider,
+        config.tts_provider,
+        engines[2].sample_rate,
+    )
+    async with serve(lambda socket: handle_connection(socket, config, engines), config.host, config.port, max_size=2**20):
         LOG.info("listening ws://%s:%d", config.host, config.port)
         await asyncio.get_running_loop().create_future()
 

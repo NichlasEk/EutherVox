@@ -26,6 +26,9 @@ class GatewayConfig:
     stt_provider: str
     llm_provider: str
     tts_provider: str
+    stt_settings: dict
+    llm_settings: dict
+    tts_settings: dict
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -38,6 +41,14 @@ def load_config(path: str | Path) -> GatewayConfig:
     profile_dir = Path(raw["character"].get("profile_dir", "characters"))
     if not profile_dir.is_absolute():
         profile_dir = config_path.parent / profile_dir
+    stt_settings = dict(raw["stt"])
+    llm_settings = dict(raw["llm"])
+    tts_settings = dict(raw["tts"])
+    for settings, key in ((stt_settings, "download_root"), (tts_settings, "model_path")):
+        if key in settings:
+            value = Path(settings[key])
+            if not value.is_absolute():
+                settings[key] = str(config_path.parent / value)
     return GatewayConfig(
         host=server.get("host", "0.0.0.0"),
         port=int(server.get("port", 8788)),
@@ -58,5 +69,7 @@ def load_config(path: str | Path) -> GatewayConfig:
         stt_provider=raw["stt"].get("provider", "mock"),
         llm_provider=raw["llm"].get("provider", "mock"),
         tts_provider=raw["tts"].get("provider", "mock"),
+        stt_settings=stt_settings,
+        llm_settings=llm_settings,
+        tts_settings=tts_settings,
     )
-

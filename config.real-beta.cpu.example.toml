@@ -1,0 +1,40 @@
+[server]
+host = "0.0.0.0"
+port = 8788
+text_logging = true
+response_timeout_seconds = 30.0
+
+[audio.input]
+sample_rate = 16000
+channels = 1
+frame_ms = 20
+
+[audio.output]
+sample_rate = 22050
+channels = 1
+buffer_ms = 120
+
+[character]
+default = "skinnskattaren"
+profile_dir = "characters"
+
+[stt]
+provider = "faster_whisper"
+model = "base"
+device = "cpu"
+compute_type = "int8"
+language = "sv"
+cpu_threads = 8
+download_root = "models/faster-whisper"
+hotwords = ""
+
+[llm]
+provider = "ollama"
+base_url = "http://127.0.0.1:11434"
+model = "qwen3:4b-instruct"
+timeout_seconds = 30.0
+
+[tts]
+provider = "piper"
+model_path = "models/piper/sv_SE-nst-medium.onnx"
+frame_ms = 20
