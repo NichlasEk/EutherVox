@@ -29,6 +29,10 @@ class DeviceAction:
 class ActionPlanner:
     """Deterministic allowlisted commands that must never depend on LLM prose."""
 
+    _CONVERSATION_PREFIX = re.compile(
+        r"^\s*(?:(?:okej|ok|hörru|du|snälla|skinnskattaren)\s*[,.:!?]?\s+)+",
+        re.IGNORECASE,
+    )
     _PLAY = re.compile(
         r"^\s*(?:(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?spela(?:\s+upp)?|jag\s+(?:vill\s+(?:att\s+du\s+)?spela|spelar)|sätt\s+på|dra\s+igång)\s+(.+?)\s*[.!?]*\s*$",
         re.IGNORECASE,
@@ -61,7 +65,8 @@ class ActionPlanner:
     )
 
     def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
-        playlist_command = self._YOUTUBE_SUFFIX.sub("", transcript.strip(" .!?"))
+        command = self._CONVERSATION_PREFIX.sub("", transcript)
+        playlist_command = self._YOUTUBE_SUFFIX.sub("", command.strip(" .!?"))
         playlist_command, output_room = self._extract_output(playlist_command)
         playlist = (
             self._PLAYLIST_AFTER_NOUN.match(playlist_command)
@@ -89,9 +94,9 @@ class ActionPlanner:
                     ),
                     requires_confirmation=True,
                 )
-        if re.match(r"^\s*spela\s+in\b", transcript, re.IGNORECASE):
+        if re.match(r"^\s*spela\s+in\b", command, re.IGNORECASE):
             return None
-        match = self._PLAY.match(transcript)
+        match = self._PLAY.match(command)
         if not match:
             return None
         if re.match(r"^\s*in\b", match.group(1), re.IGNORECASE):

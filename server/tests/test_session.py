@@ -143,6 +143,13 @@ def test_action_planner_accepts_natural_and_observed_stt_music_requests():
         assert action.arguments["output_room"] == "köket"
 
 
+def test_action_planner_ignores_conversational_prefix_before_music_command():
+    action = ActionPlanner().plan("Okej, kan du spela lite cyberpunk på YouTube Music?", "pixel")
+
+    assert action is not None
+    assert action.arguments == {"provider": "youtube_music", "query": "lite cyberpunk"}
+
+
 def test_action_planner_does_not_treat_recording_as_music_playback():
     assert ActionPlanner().plan("Spela in det här", "pixel") is None
     assert ActionPlanner().plan("Kan du spela in det här?", "pixel") is None
