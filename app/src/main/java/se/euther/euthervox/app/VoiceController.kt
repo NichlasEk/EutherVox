@@ -292,11 +292,19 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 timeoutJob?.cancel()
                 timeoutJob = null
                 mutableState.value = mutableState.value.copy(status = VoiceStatus.Speaking)
-                speaker.start(AudioStreamFormat("pcm_s16le", event.sampleRate, event.channels)) {
-                    timeline.playbackStart = now()
-                    logTime("audio_playback_start", timeline.playbackStart)
-                    updateLatencies()
-                }
+                speaker.start(
+                    AudioStreamFormat("pcm_s16le", event.sampleRate, event.channels),
+                    onPlaybackStarted = {
+                        timeline.playbackStart = now()
+                        logTime("audio_playback_start", timeline.playbackStart)
+                        updateLatencies()
+                    },
+                    onPlaybackError = { message ->
+                        scope.launch {
+                            if (utteranceId == event.utteranceId) fail("Ljuduppspelningen avbröts: $message")
+                        }
+                    },
+                )
             }
             is ServerEvent.TtsEnd -> {
                 logTime("last_tts_frame", timeline.lastTts)

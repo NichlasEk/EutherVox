@@ -11,12 +11,14 @@ import android.media.AudioTrack
 import android.media.MediaRecorder
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 data class AudioStreamFormat(val codec: String, val sampleRate: Int, val channels: Int, val frameMs: Int? = null)
 
@@ -26,7 +28,7 @@ interface MicrophoneSource {
 }
 
 interface StreamingAudioSink {
-    fun start(format: AudioStreamFormat, onPlaybackStarted: () -> Unit)
+    fun start(format: AudioStreamFormat, onPlaybackStarted: () -> Unit, onPlaybackError: (String) -> Unit)
     fun enqueue(frame: ByteArray): Boolean
     fun finish(onPlaybackComplete: () -> Unit)
     fun stop()
@@ -83,9 +85,11 @@ class PcmAudioTrackSink(private val scope: CoroutineScope, private val startBuff
     private var writerJob: Job? = null
     private var queue: Channel<ByteArray>? = null
     @Volatile private var completion: (() -> Unit)? = null
+    private val generation = AtomicLong(0)
 
-    override fun start(format: AudioStreamFormat, onPlaybackStarted: () -> Unit) {
+    override fun start(format: AudioStreamFormat, onPlaybackStarted: () -> Unit, onPlaybackError: (String) -> Unit) {
         stop()
+        val playbackGeneration = generation.incrementAndGet()
         require(format.codec == "pcm_s16le" && format.channels == 1)
         val minimum = AudioTrack.getMinBufferSize(format.sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
         val startBytes = format.sampleRate * 2 * startBufferMs / 1000
@@ -97,29 +101,51 @@ class PcmAudioTrackSink(private val scope: CoroutineScope, private val startBuff
             .build()
         track = audioTrack
         completion = null
-        val channel = Channel<ByteArray>(capacity = 32)
+        val channel = Channel<ByteArray>(capacity = 128)
         queue = channel
         writerJob = scope.launch(Dispatchers.IO) {
-            var buffered = 0
-            var playing = false
-            for (frame in channel) {
-                audioTrack.write(frame, 0, frame.size, AudioTrack.WRITE_BLOCKING)
-                buffered += frame.size
-                if (!playing && buffered >= startBytes) {
+            try {
+                var buffered = 0
+                var playing = false
+                for (frame in channel) {
+                    if (generation.get() != playbackGeneration) return@launch
+                    var offset = 0
+                    while (offset < frame.size && isActive && generation.get() == playbackGeneration) {
+                        val written = audioTrack.write(frame, offset, frame.size - offset, AudioTrack.WRITE_BLOCKING)
+                        check(written > 0) { "AudioTrack.write misslyckades med kod $written" }
+                        offset += written
+                    }
+                    if (generation.get() != playbackGeneration) return@launch
+                    buffered += offset
+                    if (!playing && buffered >= startBytes) {
+                        check(audioTrack.state == AudioTrack.STATE_INITIALIZED) { "AudioTrack blev ogiltigt före uppspelning" }
+                        audioTrack.play()
+                        playing = true
+                        onPlaybackStarted()
+                    }
+                }
+                if (generation.get() != playbackGeneration) return@launch
+                if (!playing && buffered > 0) {
+                    check(audioTrack.state == AudioTrack.STATE_INITIALIZED) { "AudioTrack blev ogiltigt före uppspelning" }
                     audioTrack.play()
                     playing = true
                     onPlaybackStarted()
                 }
+                val totalFrames = buffered / 2
+                while (
+                    isActive && generation.get() == playbackGeneration &&
+                    audioTrack.playbackHeadPosition.toLong() < totalFrames
+                ) {
+                    kotlinx.coroutines.delay(20)
+                }
+                if (generation.get() == playbackGeneration) completion?.invoke()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation.get() == playbackGeneration) {
+                    onPlaybackError(error.message ?: "Okänt AudioTrack-fel")
+                }
             }
-            if (!playing && buffered > 0) {
-                audioTrack.play()
-                onPlaybackStarted()
-            }
-            val totalFrames = buffered / 2
-            while (isActive && audioTrack.playbackHeadPosition.toLong() < totalFrames) {
-                kotlinx.coroutines.delay(20)
-            }
-            completion?.invoke()
         }
     }
 
@@ -131,17 +157,21 @@ class PcmAudioTrackSink(private val scope: CoroutineScope, private val startBuff
     }
 
     override fun stop() {
-        queue?.close()
+        generation.incrementAndGet()
+        val oldQueue = queue
         queue = null
+        oldQueue?.close()
         completion = null
-        writerJob?.cancel()
+        val oldWriter = writerJob
         writerJob = null
-        track?.let { audioTrack ->
+        oldWriter?.cancel()
+        val oldTrack = track
+        track = null
+        oldTrack?.let { audioTrack ->
             audioTrack.runCatching { pause() }
             audioTrack.runCatching { flush() }
             audioTrack.runCatching { stop() }
             audioTrack.runCatching { release() }
         }
-        track = null
     }
 }
