@@ -9,7 +9,7 @@ from websockets.datastructures import Headers
 from websockets.http11 import Request
 
 from gateway.main import OAuthHttpHandler
-from gateway.youtube import YouTubePlaylistService
+from gateway.youtube import YouTubePlaylistService, normalize_music_search_query
 
 
 class FakeYouTube:
@@ -29,6 +29,12 @@ class FakeYouTube:
         assert code == "code-1"
         assert state == "state-1"
         assert authenticated_user == "nichlas"
+
+
+def test_music_search_query_repairs_common_stt_joins_and_fillers():
+    assert normalize_music_search_query("lite mörkcyberpunk") == "mörk cyberpunk"
+    assert normalize_music_search_query("Något lugnt synthwave.") == "lugnt synthwave"
+    assert normalize_music_search_query("Ghost") == "Ghost"
 
 
 def test_oauth_start_redirects_to_google():

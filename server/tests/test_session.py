@@ -553,11 +553,12 @@ def test_direct_cast_failure_returns_phone_action_instead_of_hanging():
         controls = [item for item in sent if isinstance(item, dict)]
         finals = [item for item in controls if item.get("type") == "assistant.text.final"]
         fallback = next(item for item in controls if item.get("type") == "action.request")
-        failed = next(item for item in controls if item.get("type") == "action.completed")
+        retrying = next(item for item in controls if item.get("type") == "action.status" and "telefonen" in item.get("message", ""))
         assert len(finals) == 1
         assert "Cast till köket misslyckades" in finals[0]["text"]
-        assert failed["status"] == "failed"
-        assert failed["action_id"] != fallback["action_id"]
+        assert retrying["status"] == "running"
+        assert retrying["action_id"] != fallback["action_id"]
+        assert not any(item.get("type") == "action.completed" for item in controls)
         assert fallback["name"] == "media.play"
         assert "output_room" not in fallback["arguments"]
         assert fallback["target"]["node_name"] == "unknown"

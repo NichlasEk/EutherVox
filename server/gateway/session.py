@@ -363,10 +363,10 @@ class VoiceSession:
                     except Exception as error:
                         LOG.exception("media_cast_failed session=%s room=%s", self.session_id, output_room)
                         await self.send_json({
-                            "type": "action.completed",
+                            "type": "action.status",
                             "action_id": action.action_id,
-                            "status": "failed",
-                            "message": str(error),
+                            "status": "running",
+                            "message": f"Cast misslyckades ({error}). Försöker på telefonen…",
                         })
                         fallback_arguments = dict(action.arguments)
                         fallback_arguments.pop("output_room", None)

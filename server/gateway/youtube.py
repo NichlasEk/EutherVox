@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import time
 from urllib.parse import urlencode
@@ -16,6 +17,23 @@ from .playlists import LocalPlaylist, PlaylistTrack
 
 
 YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube"
+
+_LEADING_SEARCH_FILLER = re.compile(
+    r"^(?:(?:lite|något|någon|några|en|ett)\s+)+",
+    re.IGNORECASE,
+)
+_JOINED_MUSIC_TERM = re.compile(
+    r"(?<=\w)(cyberpunk|synthwave|darkwave|retrowave|vaporwave|ambient|techno|jazz|metal|rock)\b",
+    re.IGNORECASE,
+)
+
+
+def normalize_music_search_query(query: str) -> str:
+    """Repair common Swedish STT joins without changing the spoken transcript."""
+    clean = " ".join(query.strip(" .!?").split())
+    clean = _LEADING_SEARCH_FILLER.sub("", clean)
+    clean = _JOINED_MUSIC_TERM.sub(r" \1", clean)
+    return clean or query.strip(" .!?")
 
 
 @dataclass(frozen=True)
@@ -105,13 +123,14 @@ class YouTubePlaylistService:
     async def find_tracks(self, authenticated_user: str, preview: PlaylistPreview) -> tuple[PlaylistTrack, ...]:
         access_token = await self._access_token(authenticated_user)
         headers = {"Authorization": f"Bearer {access_token}"}
+        search_query = normalize_music_search_query(preview.query)
         async with httpx.AsyncClient(timeout=30, trust_env=False, headers=headers) as client:
             search = await client.get("https://www.googleapis.com/youtube/v3/search", params={
                 "part": "snippet",
                 "type": "video",
                 "videoCategoryId": "10",
                 "maxResults": preview.track_count,
-                "q": preview.query,
+                "q": search_query,
             })
             search.raise_for_status()
         tracks = tuple(
