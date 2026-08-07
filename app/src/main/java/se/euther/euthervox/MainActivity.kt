@@ -84,7 +84,11 @@ fun EutherVoxApp() {
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
     var username by remember { mutableStateOf(preferences.getString("username", "").orEmpty()) }
     var voiceId by remember { mutableStateOf(preferences.getString("voice_id", "piper-nst").orEmpty()) }
-    var password by remember { mutableStateOf("") }
+    var settingsAddress by remember { mutableStateOf(address) }
+    var settingsNodeName by remember { mutableStateOf(nodeName) }
+    var settingsUsername by remember { mutableStateOf(username) }
+    var settingsVoiceId by remember { mutableStateOf(voiceId) }
+    var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> hasPermission = granted }
@@ -120,7 +124,14 @@ fun EutherVoxApp() {
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = { controller.connect(address, nodeName, username, requestedVoiceId = voiceId) }, enabled = address.isNotBlank()) { Text("Anslut") }
-                OutlinedButton(onClick = { showSettings = true }) { Text("Inställningar") }
+                OutlinedButton(onClick = {
+                    settingsAddress = address
+                    settingsNodeName = nodeName
+                    settingsUsername = username
+                    settingsVoiceId = voiceId
+                    settingsPassword = ""
+                    showSettings = true
+                }) { Text("Inställningar") }
             }
 
             if (!hasPermission) {
@@ -188,23 +199,23 @@ fun EutherVoxApp() {
     }
 
     if (showSettings) AlertDialog(
-        onDismissRequest = { if (address.isNotBlank()) showSettings = false },
+        onDismissRequest = { showSettings = false },
         title = { Text("Anslutning") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                OutlinedTextField(address, { address = it }, label = { Text("Serveradress") }, placeholder = { Text("wss://apothictech.se/euthervox/ws") }, singleLine = true)
-                OutlinedTextField(nodeName, { nodeName = it }, label = { Text("Nodnamn") }, singleLine = true)
-                OutlinedTextField(username, { username = it }, label = { Text("EutherOxide-användare") }, singleLine = true)
+                OutlinedTextField(settingsAddress, { settingsAddress = it }, label = { Text("Serveradress") }, placeholder = { Text("wss://apothictech.se/euthervox/ws") }, singleLine = true)
+                OutlinedTextField(settingsNodeName, { settingsNodeName = it }, label = { Text("Nodnamn") }, singleLine = true)
+                OutlinedTextField(settingsUsername, { settingsUsername = it }, label = { Text("EutherOxide-användare") }, singleLine = true)
                 Text("Skinnskattarens röst", fontWeight = FontWeight.Bold, color = Forest)
-                VoiceChoice("piper-nst", "NST – snabb", voiceId) { voiceId = it }
-                VoiceChoice("piper-lisa", "Lisa – alternativ", voiceId) { voiceId = it }
-                VoiceChoice("chatterbox", "Chatterbox – naturlig (experimentell)", voiceId) { voiceId = it }
+                VoiceChoice("piper-nst", "NST – snabb (rekommenderad)", settingsVoiceId) { settingsVoiceId = it }
+                VoiceChoice("piper-lisa", "Lisa – alternativ", settingsVoiceId) { settingsVoiceId = it }
+                VoiceChoice("chatterbox", "Chatterbox – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }
                 OutlinedTextField(
-                    password,
-                    { password = it },
+                    settingsPassword,
+                    { settingsPassword = it },
                     label = { Text("Lösenord (endast första gången)") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
@@ -213,10 +224,10 @@ fun EutherVoxApp() {
                 OutlinedButton(
                     onClick = {
                         runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(EutherAuthClient.youtubeOAuthUrl(address))))
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(EutherAuthClient.youtubeOAuthUrl(settingsAddress))))
                         }
                     },
-                    enabled = address.isNotBlank(),
+                    enabled = settingsAddress.isNotBlank(),
                 ) { Text("Koppla YouTube-konto") }
                 OutlinedButton(
                     onClick = {
@@ -224,21 +235,32 @@ fun EutherVoxApp() {
                     },
                 ) { Text("Öppna YouTube Music / Cast") }
                 Text("Manuell reservväg: välj Cast-symbolen i YouTube Music och anslut till Kök 2.", style = MaterialTheme.typography.bodySmall)
-                TextButton(onClick = { password = ""; controller.forgetCredentials() }) { Text("Glöm sparad inloggning") }
+                TextButton(onClick = { settingsPassword = ""; controller.forgetCredentials() }) { Text("Glöm sparad inloggning") }
             }
         },
         confirmButton = {
             TextButton(onClick = {
-                preferences.edit {
-                    putString("server_address", address.trim())
-                    putString("node_name", nodeName.trim())
-                    putString("username", username.trim())
-                    putString("voice_id", voiceId)
+                val savedAddress = settingsAddress.trim()
+                val savedNodeName = settingsNodeName.trim()
+                val savedUsername = settingsUsername.trim()
+                val savedVoiceId = settingsVoiceId
+                preferences.edit(commit = true) {
+                    putString("server_address", savedAddress)
+                    putString("node_name", savedNodeName)
+                    putString("username", savedUsername)
+                    putString("voice_id", savedVoiceId)
                 }
+                address = savedAddress
+                nodeName = savedNodeName
+                username = savedUsername
+                voiceId = savedVoiceId
                 showSettings = false
-                controller.connect(address, nodeName, username, password, voiceId)
-                password = ""
-            }, enabled = address.isNotBlank()) { Text("Spara och anslut") }
+                controller.connect(savedAddress, savedNodeName, savedUsername, settingsPassword, savedVoiceId)
+                settingsPassword = ""
+            }, enabled = settingsAddress.isNotBlank()) { Text("Spara och stäng") }
+        },
+        dismissButton = {
+            TextButton(onClick = { showSettings = false }) { Text("Avbryt") }
         },
     )
 }
