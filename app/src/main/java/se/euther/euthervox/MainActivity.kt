@@ -598,6 +598,7 @@ private fun WifiDeviceCard(
     var showPicker by remember(device.mac) { mutableStateOf(false) }
     var showEffects by remember(device.mac) { mutableStateOf(false) }
     var effectSpeed by remember(device.mac) { mutableStateOf(40f) }
+    var activeEffect by remember(device.mac) { mutableStateOf<String?>(null) }
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.76f))) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -643,12 +644,28 @@ private fun WifiDeviceCard(
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) {
                 Text("Hastighet ${effectSpeed.toInt()} %")
-                Slider(value = effectSpeed, onValueChange = { effectSpeed = it }, valueRange = 1f..100f)
+                Slider(
+                    value = effectSpeed,
+                    onValueChange = { effectSpeed = it },
+                    onValueChangeFinished = {
+                        activeEffect?.let { onEffect(it, effectSpeed.toInt()) }
+                    },
+                    valueRange = 1f..100f,
+                    enabled = !busy,
+                )
+                Text(
+                    activeEffect?.let { "Aktivt: $it. Ny hastighet skickas när reglaget släpps." }
+                        ?: "Välj först ett mönster. Därefter ändrar reglaget hastigheten direkt.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 MagicHomeProtocol.effects.keys.chunked(2).forEach { row ->
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         row.forEach { label ->
                             OutlinedButton(
-                                onClick = { onEffect(label, effectSpeed.toInt()); showEffects = false },
+                                onClick = {
+                                    activeEffect = label
+                                    onEffect(label, effectSpeed.toInt())
+                                },
                                 enabled = !busy,
                                 modifier = Modifier.weight(1f),
                             ) { Text(label, style = MaterialTheme.typography.bodySmall) }
