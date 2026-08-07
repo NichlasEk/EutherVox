@@ -68,6 +68,24 @@ def test_effect_turns_light_on_before_sending_allowlisted_pattern(tmp_path: Path
     ]
 
 
+def test_strobe_uses_symmetric_custom_effect_with_visible_speed(tmp_path: Path):
+    service = MagicHomeLightService({"enabled": True, "config_file": "lights.toml"}, tmp_path)
+    service.upsert(name="Fönstret", room="Sovrummet", host="192.168.1.10", mac="AABBCCDDEE01", model="AK001-ZJ200")
+    packets = []
+
+    async def capture(host: str, packet: bytes):
+        packets.append((host, packet))
+
+    service._send = capture
+    asyncio.run(service.set_effect("Fönstret", "red_strobe", 40))
+
+    packet = packets[1][1]
+    assert len(packet) == 70
+    assert packet[:12] == bytes.fromhex("51 ff 00 00 00 00 00 00 00 ff 00 00")
+    assert packet[-5:-1] == bytes.fromhex("13 3b ff 0f")
+    assert packet[-1] == sum(packet[:-1]) & 0xFF
+
+
 def test_brightness_only_preserves_current_hue(tmp_path: Path):
     service = MagicHomeLightService({"enabled": True, "config_file": "lights.toml"}, tmp_path)
     service.upsert(name="Fönstret", room="Sovrummet", host="192.168.1.10", mac="AABBCCDDEE01", model="AK001-ZJ200")

@@ -50,10 +50,13 @@ Git-ignorerad, skrivs atomiskt och får filrättighet `0600`.
 
 Gatewayens språkmodell får bara välja en lampa eller ett rum som redan finns i
 TOML-registret. `light_set` hanterar av/på, `#RRGGBB` och 1–100 procents
-ljusstyrka. `light_effect` använder en fast lista över klassiska Magic Home-
-mönster och 1–100 procents hastighet. Ett fysiskt prov mot `AK001-ZJ200`
-bekräftade att mönster måste föregås av ett tändkommando; båda drivrutinerna gör
-det automatiskt.
+ljusstyrka. `light_effect` använder en fast lista över Magic Home-mönster och
+1–100 procents hastighet. Färgade blinklägen byggs som en beständig 16-stegs
+custom-effekt med växelvis färg och svart. Det ger 50/50-puls och tydlig
+hastighet; modulens inbyggda strobe-preset undviks eftersom den har kort tändtid
+och lång släcktid. Ett fysiskt prov mot `AK001-ZJ200` bekräftade också att
+mönster måste föregås av ett tändkommando; båda drivrutinerna gör det
+automatiskt.
 
 ## Ny modul
 

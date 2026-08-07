@@ -41,6 +41,21 @@ class MagicHomeProtocolTest {
     }
 
     @Test
+    fun buildsSymmetricCustomBlinkWithVisibleSpeed() {
+        val packet = MagicHomeProtocol.effect("Röd blink", 40)
+
+        assertEquals(70, packet.size)
+        assertArrayEquals(
+            byteArrayOf(0x51, 0xff.toByte(), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
+            packet.copyOfRange(0, 8),
+        )
+        assertArrayEquals(
+            byteArrayOf(0x13, 0x3b, 0xff.toByte(), 0x0f),
+            packet.copyOfRange(packet.size - 5, packet.size - 1),
+        )
+    }
+
+    @Test
     fun validatesCredentialsWithoutReturningSecrets() {
         assertNull(MagicHomeProtocol.validateWifiCredentials("Hemma", "hemligt123"))
         assertTrue(MagicHomeProtocol.validateWifiCredentials("Hemma", "kort")!!.contains("8"))

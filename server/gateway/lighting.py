@@ -25,6 +25,18 @@ EFFECTS = {
     "rainbow_jump": 0x38,
 }
 
+STROBE_COLORS = {
+    "red_strobe": ((255, 0, 0),),
+    "green_strobe": ((0, 255, 0),),
+    "blue_strobe": ((0, 0, 255),),
+    "purple_strobe": ((160, 0, 255),),
+    "white_strobe": ((255, 255, 255),),
+    "rainbow_strobe": (
+        (255, 0, 0), (255, 128, 0), (255, 255, 0), (0, 255, 0),
+        (0, 255, 255), (0, 0, 255), (160, 0, 255), (255, 0, 160),
+    ),
+}
+
 
 @dataclass(frozen=True)
 class ConfiguredLight:
@@ -220,7 +232,11 @@ class MagicHomeLightService:
             raise ValueError(f"Okänt ljusmönster: {effect}")
         speed_percent = self._percent(speed, "Hastighet")
         delay = int(((100 - speed_percent) * 30) / 100) + 1
-        packet = self._with_checksum(bytes((0x61, EFFECTS[effect], delay, 0x0F)))
+        packet = (
+            self._custom_blink_packet(STROBE_COLORS[effect], delay)
+            if effect in STROBE_COLORS
+            else self._with_checksum(bytes((0x61, EFFECTS[effect], delay, 0x0F)))
+        )
         await self._send_all(lights, self._power_packet(True))
         await self._send_all(lights, packet)
         return f"Startade {effect.replace('_', ' ')} i {self._describe(lights)} med {speed_percent} procents fart."
@@ -266,6 +282,20 @@ class MagicHomeLightService:
     @staticmethod
     def _with_checksum(payload: bytes) -> bytes:
         return payload + bytes((sum(payload) & 0xFF,))
+
+    @staticmethod
+    def _custom_blink_packet(colors: tuple[tuple[int, int, int], ...], delay: int) -> bytes:
+        sequence: list[tuple[int, int, int]] = []
+        while len(sequence) < 16:
+            for color in colors:
+                sequence.extend((color, (0, 0, 0)))
+                if len(sequence) >= 16:
+                    break
+        payload = bytearray()
+        for index, (red, green, blue) in enumerate(sequence[:16]):
+            payload.extend((0x51 if index == 0 else 0x00, red, green, blue))
+        payload.extend((0x00, delay, 0x3B, 0xFF, 0x0F))
+        return MagicHomeLightService._with_checksum(bytes(payload))
 
     @staticmethod
     def _parse_color(color: str) -> tuple[int, int, int]:

@@ -61,11 +61,46 @@ object MagicHomeProtocol {
         "Regnbåge hopp" to 0x38,
     )
 
+    private val strobeColors: Map<String, List<Triple<Int, Int, Int>>> = mapOf(
+        "Röd blink" to listOf(Triple(255, 0, 0)),
+        "Grön blink" to listOf(Triple(0, 255, 0)),
+        "Blå blink" to listOf(Triple(0, 0, 255)),
+        "Lila blink" to listOf(Triple(160, 0, 255)),
+        "Vit blink" to listOf(Triple(255, 255, 255)),
+        "Regnbåge blink" to listOf(
+            Triple(255, 0, 0), Triple(255, 128, 0), Triple(255, 255, 0), Triple(0, 255, 0),
+            Triple(0, 255, 255), Triple(0, 0, 255), Triple(160, 0, 255), Triple(255, 0, 160),
+        ),
+    )
+
     fun effect(label: String, speed: Int): ByteArray {
         val code = effects[label] ?: error("Okänt mönster")
         val safeSpeed = speed.coerceIn(1, 100)
         val delay = ((100 - safeSpeed) * 30 / 100) + 1
+        strobeColors[label]?.let { return customBlink(it, delay) }
         return withChecksum(byteArrayOf(0x61, code.toByte(), delay.toByte(), 0x0f))
+    }
+
+    private fun customBlink(colors: List<Triple<Int, Int, Int>>, delay: Int): ByteArray {
+        val sequence = buildList {
+            while (size < 16) colors.forEach { color ->
+                if (size < 16) add(color)
+                if (size < 16) add(Triple(0, 0, 0))
+            }
+        }
+        val payload = ArrayList<Byte>(69)
+        sequence.forEachIndexed { index, (red, green, blue) ->
+            payload += (if (index == 0) 0x51 else 0x00).toByte()
+            payload += red.toByte()
+            payload += green.toByte()
+            payload += blue.toByte()
+        }
+        payload += 0x00.toByte()
+        payload += delay.toByte()
+        payload += 0x3b.toByte()
+        payload += 0xff.toByte()
+        payload += 0x0f.toByte()
+        return withChecksum(payload.toByteArray())
     }
 
     fun parseStatus(ip: String, mac: String, model: String, bytes: ByteArray): MagicHomeDevice? {

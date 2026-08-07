@@ -12,7 +12,9 @@ BLE-laboratoriet finns kvar som en avancerad reserv. Se
 Upptäckta Wi-Fi-ljus kan namnges och knytas till rum i appen. Registret sparas
 atomiskt som server-TOML och används av samma allowlistade verktyg i Ollamas
 lokala tool calling och EutherVox MCP. Appen har en kompakt kulör-/mättnadsruta,
-lodrät ljusstyrka och verifierade klassiska Magic Home-mönster.
+lodrät ljusstyrka och verifierade Magic Home-mönster. Färgblinkning använder
+modulens beständiga custom-effekt med symmetrisk 50/50-puls, så
+hastighetsreglaget ger en tydlig och jämn blinkning.
 
 Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var ligger min lödkolv?`, svarar som Skinnskattaren och strömmar en kort testton som TTS-ljud. Tonen gör att hela ljudvägen kan verifieras, men är inte syntetiserat tal.
 
