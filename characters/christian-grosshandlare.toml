@@ -17,6 +17,8 @@ speed = 0.94
 pitch = -0.12
 
 [pronunciation]
+"Christian Grosshandlare" = "Kristian gross handlare"
+"Christian" = "Kristian"
 "AI" = "A I"
 "TTS" = "T T S"
 "VAIO" = "vajo"

@@ -1,0 +1,17 @@
+{
+  "description": "Calm fully synthetic reference for Christian Grosshandlare",
+  "job_id": "56d0af709d6a4124b86b4e69122005a6",
+  "output_path": "models/moss-reference/stormakt3020/christian-grosshandlare-calm-b.wav",
+  "sha256": "aa4f948e5830924ce9742ce862398dd82a8672ebd6ba2aae7d1144ae6765708b",
+  "request": {
+    "text": "Välkommen till mitt kontor. Christian Grosshandlare är namnet. Jag köper god vara, säljer till rätt pris och håller ordning på varje tunna och krona. Ge mig fakta i lugn ton, så skall du få ett klart besked och en affär som håller.",
+    "language": "sv",
+    "voice_instruction": "A mature Danish male merchant speaking highly intelligible Swedish with a subtle Danish accent. Full relaxed bass-baritone, composed authority, restrained humor and mild irritation, close conversational delivery, clean steady breath, crisp diction. No yelling, gasping, breathiness, rasp, whispering, military projection, caricature, or exaggerated acting.",
+    "model_backend": "voxcpm2",
+    "output_format": "wav",
+    "normalize": false,
+    "cfg_value": 2.0,
+    "inference_timesteps": 10,
+    "seed": 873032
+  }
+}

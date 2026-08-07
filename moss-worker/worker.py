@@ -77,14 +77,14 @@ class MossRuntime:
                 voice_clone_max_text_tokens=75,
                 attn_implementation="fixed",
                 do_sample=True,
-                text_temperature=1.0,
-                text_top_p=1.0,
-                text_top_k=50,
-                audio_temperature=0.8,
-                audio_top_p=0.95,
-                audio_top_k=25,
-                audio_repetition_penalty=1.2,
-                seed=None,
+                text_temperature=0.7,
+                text_top_p=0.9,
+                text_top_k=30,
+                audio_temperature=0.65,
+                audio_top_p=0.9,
+                audio_top_k=20,
+                audio_repetition_penalty=1.15,
+                seed=3020,
             )
             resampler: soxr.ResampleStream | None = None
             for event in stream:

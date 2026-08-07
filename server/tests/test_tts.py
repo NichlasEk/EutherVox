@@ -166,3 +166,12 @@ def test_christian_is_a_separate_character_with_his_own_voice():
     assert christian.display_name == "Christian Grosshandlare"
     assert christian.voice_id == "moss-christian"
     assert "dansk grosshandlare" in christian.description
+
+
+def test_christian_pronunciation_uses_a_swedish_reading_without_changing_ui_text():
+    config = load_config(ROOT / "config.real-beta.example.toml")
+    christian = TomlCharacterProvider(config.profile_dir).get("christian-grosshandlare")
+
+    assert SwedishTextNormalizer().normalize(
+        "Christian Grosshandlare granskar lasten.", christian
+    ) == "Kristian gross handlare granskar lasten."

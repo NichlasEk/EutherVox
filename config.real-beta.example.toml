@@ -62,7 +62,7 @@ provider = "http_pcm"
 base_url = "http://127.0.0.1:8791"
 sample_rate = 22050
 timeout_seconds = 20
-normalize_pronunciation = false
+normalize_pronunciation = true
 profile = "soren"
 
 [tts.voices.moss-christian]
@@ -70,7 +70,7 @@ provider = "http_pcm"
 base_url = "http://127.0.0.1:8791"
 sample_rate = 22050
 timeout_seconds = 20
-normalize_pronunciation = false
+normalize_pronunciation = true
 profile = "christian"
 
 [youtube]

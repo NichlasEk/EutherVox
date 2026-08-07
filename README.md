@@ -83,6 +83,13 @@ cp ../WaylandForge/assets/stormakt3020/radio/references/kung-christian-reference
   models/moss-reference/stormakt3020/kung-christian-reference.wav
 ```
 
+Christian använder i den lokala betan i stället den lugna, svenska
+grosshandlarreferensen `christian-grosshandlare-calm-b.wav`. Dess reproducerbara
+VoxCPM2-beställning och hash finns i
+`voice-references/christian-grosshandlare.json`. Krigskungsreferensen behålls
+endast som historiskt A/B-underlag eftersom dess pressade leverans gav flåsig
+dialog i MOSS.
+
 Referensfilen anges i servicefilen och versionshanteras inte. Om den saknas
 startar workern med en inbyggd röst. `GET /health` visar `reference_name`, så det
 går att verifiera vilken profil som faktiskt laddades. Samma MOSS-process kan
