@@ -1,5 +1,9 @@
 # BLE-ljus: identifiering före styrning
 
+> Uppdatering: kontrollrarna på bilden visade sig vara Wi-Fi-modellen
+> `AK001-ZJ200`. Huvudspåret finns nu i [magic-home-wifi.md](magic-home-wifi.md).
+> BLE-labbet behålls bara för annan framtida hårdvara.
+
 `Magic Home` är ett app-/försäljningsnamn och identifierar inte ensamt ett
 protokoll. Första Android-slicen är därför diagnostisk: skanna, välj enhet, läs
 GATT-fingeravtryck och kopiera resultatet. Den skriver inga bytes till slingan.

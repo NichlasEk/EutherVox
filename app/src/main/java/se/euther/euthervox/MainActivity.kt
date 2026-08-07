@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -68,6 +69,9 @@ import se.euther.euthervox.lights.BleLightDevice
 import se.euther.euthervox.lights.BleLightProtocol
 import se.euther.euthervox.lights.hasBlePermissions
 import se.euther.euthervox.lights.requiredBlePermissions
+import se.euther.euthervox.lights.MagicHomeDevice
+import se.euther.euthervox.lights.MagicHomeWifiController
+import se.euther.euthervox.lights.MagicHomeWifiUiState
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,8 +98,10 @@ fun EutherVoxApp() {
     val scope = rememberCoroutineScope()
     val controller = remember { VoiceController(context, scope) }
     val lightController = remember { BleLightController(context, scope) }
+    val wifiLightController = remember { MagicHomeWifiController(context, scope) }
     val state by controller.state.collectAsStateWithLifecycle()
     val lightState by lightController.state.collectAsStateWithLifecycle()
+    val wifiLightState by wifiLightController.state.collectAsStateWithLifecycle()
     val preferences = remember { context.getSharedPreferences("euthervox", 0) }
     var address by remember { mutableStateOf(preferences.getString("server_address", "").orEmpty()) }
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
@@ -130,7 +136,12 @@ fun EutherVoxApp() {
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); controller.disconnect(); lightController.close() }
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            controller.disconnect()
+            lightController.close()
+            wifiLightController.close()
+        }
     }
 
     Surface(color = Parchment, modifier = Modifier.fillMaxSize()) {
@@ -238,8 +249,14 @@ fun EutherVoxApp() {
             }
             } else {
                 LightPanel(
-                    state = lightState,
+                    wifiState = wifiLightState,
+                    bleState = lightState,
                     hasPermission = hasBlePermission,
+                    onWifiDiscover = wifiLightController::discover,
+                    onWifiRefresh = wifiLightController::refresh,
+                    onWifiPower = wifiLightController::setPower,
+                    onWifiColor = wifiLightController::setColor,
+                    onWifiProvision = wifiLightController::provision,
                     onRequestPermission = { blePermissionLauncher.launch(requiredBlePermissions()) },
                     onStartScan = lightController::startScan,
                     onStopScan = lightController::stopScan,
@@ -351,54 +368,199 @@ private fun TabChoice(label: String, selected: Boolean, modifier: Modifier = Mod
 
 @Composable
 private fun LightPanel(
-    state: se.euther.euthervox.lights.BleLightUiState,
+    wifiState: MagicHomeWifiUiState,
+    bleState: se.euther.euthervox.lights.BleLightUiState,
     hasPermission: Boolean,
+    onWifiDiscover: () -> Unit,
+    onWifiRefresh: (MagicHomeDevice) -> Unit,
+    onWifiPower: (MagicHomeDevice, Boolean) -> Unit,
+    onWifiColor: (MagicHomeDevice, Int, Int, Int) -> Unit,
+    onWifiProvision: (String, String, () -> Unit) -> Unit,
     onRequestPermission: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onInspect: (BleLightDevice) -> Unit,
 ) {
     val context = LocalContext.current
-    Text("BLE-ljuslaboratorium", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+    var advancedBle by remember { mutableStateOf(false) }
+    var showProvisioning by remember { mutableStateOf(false) }
+    var provisioningSsid by remember { mutableStateOf("") }
+    var provisioningPassword by remember { mutableStateOf("") }
+
+    Text("Magic Home-ljus", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text(
-        "Först identifierar vi kontrollerns riktiga protokoll. Inga styrkommandon skickas i denna version.",
+        "Styr Wi-Fi-slingor lokalt och lägg till nya moduler utan molnkonto.",
         textAlign = TextAlign.Center,
         color = Forest,
     )
-    if (!hasPermission) {
-        Button(onClick = onRequestPermission) { Text("Tillåt enheter i närheten") }
-    } else {
-        Button(onClick = if (state.scanning) onStopScan else onStartScan) {
-            Text(if (state.scanning) "Stoppa sökning" else "Sök efter slingor")
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Button(onClick = onWifiDiscover, enabled = !wifiState.scanning, modifier = Modifier.weight(1f)) {
+            Text(if (wifiState.scanning) "Söker…" else "Sök Wi-Fi")
+        }
+        OutlinedButton(onClick = { showProvisioning = true }, modifier = Modifier.weight(1f)) {
+            Text("Lägg till ny")
         }
     }
-    Text(state.status, textAlign = TextAlign.Center)
-    state.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
+    Text(wifiState.status, textAlign = TextAlign.Center)
+    wifiState.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
 
-    state.devices.forEach { device ->
-        BleDeviceCard(device, state.inspectingAddress == device.address) { onInspect(device) }
+    wifiState.devices.forEach { device ->
+        WifiDeviceCard(
+            device = device,
+            busy = wifiState.busyIp == device.ip,
+            onRefresh = { onWifiRefresh(device) },
+            onPower = { on -> onWifiPower(device, on) },
+            onColor = { red, green, blue -> onWifiColor(device, red, green, blue) },
+        )
     }
 
-    val inspected = state.inspectedDevice
-    if (inspected != null) {
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE4DDCB))) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("GATT-diagnostik", fontWeight = FontWeight.Bold, color = Forest)
-                Text("${inspected.name} · ${inspected.protocol.label}")
-                if (state.characteristics.isEmpty()) {
-                    Text("Inga karakteristiker lästa ännu.")
-                } else {
-                    state.characteristics.forEach {
-                        Text("${it.serviceUuid} → ${it.characteristicUuid} · ${it.properties}", style = MaterialTheme.typography.bodySmall)
+    OutlinedButton(onClick = { advancedBle = !advancedBle }) {
+        Text(if (advancedBle) "Dölj BLE-reserv" else "Visa BLE-reserv")
+    }
+    if (advancedBle) {
+        Text("BLE-ljuslaboratorium", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+        Text(
+            "För andra typer av slingor kan BLE-fingeravtrycket fortfarande undersökas.",
+            textAlign = TextAlign.Center,
+            color = Forest,
+        )
+        if (!hasPermission) {
+            Button(onClick = onRequestPermission) { Text("Tillåt enheter i närheten") }
+        } else {
+            Button(onClick = if (bleState.scanning) onStopScan else onStartScan) {
+                Text(if (bleState.scanning) "Stoppa BLE-sökning" else "Sök BLE-slingor")
+            }
+        }
+        Text(bleState.status, textAlign = TextAlign.Center)
+        bleState.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
+
+        bleState.devices.forEach { device ->
+            BleDeviceCard(device, bleState.inspectingAddress == device.address) { onInspect(device) }
+        }
+
+        val inspected = bleState.inspectedDevice
+        if (inspected != null) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE4DDCB))) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("GATT-diagnostik", fontWeight = FontWeight.Bold, color = Forest)
+                    Text("${inspected.name} · ${inspected.protocol.label}")
+                    if (bleState.characteristics.isEmpty()) {
+                        Text("Inga karakteristiker lästa ännu.")
+                    } else {
+                        bleState.characteristics.forEach {
+                            Text("${it.serviceUuid} → ${it.characteristicUuid} · ${it.properties}", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Button(onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            clipboard.setPrimaryClip(ClipData.newPlainText("EutherVox BLE diagnostic", bleState.diagnosticText()))
+                        }) { Text("Kopiera diagnostik") }
                     }
-                    Button(onClick = {
-                        val clipboard = context.getSystemService(ClipboardManager::class.java)
-                        clipboard.setPrimaryClip(ClipData.newPlainText("EutherVox BLE diagnostic", state.diagnosticText()))
-                    }) { Text("Kopiera diagnostik") }
                 }
             }
         }
     }
+
+    if (showProvisioning) AlertDialog(
+        onDismissRequest = {
+            provisioningPassword = ""
+            showProvisioning = false
+        },
+        title = { Text("Lägg till Wi-Fi-modul") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("1. Återställ modulen tills den skapar ett nät som börjar med LEDnet.")
+                OutlinedButton(onClick = {
+                    val intent = Intent(Settings.Panel.ACTION_WIFI)
+                    runCatching { context.startActivity(intent) }.onFailure {
+                        context.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS))
+                    }
+                }) { Text("Öppna Wi-Fi och anslut till LEDnet") }
+                Text("2. Gå tillbaka hit och ange ditt vanliga 2,4 GHz-nät.")
+                OutlinedTextField(
+                    value = provisioningSsid,
+                    onValueChange = { provisioningSsid = it },
+                    label = { Text("Nätverksnamn (SSID)") },
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = provisioningPassword,
+                    onValueChange = { provisioningPassword = it },
+                    label = { Text("Wi-Fi-lösenord") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                Text(
+                    "Uppgifterna skickas direkt från telefonen till modulen och sparas inte av EutherVox.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onWifiProvision(provisioningSsid, provisioningPassword) {
+                        provisioningPassword = ""
+                        showProvisioning = false
+                    }
+                },
+                enabled = !wifiState.provisioning,
+            ) { Text(if (wifiState.provisioning) "Skickar…" else "Konfigurera modul") }
+        },
+        dismissButton = {
+            TextButton(onClick = {
+                provisioningPassword = ""
+                showProvisioning = false
+            }) { Text("Avbryt") }
+        },
+    )
+}
+
+@Composable
+private fun WifiDeviceCard(
+    device: MagicHomeDevice,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onPower: (Boolean) -> Unit,
+    onColor: (Int, Int, Int) -> Unit,
+) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.76f))) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(device.model, fontWeight = FontWeight.Bold, color = Forest)
+            Text("${device.ip} · ${device.mac}", style = MaterialTheme.typography.bodySmall)
+            Text(
+                when (device.powerOn) {
+                    true -> "Tänd · ${device.colorHex ?: "färg okänd"}"
+                    false -> "Släckt · senast ${device.colorHex ?: "färg okänd"}"
+                    null -> "Status ej läst"
+                },
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Button(onClick = { onPower(true) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("Tänd") }
+                OutlinedButton(onClick = { onPower(false) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("Släck") }
+                TextButton(onClick = onRefresh, enabled = !busy) { Text(if (busy) "…" else "Status") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ColorPreset("Röd", Color(0xFFD43A35), Modifier.weight(1f), !busy) { onColor(255, 0, 0) }
+                ColorPreset("Grön", Color(0xFF25834A), Modifier.weight(1f), !busy) { onColor(0, 255, 0) }
+                ColorPreset("Blå", Color(0xFF315DCC), Modifier.weight(1f), !busy) { onColor(0, 0, 255) }
+                ColorPreset("Vit", Color(0xFF777777), Modifier.weight(1f), !busy) { onColor(255, 255, 255) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColorPreset(label: String, color: Color, modifier: Modifier, enabled: Boolean, onClick: () -> Unit) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 3.dp, vertical = 8.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = color),
+    ) { Text(label, style = MaterialTheme.typography.bodySmall) }
 }
 
 @Composable
