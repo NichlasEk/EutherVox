@@ -3,11 +3,16 @@ package se.euther.euthervox.lights
 import android.content.Context
 import android.net.wifi.WifiManager
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
@@ -72,6 +77,13 @@ object MagicHomeProtocol {
             Triple(0, 255, 255), Triple(0, 0, 255), Triple(160, 0, 255), Triple(255, 0, 160),
         ),
     )
+
+    fun softwareBlinkColors(label: String): List<Triple<Int, Int, Int>>? = strobeColors[label]
+
+    fun blinkPeriodMillis(speed: Int): Long {
+        val safeSpeed = speed.coerceIn(1, 100)
+        return (2_400 - ((safeSpeed - 1) / 99.0 * 2_200)).toLong()
+    }
 
     fun effect(label: String, speed: Int): ByteArray {
         val code = effects[label] ?: error("Okänt mönster")
@@ -153,6 +165,7 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
     private val mutableState = MutableStateFlow(MagicHomeWifiUiState())
     val state: StateFlow<MagicHomeWifiUiState> = mutableState.asStateFlow()
     private var activeJob: Job? = null
+    private val effectJobs = mutableMapOf<String, Job>()
 
     fun discover() {
         activeJob?.cancel()
@@ -181,17 +194,20 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
         device,
         if (on) "Tänder…" else "Släcker…",
     ) {
+        cancelEffect(device.ip)
         sendCommand(device.ip, MagicHomeProtocol.power(on))
         queryStatus(device).copy(powerOn = on)
     }
 
     fun setColor(device: MagicHomeDevice, red: Int, green: Int, blue: Int) = runDeviceAction(device, "Byter färg…") {
+        cancelEffect(device.ip)
         sendCommand(device.ip, MagicHomeProtocol.color(red, green, blue))
         queryStatus(device).copy(powerOn = true, colorHex = "#%02X%02X%02X".format(red, green, blue))
     }
 
     fun setColorBrightness(device: MagicHomeDevice, red: Int, green: Int, blue: Int, brightness: Int) =
         runDeviceAction(device, "Ställer exakt färg…") {
+            cancelEffect(device.ip)
             val level = brightness.coerceIn(1, 100) / 100f
             val scaledRed = (red.coerceIn(0, 255) * level).toInt()
             val scaledGreen = (green.coerceIn(0, 255) * level).toInt()
@@ -203,10 +219,40 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
             )
         }
 
-    fun setEffect(device: MagicHomeDevice, label: String, speed: Int) = runDeviceAction(device, "Startar mönster…") {
-        sendCommand(device.ip, MagicHomeProtocol.power(true))
-        sendCommand(device.ip, MagicHomeProtocol.effect(label, speed))
-        queryStatus(device).copy(powerOn = true)
+    fun setEffect(device: MagicHomeDevice, label: String, speed: Int) {
+        val colors = MagicHomeProtocol.softwareBlinkColors(label)
+        if (colors == null) {
+            runDeviceAction(device, "Startar mönster…") {
+                cancelEffect(device.ip)
+                sendCommand(device.ip, MagicHomeProtocol.power(true))
+                sendCommand(device.ip, MagicHomeProtocol.effect(label, speed))
+                queryStatus(device).copy(powerOn = true)
+            }
+            return
+        }
+        scope.launch {
+            cancelEffect(device.ip)
+            mutableState.value = mutableState.value.copy(busyIp = device.ip, status = "Startar mönster…", error = null)
+            runCatching {
+                sendCommand(device.ip, MagicHomeProtocol.power(true))
+                val first = colors.first()
+                sendCommand(device.ip, MagicHomeProtocol.color(first.first, first.second, first.third))
+                val periodMillis = MagicHomeProtocol.blinkPeriodMillis(speed)
+                val job = scope.launch(Dispatchers.IO) {
+                    softwareBlink(device.ip, colors, periodMillis)
+                }
+                effectJobs[device.ip] = job
+                queryStatus(device).copy(powerOn = true)
+            }.onSuccess { updated ->
+                updateDevice(updated)
+                mutableState.value = mutableState.value.copy(
+                    status = "$label körs med ${speed.coerceIn(1, 100)} procents hastighet.",
+                )
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(error = "${device.ip}: ${error.safeMessage()}")
+            }
+            mutableState.value = mutableState.value.copy(busyIp = null)
+        }
     }
 
     fun provision(ssid: String, password: String, onFinished: () -> Unit) {
@@ -241,6 +287,44 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
     fun close() {
         activeJob?.cancel()
         activeJob = null
+        effectJobs.values.forEach(Job::cancel)
+        effectJobs.clear()
+    }
+
+    private suspend fun cancelEffect(ip: String) {
+        effectJobs.remove(ip)?.cancelAndJoin()
+    }
+
+    private suspend fun softwareBlink(
+        ip: String,
+        colors: List<Triple<Int, Int, Int>>,
+        periodMillis: Long,
+    ) = withContext(Dispatchers.IO) {
+        var colorIndex = 0
+        val halfPeriod = (periodMillis / 2).coerceAtLeast(50)
+        while (currentCoroutineContext().isActive) {
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(ip, CONTROL_PORT), 2_000)
+                    socket.soTimeout = 2_000
+                    val output = socket.getOutputStream()
+                    while (currentCoroutineContext().isActive) {
+                        delay(halfPeriod)
+                        output.write(MagicHomeProtocol.color(0, 0, 0))
+                        output.flush()
+                        delay(halfPeriod)
+                        colorIndex = (colorIndex + 1) % colors.size
+                        val color = colors[colorIndex]
+                        output.write(MagicHomeProtocol.color(color.first, color.second, color.third))
+                        output.flush()
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: java.io.IOException) {
+                delay(periodMillis.coerceAtMost(1_000))
+            }
+        }
     }
 
     private fun runDeviceAction(

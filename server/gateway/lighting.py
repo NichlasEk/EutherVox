@@ -169,6 +169,7 @@ class MagicHomeLightService:
         self.enabled = bool(settings.get("enabled", False))
         self.timeout = float(settings.get("timeout_seconds", 2.0))
         self.store = TomlLightStore(settings, config_dir)
+        self._effect_tasks: dict[str, asyncio.Task[None]] = {}
 
     def list_public(self, include_network: bool = False) -> list[dict[str, object]]:
         return [light.public(include_network) for light in self.store.list()]
@@ -189,6 +190,7 @@ class MagicHomeLightService:
         lights = self._resolve(target)
         if power is None and color is None and brightness is None:
             raise ValueError("Ange av/på, färg eller ljusstyrka")
+        await self._cancel_effects(lights)
         level = self._percent(brightness if brightness is not None else 100, "Ljusstyrka")
         if power is False:
             packet = self._power_packet(False)
@@ -231,15 +233,67 @@ class MagicHomeLightService:
         if effect not in EFFECTS:
             raise ValueError(f"Okänt ljusmönster: {effect}")
         speed_percent = self._percent(speed, "Hastighet")
-        delay = int(((100 - speed_percent) * 30) / 100) + 1
-        packet = (
-            self._custom_blink_packet(STROBE_COLORS[effect], delay)
-            if effect in STROBE_COLORS
-            else self._with_checksum(bytes((0x61, EFFECTS[effect], delay, 0x0F)))
-        )
+        await self._cancel_effects(lights)
         await self._send_all(lights, self._power_packet(True))
+        if effect in STROBE_COLORS:
+            colors = STROBE_COLORS[effect]
+            await self._send_all(lights, self._color_packet(*colors[0]))
+            period = self._blink_period_seconds(speed_percent)
+            for light in lights:
+                self._effect_tasks[light.light_id] = asyncio.create_task(
+                    self._software_blink(light, colors, period),
+                    name=f"magic-home-blink-{light.light_id}",
+                )
+            return (
+                f"Startade {effect.replace('_', ' ')} i {self._describe(lights)} "
+                f"med {speed_percent} procents fart."
+            )
+        delay = int(((100 - speed_percent) * 30) / 100) + 1
+        packet = self._with_checksum(bytes((0x61, EFFECTS[effect], delay, 0x0F)))
         await self._send_all(lights, packet)
         return f"Startade {effect.replace('_', ' ')} i {self._describe(lights)} med {speed_percent} procents fart."
+
+    async def _cancel_effects(self, lights: tuple[ConfiguredLight, ...]) -> None:
+        tasks = [self._effect_tasks.pop(light.light_id) for light in lights if light.light_id in self._effect_tasks]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _software_blink(
+        self,
+        light: ConfiguredLight,
+        colors: tuple[tuple[int, int, int], ...],
+        period: float,
+    ) -> None:
+        """Time blinking locally because some AK001 firmware ignores custom-effect speed."""
+        color_index = 0
+        retry_delay = min(period, 1.0)
+        while True:
+            writer = None
+            try:
+                _reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection(light.host, 5577), timeout=self.timeout,
+                )
+                while True:
+                    await asyncio.sleep(period / 2)
+                    writer.write(self._color_packet(0, 0, 0))
+                    await asyncio.wait_for(writer.drain(), timeout=self.timeout)
+                    await asyncio.sleep(period / 2)
+                    color_index = (color_index + 1) % len(colors)
+                    writer.write(self._color_packet(*colors[color_index]))
+                    await asyncio.wait_for(writer.drain(), timeout=self.timeout)
+            except asyncio.CancelledError:
+                raise
+            except (OSError, TimeoutError):
+                await asyncio.sleep(retry_delay)
+            finally:
+                if writer is not None:
+                    writer.close()
+                    try:
+                        await writer.wait_closed()
+                    except OSError:
+                        pass
 
     def _resolve(self, target: str) -> tuple[ConfiguredLight, ...]:
         if not self.enabled:
@@ -296,6 +350,11 @@ class MagicHomeLightService:
             payload.extend((0x51 if index == 0 else 0x00, red, green, blue))
         payload.extend((0x00, delay, 0x3B, 0xFF, 0x0F))
         return MagicHomeLightService._with_checksum(bytes(payload))
+
+    @staticmethod
+    def _blink_period_seconds(speed: int) -> float:
+        """Map 1–100 percent to a clearly visible 2.4–0.2 second blink cycle."""
+        return 2.4 - ((speed - 1) / 99) * 2.2
 
     @staticmethod
     def _parse_color(color: str) -> tuple[int, int, int]:

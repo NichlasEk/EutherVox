@@ -56,6 +56,14 @@ class MagicHomeProtocolTest {
     }
 
     @Test
+    fun softwareBlinkUsesObviousSpeedRange() {
+        assertEquals(2400L, MagicHomeProtocol.blinkPeriodMillis(1))
+        assertEquals(200L, MagicHomeProtocol.blinkPeriodMillis(100))
+        assertEquals(1, MagicHomeProtocol.softwareBlinkColors("Röd blink")!!.size)
+        assertNull(MagicHomeProtocol.softwareBlinkColors("Regnbåge mjuk"))
+    }
+
+    @Test
     fun validatesCredentialsWithoutReturningSecrets() {
         assertNull(MagicHomeProtocol.validateWifiCredentials("Hemma", "hemligt123"))
         assertTrue(MagicHomeProtocol.validateWifiCredentials("Hemma", "kort")!!.contains("8"))
