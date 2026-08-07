@@ -17,6 +17,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
+import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
@@ -31,9 +33,25 @@ interface MicrophoneSource {
 
 interface StreamingAudioSink {
     fun start(format: AudioStreamFormat, onPlaybackStarted: () -> Unit, onPlaybackError: (String) -> Unit)
-    fun enqueue(frame: ByteArray): Boolean
+    suspend fun enqueue(frame: ByteArray): Boolean
     fun finish(onPlaybackComplete: () -> Unit)
     fun stop()
+}
+
+internal class PlaybackFrameQueue(capacity: Int) {
+    private val channel = Channel<ByteArray>(capacity)
+    val frames: ReceiveChannel<ByteArray> get() = channel
+
+    suspend fun enqueue(frame: ByteArray): Boolean = try {
+        channel.send(frame.copyOf())
+        true
+    } catch (_: ClosedSendChannelException) {
+        false
+    }
+
+    fun close() {
+        channel.close()
+    }
 }
 
 class PcmMicrophoneSource(private val context: Context, private val scope: CoroutineScope) : MicrophoneSource {
@@ -100,7 +118,7 @@ class PcmMicrophoneSource(private val context: Context, private val scope: Corou
 class PcmAudioTrackSink(private val scope: CoroutineScope, private val startBufferMs: Int = 120) : StreamingAudioSink {
     private var track: AudioTrack? = null
     private var writerJob: Job? = null
-    private var queue: Channel<ByteArray>? = null
+    private var queue: PlaybackFrameQueue? = null
     @Volatile private var completion: (() -> Unit)? = null
     private val generation = AtomicLong(0)
 
@@ -118,13 +136,13 @@ class PcmAudioTrackSink(private val scope: CoroutineScope, private val startBuff
             .build()
         track = audioTrack
         completion = null
-        val channel = Channel<ByteArray>(capacity = 128)
-        queue = channel
+        val frameQueue = PlaybackFrameQueue(capacity = 128)
+        queue = frameQueue
         writerJob = scope.launch(Dispatchers.IO) {
             try {
                 var buffered = 0
                 var playing = false
-                for (frame in channel) {
+                for (frame in frameQueue.frames) {
                     if (generation.get() != playbackGeneration) return@launch
                     var offset = 0
                     while (offset < frame.size && isActive && generation.get() == playbackGeneration) {
@@ -166,7 +184,7 @@ class PcmAudioTrackSink(private val scope: CoroutineScope, private val startBuff
         }
     }
 
-    override fun enqueue(frame: ByteArray): Boolean = queue?.trySend(frame.copyOf())?.isSuccess == true
+    override suspend fun enqueue(frame: ByteArray): Boolean = queue?.enqueue(frame) == true
 
     override fun finish(onPlaybackComplete: () -> Unit) {
         completion = onPlaybackComplete
