@@ -71,10 +71,21 @@ systemctl --user enable --now euthervox-moss.service
 ```
 
 MOSS-workern binder endast till `127.0.0.1:8791`, skickar mono PCM medan ONNX-
-avkodningen fortfarande arbetar och använder ingen GPU. En valfri svensk
-referensfil anges i servicefilen; saknas filen används en inbyggd röst.
+avkodningen fortfarande arbetar och använder ingen GPU. Den lokala installationen
+använder Sören Svartkruts rena, syntetiskt skapade svenska referensfil från
+Stormakt3020. Kopiera den utan radiofiltret till den ignorerade modellkatalogen:
 
-Workern binder endast till `127.0.0.1:8790`. Om kvalitetsrösten inte svarar innan
+```bash
+mkdir -p models/moss-reference/stormakt3020
+cp ../WaylandForge/assets/stormakt3020/radio/references/soren-svartkrut-reference.wav \
+  models/moss-reference/stormakt3020/soren-svartkrut-reference.wav
+```
+
+Referensfilen anges i servicefilen och versionshanteras inte. Om den saknas
+startar workern med en inbyggd röst. `GET /health` visar `reference_name`, så det
+går att verifiera vilken profil som faktiskt laddades.
+
+Chatterbox-workern binder endast till `127.0.0.1:8790`. Om kvalitetsrösten inte svarar innan
 första ljudblocket går röstroutern automatiskt tillbaka till NST. Samma provtext
 kan renderas med samtliga röster via:
 

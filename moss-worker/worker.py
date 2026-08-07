@@ -128,6 +128,7 @@ def build_app(runtime: MossRuntime) -> FastAPI:
             "sample_rate": runtime.output_sample_rate,
             "voice": runtime.voice,
             "reference_audio": runtime.reference_audio is not None,
+            "reference_name": runtime.reference_audio.stem if runtime.reference_audio else "builtin",
         }
 
     @app.post("/synthesize")
