@@ -61,7 +61,7 @@ base_url = "http://127.0.0.1:8791"
 sample_rate = 22050
 timeout_seconds = 20
 normalize_pronunciation = true
-profile = "soren"
+profile = "skinnskattaren"
 
 [tts.voices.moss-christian]
 provider = "http_pcm"

@@ -94,8 +94,15 @@ Referensfilen anges i servicefilen och versionshanteras inte. Om den saknas
 startar workern med en inbyggd röst. `GET /health` visar `reference_name`, så det
 går att verifiera vilken profil som faktiskt laddades. Samma MOSS-process kan
 ha flera namngivna, tillåtna referenser utan att ladda modellen flera gånger.
-Android-appen skickar `soren` för Skinnskattaren och `christian` för den danske
+Gatewayen skickar `skinnskattaren` för Skinnskattaren och `christian` för den danske
 grosshandlaren; godtyckliga filsökvägar accepteras aldrig över HTTP.
+
+Skinnskattaren använder en lugn, rikssvensk VoxCPM2-referens i stället för
+Sören Svartkruts skånska rövarröst. Beställning, seed, urval och hash finns i
+`voice-references/skinnskattaren.json`. Den råa kandidaten valdes efter MOSS-
+och Whisper-jämförelse; nivånormalisering försämrade begripligheten och används inte.
+MOSS-profilerna har separata deterministiska samplingfrön, så ett tydligare
+Skinnskattaren-frö inte ändrar Christians redan godkända leverans.
 
 Chatterbox-workern binder endast till `127.0.0.1:8790`. Om kvalitetsrösten inte svarar innan
 första ljudblocket går röstroutern automatiskt tillbaka till NST. Samma provtext

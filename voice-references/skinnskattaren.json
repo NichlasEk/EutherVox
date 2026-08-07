@@ -1,0 +1,26 @@
+{
+  "description": "Calm fully synthetic standard-Swedish reference for Skinnskattaren",
+  "job_id": "b0ec7589e642437e9a94aa976853e303",
+  "output_path": "models/moss-reference/stormakt3020/skinnskattaren-calm-a.wav",
+  "sha256": "53cdc2c5559974ed76b603d28b644d2a76c926388d944755f3d6a7b300923b3d",
+  "request": {
+    "text": "Jag är Skinnskattaren, ett gammalt väsen från Skinnskatteberg. Jag vakar över skog, berg och glömda gruvgångar. Tala lugnt och tydligt, så ger jag dig ett kort och användbart svar utan gåtor eller onödiga omvägar.",
+    "language": "sv",
+    "voice_instruction": "A mature Swedish male forest guardian speaking natural central Swedish. Dark warm baritone, calm close conversational delivery, subtle age and quiet authority, dry restrained humor, clear compound words and precise consonants. Native Swedish pronunciation with no Norwegian, Danish, Scanian, Finnish, English, or theatrical accent. Never whisper, wheeze, pant, shout, growl, sound breathy, strained, sick, ancient, or exaggerated.",
+    "model_backend": "voxcpm2",
+    "output_format": "wav",
+    "normalize": false,
+    "cfg_value": 2.0,
+    "inference_timesteps": 10,
+    "seed": 302041
+  },
+  "selection": {
+    "chosen": "raw candidate A",
+    "moss_profile_seed": 302041,
+    "rejected": [
+      "candidate B: lower MOSS intelligibility",
+      "normalized candidate A: lower MOSS intelligibility",
+      "MOSS seeds 1, 42 and 3020: lower Swedish transcription accuracy"
+    ]
+  }
+}

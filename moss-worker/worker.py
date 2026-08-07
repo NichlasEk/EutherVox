@@ -36,6 +36,7 @@ class MossRuntime:
         threads: int,
         output_sample_rate: int,
         reference_profiles: dict[str, Path] | None = None,
+        profile_seeds: dict[str, int] | None = None,
     ) -> None:
         self.engine = OnnxNanoTTSServiceAdapter(
             model_dir=model_dir,
@@ -50,6 +51,7 @@ class MossRuntime:
         self.reference_profiles = {
             name: path for name, path in (reference_profiles or {}).items() if path.is_file()
         }
+        self.profile_seeds = dict(profile_seeds or {})
         self.output_sample_rate = output_sample_rate
         self._lock = threading.Lock()
         LOG.info(
@@ -67,6 +69,7 @@ class MossRuntime:
         first_audio_ms: int | None = None
         reference_audio = self.reference_profiles.get(voice_id, self.reference_audio)
         profile_name = voice_id if voice_id in self.reference_profiles else "default"
+        sampling_seed = self.profile_seeds.get(voice_id, 3020)
         with self._lock:
             stream = self.engine.synthesize_stream(
                 text=text,
@@ -84,7 +87,7 @@ class MossRuntime:
                 audio_top_p=0.9,
                 audio_top_k=20,
                 audio_repetition_penalty=1.15,
-                seed=3020,
+                seed=sampling_seed,
             )
             resampler: soxr.ResampleStream | None = None
             for event in stream:
@@ -107,11 +110,12 @@ class MossRuntime:
                     if first_audio_ms is None:
                         first_audio_ms = int((time.monotonic() - started) * 1000)
                         LOG.info(
-                            "moss_first_audio_ms=%d text_chars=%d profile=%s reference=%s",
+                            "moss_first_audio_ms=%d text_chars=%d profile=%s reference=%s seed=%d",
                             first_audio_ms,
                             len(text),
                             profile_name,
                             reference_audio.stem if reference_audio else "builtin",
+                            sampling_seed,
                         )
                     yield self._pcm16(output)
             if resampler is not None:
@@ -144,6 +148,7 @@ def build_app(runtime: MossRuntime) -> FastAPI:
             "reference_audio": runtime.reference_audio is not None,
             "reference_name": runtime.reference_audio.stem if runtime.reference_audio else "builtin",
             "reference_profiles": sorted(runtime.reference_profiles),
+            "profile_seeds": runtime.profile_seeds,
         }
 
     @app.post("/synthesize")
@@ -183,6 +188,13 @@ def main() -> None:
         metavar="NAME=PATH",
         help="Allowlisted named reference profile; may be repeated",
     )
+    parser.add_argument(
+        "--profile-seed",
+        action="append",
+        default=[],
+        metavar="NAME=INTEGER",
+        help="Deterministic sampling seed for a named reference profile; may be repeated",
+    )
     parser.add_argument("--voice", default="Junhao")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -192,6 +204,15 @@ def main() -> None:
         if not separator or not name.strip() or not path.strip():
             parser.error("--reference-profile must use NAME=PATH")
         reference_profiles[name.strip()] = Path(path.strip()).resolve()
+    profile_seeds: dict[str, int] = {}
+    for entry in args.profile_seed:
+        name, separator, value = entry.partition("=")
+        if not separator or not name.strip():
+            parser.error("--profile-seed must use NAME=INTEGER")
+        try:
+            profile_seeds[name.strip()] = int(value)
+        except ValueError:
+            parser.error("--profile-seed must use NAME=INTEGER")
     runtime = MossRuntime(
         args.model_dir.resolve(),
         args.output_dir.resolve(),
@@ -200,6 +221,7 @@ def main() -> None:
         args.threads,
         args.sample_rate,
         reference_profiles,
+        profile_seeds,
     )
     uvicorn.run(build_app(runtime), host=args.host, port=args.port, log_level="info")
 

@@ -166,6 +166,8 @@ def test_christian_is_a_separate_character_with_his_own_voice():
     assert christian.display_name == "Christian Grosshandlare"
     assert christian.voice_id == "moss-christian"
     assert "dansk grosshandlare" in christian.description
+    assert config.tts_settings["voices"]["moss-nano"]["profile"] == "skinnskattaren"
+    assert config.tts_settings["voices"]["moss-christian"]["profile"] == "christian"
 
 
 def test_christian_pronunciation_uses_a_swedish_reading_without_changing_ui_text():

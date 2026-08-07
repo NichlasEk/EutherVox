@@ -5,7 +5,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/home/nichlas/EutherVox/moss-worker
-ExecStart=/home/nichlas/EutherVox/moss-worker/.venv/bin/python worker.py --host 127.0.0.1 --port 8791 --threads 12 --sample-rate 22050 --model-dir /home/nichlas/EutherVox/models/moss-tts-nano-onnx --reference-audio /home/nichlas/EutherVox/models/moss-reference/stormakt3020/soren-svartkrut-reference.wav --reference-profile soren=/home/nichlas/EutherVox/models/moss-reference/stormakt3020/soren-svartkrut-reference.wav --reference-profile christian=/home/nichlas/EutherVox/models/moss-reference/stormakt3020/christian-grosshandlare-calm-b.wav
+ExecStart=/home/nichlas/EutherVox/moss-worker/.venv/bin/python worker.py --host 127.0.0.1 --port 8791 --threads 12 --sample-rate 22050 --model-dir /home/nichlas/EutherVox/models/moss-tts-nano-onnx --reference-audio /home/nichlas/EutherVox/models/moss-reference/stormakt3020/skinnskattaren-calm-a.wav --reference-profile skinnskattaren=/home/nichlas/EutherVox/models/moss-reference/stormakt3020/skinnskattaren-calm-a.wav --reference-profile christian=/home/nichlas/EutherVox/models/moss-reference/stormakt3020/christian-grosshandlare-calm-b.wav --profile-seed skinnskattaren=302041 --profile-seed christian=3020
 Restart=on-failure
 RestartSec=3
 Environment=PYTHONUNBUFFERED=1
