@@ -10,9 +10,11 @@ from gateway.cast import CastService
 from gateway.mcp_server import build_mcp_server
 from gateway.tool_planner import OllamaToolPlanner
 from gateway.tools import EutherVoxToolRegistry, ToolValidationError
+from gateway.lighting import MagicHomeLightService
+from pathlib import Path
 
 
-def make_registry() -> EutherVoxToolRegistry:
+def make_registry(tmp_path: Path | None = None) -> EutherVoxToolRegistry:
     cast = CastService({
         "enabled": True,
         "rooms": {
@@ -25,7 +27,10 @@ def make_registry() -> EutherVoxToolRegistry:
             }
         },
     })
-    return EutherVoxToolRegistry(cast)
+    root = tmp_path or Path("/tmp/euthervox-tool-tests")
+    lights = MagicHomeLightService({"enabled": True, "config_file": "lights.toml"}, root)
+    lights.upsert(name="Fönster", room="köket", host="192.168.1.20", mac="AABBCCDDEE20", model="AK001-ZJ200")
+    return EutherVoxToolRegistry(cast, lights)
 
 
 def test_registry_creates_allowlisted_music_and_confirmed_playlist_actions():
@@ -63,6 +68,27 @@ def test_registry_rejects_unknown_tools_rooms_and_arguments():
             pass
 
 
+def test_registry_creates_only_toml_targeted_light_actions(tmp_path: Path):
+    registry = make_registry(tmp_path)
+
+    color = registry.create_action(
+        "light_set", {"target": "köket", "color": "#7a18c4", "brightness": 35}, "pixel"
+    )
+    effect = registry.create_action(
+        "light_effect", {"target": "Fönster", "effect": "rainbow_fade", "speed": 40}, "pixel"
+    )
+
+    assert color.name == "lights.set"
+    assert color.arguments == {"target": "Fönster", "color": "#7A18C4", "brightness": 35}
+    assert effect.name == "lights.effect"
+    assert "host" not in color.arguments
+    try:
+        registry.create_action("light_set", {"target": "garaget", "power": True}, "pixel")
+        assert False
+    except ToolValidationError:
+        pass
+
+
 def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
     async def scenario():
         registry = make_registry()
@@ -70,7 +96,8 @@ def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
         tools = await server.list_tools()
 
         assert {tool.name for tool in tools} == {
-            "cast_list_targets", "music_play", "playlist_create", "wikipedia_lookup",
+            "cast_list_targets", "lights_list", "light_set", "light_effect",
+            "music_play", "playlist_create", "wikipedia_lookup",
         }
         target = registry.list_cast_targets()[0]
         assert target == {"room": "köket", "display_name": "Kök 2", "model": "Google Nest Mini"}
@@ -84,7 +111,7 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
         payload = json.loads(request.content)
         assert request.url.path == "/api/chat"
         assert {tool["function"]["name"] for tool in payload["tools"]} == {
-            "music_play", "playlist_create", "wikipedia_lookup",
+            "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect",
         }
         return httpx.Response(200, json={
             "message": {
@@ -161,5 +188,36 @@ def test_ollama_tool_planner_translates_wikipedia_request_to_read_only_action():
         assert action is not None
         assert action.name == "knowledge.wikipedia"
         assert action.arguments == {"query": "Skinnskatteberg", "mode": "summary"}
+
+    asyncio.run(scenario())
+
+
+def test_ollama_tool_planner_maps_natural_light_request_to_toml_target(tmp_path: Path):
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert "Fönster i köket" in payload["messages"][0]["content"]
+        return httpx.Response(200, json={
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{
+                    "function": {
+                        "name": "light_set",
+                        "arguments": {"target": "köket", "color": "#6B20A8", "brightness": 30},
+                    }
+                }],
+            },
+            "done": True,
+        })
+
+    async def scenario():
+        planner = OllamaToolPlanner(
+            make_registry(tmp_path), "http://ollama.test", "qwen-test",
+            transport=httpx.MockTransport(handler),
+        )
+        action = await planner.plan("Gör ljuset i köket dovt lila på trettio procent", "pixel")
+        assert action is not None
+        assert action.name == "lights.set"
+        assert action.arguments == {"target": "Fönster", "color": "#6B20A8", "brightness": 30}
 
     asyncio.run(scenario())

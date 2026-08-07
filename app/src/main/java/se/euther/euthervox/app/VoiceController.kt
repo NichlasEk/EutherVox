@@ -30,6 +30,8 @@ import se.euther.euthervox.protocol.audioStart
 import se.euther.euthervox.protocol.parseServerEvent
 import se.euther.euthervox.protocol.responseCancel
 import se.euther.euthervox.protocol.sessionStart
+import se.euther.euthervox.protocol.lightConfigUpsert
+import se.euther.euthervox.lights.MagicHomeDevice
 import java.util.UUID
 
 enum class VoiceStatus { Idle, Connecting, Listening, Processing, Speaking, Error }
@@ -60,6 +62,8 @@ data class VoiceUiState(
     val actionMessage: String? = null,
     val conversationActive: Boolean = false,
     val interruptionListening: Boolean = false,
+    val configuredLights: List<ServerEvent.ConfiguredLight> = emptyList(),
+    val lightConfigMessage: String? = null,
 )
 
 private data class Timeline(
@@ -319,6 +323,18 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         if (utteranceId != null) cancelResponse() else stopResources()
     }
 
+    fun saveLightConfig(device: MagicHomeDevice, name: String, room: String) {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(lightConfigMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(lightConfigMessage = "Sparar lampnamnet i serverns TOML…")
+        scope.launch {
+            val sent = transport?.sendText(lightConfigUpsert(name, room, device.ip, device.mac, device.model)) == true
+            if (!sent) mutableState.value = mutableState.value.copy(lightConfigMessage = "Kunde inte skicka lampnamnet till servern.")
+        }
+    }
+
     override suspend fun onOpen() {
         mutableState.value = mutableState.value.copy(connectionLabel = "Handshake…", status = VoiceStatus.Connecting)
         transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId))
@@ -451,6 +467,10 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                     canTalk = ready,
                 )
             }
+            is ServerEvent.LightsConfig -> mutableState.value = mutableState.value.copy(
+                configuredLights = event.lights,
+                lightConfigMessage = if (event.lights.isEmpty()) null else "Namn och rum är sparade i serverns lights.toml.",
+            )
             is ServerEvent.Error -> fail("${event.code}: ${event.message}", event.recoverable)
             is ServerEvent.Unknown -> Unit
         }

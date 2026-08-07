@@ -36,6 +36,7 @@ class GatewayConfig:
     mcp_settings: dict
     wikipedia_settings: dict
     conversation_settings: dict
+    light_settings: dict
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -57,6 +58,7 @@ def load_config(path: str | Path) -> GatewayConfig:
     mcp_settings = dict(raw.get("mcp", {}))
     wikipedia_settings = dict(raw.get("wikipedia", {}))
     conversation_settings = dict(raw.get("conversation", {}))
+    light_settings = dict(raw.get("lights", {}))
     for settings, key in ((stt_settings, "download_root"), (tts_settings, "model_path")):
         if key in settings:
             value = Path(settings[key])
@@ -97,4 +99,5 @@ def load_config(path: str | Path) -> GatewayConfig:
         mcp_settings=mcp_settings,
         wikipedia_settings=wikipedia_settings,
         conversation_settings=conversation_settings,
+        light_settings=light_settings,
     )

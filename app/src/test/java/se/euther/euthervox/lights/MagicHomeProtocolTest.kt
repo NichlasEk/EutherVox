@@ -33,6 +33,14 @@ class MagicHomeProtocolTest {
     }
 
     @Test
+    fun buildsAllowlistedEffectWithFluxLedSpeedMapping() {
+        assertArrayEquals(
+            byteArrayOf(0x61, 0x25, 0x13, 0x0f, 0xa8.toByte()),
+            MagicHomeProtocol.effect("Regnbåge mjuk", 40),
+        )
+    }
+
+    @Test
     fun validatesCredentialsWithoutReturningSecrets() {
         assertNull(MagicHomeProtocol.validateWifiCredentials("Hemma", "hemligt123"))
         assertTrue(MagicHomeProtocol.validateWifiCredentials("Hemma", "kort")!!.contains("8"))

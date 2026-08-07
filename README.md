@@ -1,4 +1,4 @@
-# EutherVox 0.15 beta
+# EutherVox 0.16 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -8,6 +8,11 @@ Fliken innehåller också en guide som ansluter en ny modul till ett 2,4 GHz-nä
 utan att skicka eller spara Wi-Fi-lösenordet på EutherVox-servern. Det äldre
 BLE-laboratoriet finns kvar som en avancerad reserv. Se
 `docs/magic-home-wifi.md`.
+
+Upptäckta Wi-Fi-ljus kan namnges och knytas till rum i appen. Registret sparas
+atomiskt som server-TOML och används av samma allowlistade verktyg i Ollamas
+lokala tool calling och EutherVox MCP. Appen har en kompakt kulör-/mättnadsruta,
+lodrät ljusstyrka och verifierade klassiska Magic Home-mönster.
 
 Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var ligger min lödkolv?`, svarar som Skinnskattaren och strömmar en kort testton som TTS-ljud. Tonen gör att hela ljudvägen kan verifieras, men är inte syntetiserat tal.
 

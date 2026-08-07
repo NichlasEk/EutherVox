@@ -21,12 +21,13 @@ from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .tools import EutherVoxToolRegistry
 from .wikipedia import WikipediaService
+from .lighting import MagicHomeLightService
 
 
 LOG = logging.getLogger("euthervox.gateway")
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -44,6 +45,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         cast=cast,
         tool_planner=tool_planner,
         wikipedia=wikipedia,
+        lights=lights,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -123,7 +125,8 @@ async def run(config: GatewayConfig) -> None:
     playlists = TomlPlaylistStore(config.playlist_settings, config.config_dir)
     cast = CastService(config.cast_settings)
     wikipedia = WikipediaService(config.wikipedia_settings)
-    tool_registry = EutherVoxToolRegistry(cast)
+    lights = MagicHomeLightService(config.light_settings, config.config_dir)
+    tool_registry = EutherVoxToolRegistry(cast, lights)
     tool_planner = None
     if bool(config.mcp_settings.get("enabled", False)) and config.llm_provider == "ollama":
         tool_planner = OllamaToolPlanner(
@@ -146,7 +149,7 @@ async def run(config: GatewayConfig) -> None:
     )
     oauth_http = OAuthHttpHandler(youtube)
     async with serve(
-        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia),
+        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights),
         config.host,
         config.port,
         max_size=2**20,

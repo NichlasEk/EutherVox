@@ -18,7 +18,7 @@ class OllamaToolPlanner:
     """Turns natural language into one validated action through Ollama tool calls."""
 
     _ACTION_HINT = re.compile(
-        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om)\b",
+        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg)\b",
         re.IGNORECASE,
     )
 
@@ -40,6 +40,9 @@ class OllamaToolPlanner:
         if not self._ACTION_HINT.search(transcript):
             return None
         rooms = ", ".join(item["room"] for item in self.registry.list_cast_targets()) or "inga"
+        lights = ", ".join(
+            f"{item['name']} i {item['room']}" for item in self.registry.list_light_targets()
+        ) or "inga"
         payload = {
             "model": self.model,
             "stream": False,
@@ -49,7 +52,7 @@ class OllamaToolPlanner:
                     "role": "system",
                     "content": (
                         "Du väljer EutherVox-verktyg. Anropa exakt ett verktyg endast när användaren faktiskt ber "
-                        "om musik, en spellista eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
+                        "om musik, en spellista, ljusstyrning eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
                         "Indirekta önskemål som 'jag är sugen på mörk cyberpunk i köket' betyder att musiken ska spelas nu. "
                         "Önskemål om en bestämd låt, till exempel 'jag vill höra November Rain', ska anropa music_play "
                         "och behålla låttitel och eventuell artist exakt i query. "
@@ -58,7 +61,10 @@ class OllamaToolPlanner:
                         "särskilt vid Wikipedia, slå upp, vem är, vad är, sammanfatta eller berätta om. Använd aldrig Wikipedia "
                         "för användarens privata saker, personliga råd, musikstyrning eller aktuella nyheter. Välj mode introduction "
                         "bara när användaren uttryckligen ber att få artikelns inledning uppläst; välj annars summary. "
-                        f"Konfigurerade rum: {rooms}. Hitta inte på rum. Behåll genre och stämning i query eller description."
+                        "Använd light_set för av/på, statisk färg och intensitet. Översätt användarens färgbeskrivning till #RRGGBB. "
+                        "Använd light_effect bara för ett mönster ur verktygets enum och välj normalt speed 40. "
+                        f"Konfigurerade Cast-rum: {rooms}. Konfigurerade lampor: {lights}. Hitta aldrig på mål. "
+                        "Behåll genre och stämning i query eller description."
                     ),
                 },
                 {"role": "user", "content": transcript},

@@ -45,8 +45,8 @@ formatet och startar AudioTrack efter cirka 120 ms eller när en kort ström tar
 
 Meddelandena och fälten följer exemplen i arbetsuppdraget:
 
-- Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.confirm`, `action.result`.
-- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `error`.
+- Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.confirm`, `action.result`, `light.config.upsert`.
+- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `lights.config`, `error`.
 
 `session.start.input_audio` valideras innan `session.ready`. `session.start.voice_id` är
 valfri för äldre klienter; då används figurprofilens standardröst. Betaservern skickar
@@ -60,6 +60,47 @@ Fel har formen:
 ```
 
 Vid ett återhämtningsbart fel kan anslutningen behållas och klienten återgå till Idle. Protokollversion- eller ljudformatsfel är inte återhämtningsbara och servern stänger anslutningen med WebSocket-kod 1002.
+
+## Lampkonfiguration
+
+Efter `session.ready` skickar servern ett `lights.config` med de Magic Home-
+lampor som den autentiserade användaren får namnge i appen. Adress och MAC
+skickas endast till den autentiserade konfigurationsklienten; de ingår aldrig i
+modellens eller MCP-serverns verktygsdata.
+
+```json
+{
+  "type": "lights.config",
+  "lights": [{
+    "id": "generated-id",
+    "name": "Fönstret",
+    "room": "köket",
+    "host": "192.168.1.42",
+    "mac": "aabbccddeeff",
+    "model": "AK001-ZJ200"
+  }]
+}
+```
+
+Appen lägger till eller uppdaterar en upptäckt lampa med
+`light.config.upsert`. Meddelandet accepteras först efter en färdig
+sessionshandshake med verifierad `X-Euther-User`. Servern validerar att `host`
+är en privat RFC 1918-IPv4-adress, använder MAC som stabil identitet och sparar
+posten atomiskt i `state/lights.toml`.
+
+```json
+{
+  "type": "light.config.upsert",
+  "name": "Fönstret",
+  "room": "köket",
+  "host": "192.168.1.42",
+  "mac": "aabbccddeeff",
+  "model": "AK001-ZJ200"
+}
+```
+
+Samma lampnamn får bara förekomma en gång i ett rum. Ett `lights.config` med den
+nya serverversionen av registret skickas efter en lyckad uppdatering.
 
 ## Enhetsåtgärder
 

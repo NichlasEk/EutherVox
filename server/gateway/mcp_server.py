@@ -24,6 +24,37 @@ def build_mcp_server(registry: EutherVoxToolRegistry, wikipedia: WikipediaServic
         return registry.list_cast_targets()
 
     @server.tool()
+    def lights_list() -> list[dict[str, object]]:
+        """Lista namngivna lampor och rum utan IP- eller MAC-adresser."""
+        return registry.list_light_targets()
+
+    @server.tool()
+    async def light_set(target: str, power: bool | None = None, color: str | None = None, brightness: int | None = None) -> dict[str, str]:
+        """Styr endast en namngiven lampa eller ett namngivet rum från TOML-registret."""
+        action = registry.create_action(
+            "light_set",
+            {key: value for key, value in {"target": target, "power": power, "color": color, "brightness": brightness}.items() if value is not None},
+            "mcp-client",
+        )
+        if registry.lights is None:
+            raise RuntimeError("Ljustjänsten är inte konfigurerad")
+        message = await registry.lights.set_light(str(action.arguments["target"]), **{
+            key: value for key, value in action.arguments.items() if key != "target"
+        })
+        return {"status": "completed", "message": message}
+
+    @server.tool()
+    async def light_effect(target: str, effect: str, speed: int = 50) -> dict[str, str]:
+        """Starta ett allowlistat hårdvarumönster på ett TOML-namngivet mål."""
+        action = registry.create_action(
+            "light_effect", {"target": target, "effect": effect, "speed": speed}, "mcp-client"
+        )
+        if registry.lights is None:
+            raise RuntimeError("Ljustjänsten är inte konfigurerad")
+        message = await registry.lights.set_effect(**action.arguments)
+        return {"status": "completed", "message": message}
+
+    @server.tool()
     def music_play(query: str, output_room: str = "") -> dict:
         """Skapa ett validerat förslag om att spela musik på telefonen eller i ett tillåtet rum."""
         return asdict(registry.create_action("music_play", {"query": query, "output_room": output_room}, "mcp-client"))
@@ -55,7 +86,11 @@ def cli() -> None:
     parser.add_argument("--config", default="config.toml")
     args = parser.parse_args()
     config = load_config(args.config)
-    registry = EutherVoxToolRegistry(CastService(config.cast_settings))
+    from .lighting import MagicHomeLightService
+    registry = EutherVoxToolRegistry(
+        CastService(config.cast_settings),
+        MagicHomeLightService(config.light_settings, config.config_dir),
+    )
     wikipedia = WikipediaService(config.wikipedia_settings)
     build_mcp_server(registry, wikipedia).run(transport="stdio")
 

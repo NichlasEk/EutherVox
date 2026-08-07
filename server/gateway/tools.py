@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any
 from uuid import uuid4
 
 from .actions import DeviceAction
 from .cast import CastService
+from .lighting import EFFECTS, MagicHomeLightService
 
 
 class ToolValidationError(ValueError):
@@ -76,10 +78,40 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(
+            name="light_set",
+            description="Tänd, släck eller ställ exakt färg och ljusstyrka på en konfigurerad lampa eller ett rum.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "Ett konfigurerat lampnamn eller rum."},
+                    "power": {"type": "boolean", "description": "true för tänd, false för släck."},
+                    "color": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$", "description": "Exakt RGB-färg som #7A18C4."},
+                    "brightness": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+                "required": ["target"],
+                "additionalProperties": False,
+            },
+        ),
+        ToolDefinition(
+            name="light_effect",
+            description="Starta ett tillåtet färgskifte eller blinkmönster på en konfigurerad lampa eller i ett rum.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "Ett konfigurerat lampnamn eller rum."},
+                    "effect": {"type": "string", "enum": sorted(EFFECTS)},
+                    "speed": {"type": "integer", "minimum": 1, "maximum": 100},
+                },
+                "required": ["target", "effect"],
+                "additionalProperties": False,
+            },
+        ),
     )
 
-    def __init__(self, cast: CastService | None = None):
+    def __init__(self, cast: CastService | None = None, lights: MagicHomeLightService | None = None):
         self.cast = cast
+        self.lights = lights
 
     @property
     def ollama_tools(self) -> list[dict[str, Any]]:
@@ -93,6 +125,11 @@ class EutherVoxToolRegistry:
             for target in self.cast.targets.values()
         ]
 
+    def list_light_targets(self) -> list[dict[str, object]]:
+        if not self.lights or not self.lights.enabled:
+            return []
+        return self.lights.list_public()
+
     def create_action(self, tool_name: str, arguments: dict[str, Any], node_name: str) -> DeviceAction:
         if not isinstance(arguments, dict):
             raise ToolValidationError("Verktygsargument måste vara ett objekt")
@@ -103,6 +140,49 @@ class EutherVoxToolRegistry:
         unexpected = set(arguments) - accepted_keys
         if unexpected:
             raise ToolValidationError(f"Otillåtna argument: {', '.join(sorted(unexpected))}")
+
+        if tool_name in {"light_set", "light_effect"}:
+            if not self.lights or not self.lights.enabled:
+                raise ToolValidationError("Ljustjänsten är inte konfigurerad")
+            target = self._clean_text(arguments.get("target"), "target")
+            try:
+                matches = self.lights.store.resolve(target)
+            except ValueError as error:
+                raise ToolValidationError(str(error)) from error
+            canonical_target = matches[0].name if len(matches) == 1 else matches[0].room
+            if tool_name == "light_effect":
+                effect = str(arguments.get("effect", ""))
+                if effect not in EFFECTS:
+                    raise ToolValidationError("Otillåtet ljusmönster")
+                speed = self._percentage(arguments.get("speed", 50), "speed")
+                return DeviceAction(
+                    action_id=str(uuid4()),
+                    name="lights.effect",
+                    target_node=node_name,
+                    arguments={"target": canonical_target, "effect": effect, "speed": speed},
+                    acknowledgement=f"Jag väcker {effect.replace('_', ' ')} i {canonical_target}.",
+                )
+            result: dict[str, object] = {"target": canonical_target}
+            if "power" in arguments:
+                if not isinstance(arguments["power"], bool):
+                    raise ToolValidationError("power måste vara sant eller falskt")
+                result["power"] = arguments["power"]
+            if "color" in arguments:
+                color = str(arguments["color"])
+                if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+                    raise ToolValidationError("color måste vara #RRGGBB")
+                result["color"] = color.upper()
+            if "brightness" in arguments:
+                result["brightness"] = self._percentage(arguments["brightness"], "brightness")
+            if len(result) == 1:
+                raise ToolValidationError("Ange av/på, färg eller ljusstyrka")
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="lights.set",
+                target_node=node_name,
+                arguments=result,
+                acknowledgement=f"Jag ställer ljuset i {canonical_target}.",
+            )
 
         query_key = "description" if tool_name == "playlist_create" else "query"
         query = self._clean_text(arguments.get(query_key), query_key)
@@ -169,3 +249,9 @@ class EutherVoxToolRegistry:
         room = " ".join(value.strip().casefold().split())
         aliases = {"kök 2": "köket", "kök": "köket", "köket": "köket"}
         return aliases.get(room, room)
+
+    @staticmethod
+    def _percentage(value: object, field: str) -> int:
+        if isinstance(value, bool) or not isinstance(value, int) or value not in range(1, 101):
+            raise ToolValidationError(f"{field} måste vara 1–100")
+        return value

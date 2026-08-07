@@ -42,6 +42,11 @@ operation_timeout_seconds = 18
 enabled = false
 planner_timeout_seconds = 8
 
+[lights]
+enabled = false
+config_file = "state/lights.toml"
+timeout_seconds = 2
+
 [wikipedia]
 enabled = false
 api_url = "https://sv.wikipedia.org/w/api.php"

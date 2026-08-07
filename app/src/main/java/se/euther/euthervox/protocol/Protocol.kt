@@ -43,12 +43,29 @@ fun actionConfirm(actionId: String) = JsonObject().apply {
     addProperty("action_id", actionId)
 }.toString()
 
+fun lightConfigUpsert(name: String, room: String, host: String, mac: String, model: String) = JsonObject().apply {
+    addProperty("type", "light.config.upsert")
+    addProperty("name", name)
+    addProperty("room", room)
+    addProperty("host", host)
+    addProperty("mac", mac)
+    addProperty("model", model)
+}.toString()
+
 private fun message(type: String, utteranceId: String) = JsonObject().apply {
     addProperty("type", type)
     addProperty("utterance_id", utteranceId)
 }.toString()
 
 sealed interface ServerEvent {
+    data class ConfiguredLight(
+        val id: String,
+        val name: String,
+        val room: String,
+        val host: String,
+        val mac: String,
+        val model: String,
+    )
     data class Ready(val sessionId: String) : ServerEvent
     data class SttPartial(val utteranceId: String, val text: String) : ServerEvent
     data class SttFinal(val utteranceId: String, val text: String) : ServerEvent
@@ -70,6 +87,7 @@ sealed interface ServerEvent {
     ) : ServerEvent
     data class ActionStatus(val actionId: String, val status: String, val message: String) : ServerEvent
     data class ActionCompleted(val actionId: String, val status: String, val message: String) : ServerEvent
+    data class LightsConfig(val lights: List<ConfiguredLight>) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -109,6 +127,20 @@ fun parseServerEvent(raw: String): ServerEvent {
             json["action_id"].asString,
             json["status"].asString,
             json["message"].asString,
+        )
+        "lights.config" -> ServerEvent.LightsConfig(
+            json["lights"].asJsonArray.map { item ->
+                item.asJsonObject.let { light ->
+                    ServerEvent.ConfiguredLight(
+                        id = light["id"].asString,
+                        name = light["name"].asString,
+                        room = light["room"].asString,
+                        host = light["host"]?.asString.orEmpty(),
+                        mac = light["mac"]?.asString.orEmpty(),
+                        model = light["model"].asString,
+                    )
+                }
+            },
         )
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)

@@ -14,6 +14,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +38,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -49,6 +52,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -72,6 +77,8 @@ import se.euther.euthervox.lights.requiredBlePermissions
 import se.euther.euthervox.lights.MagicHomeDevice
 import se.euther.euthervox.lights.MagicHomeWifiController
 import se.euther.euthervox.lights.MagicHomeWifiUiState
+import se.euther.euthervox.lights.MagicHomeProtocol
+import se.euther.euthervox.protocol.ServerEvent
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -256,7 +263,12 @@ fun EutherVoxApp() {
                     onWifiRefresh = wifiLightController::refresh,
                     onWifiPower = wifiLightController::setPower,
                     onWifiColor = wifiLightController::setColor,
+                    onWifiPreciseColor = wifiLightController::setColorBrightness,
+                    onWifiEffect = wifiLightController::setEffect,
                     onWifiProvision = wifiLightController::provision,
+                    configuredLights = state.configuredLights,
+                    configMessage = state.lightConfigMessage,
+                    onSaveConfig = controller::saveLightConfig,
                     onRequestPermission = { blePermissionLauncher.launch(requiredBlePermissions()) },
                     onStartScan = lightController::startScan,
                     onStopScan = lightController::stopScan,
@@ -375,7 +387,12 @@ private fun LightPanel(
     onWifiRefresh: (MagicHomeDevice) -> Unit,
     onWifiPower: (MagicHomeDevice, Boolean) -> Unit,
     onWifiColor: (MagicHomeDevice, Int, Int, Int) -> Unit,
+    onWifiPreciseColor: (MagicHomeDevice, Int, Int, Int, Int) -> Unit,
+    onWifiEffect: (MagicHomeDevice, String, Int) -> Unit,
     onWifiProvision: (String, String, () -> Unit) -> Unit,
+    configuredLights: List<ServerEvent.ConfiguredLight>,
+    configMessage: String?,
+    onSaveConfig: (MagicHomeDevice, String, String) -> Unit,
     onRequestPermission: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
@@ -386,6 +403,9 @@ private fun LightPanel(
     var showProvisioning by remember { mutableStateOf(false) }
     var provisioningSsid by remember { mutableStateOf("") }
     var provisioningPassword by remember { mutableStateOf("") }
+    var editingDevice by remember { mutableStateOf<MagicHomeDevice?>(null) }
+    var editingName by remember { mutableStateOf("") }
+    var editingRoom by remember { mutableStateOf("") }
 
     Text("Magic Home-ljus", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text(
@@ -403,14 +423,24 @@ private fun LightPanel(
     }
     Text(wifiState.status, textAlign = TextAlign.Center)
     wifiState.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
+    configMessage?.let { Text(it, color = Forest, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
 
     wifiState.devices.forEach { device ->
+        val configured = configuredLights.firstOrNull { it.mac.filter(Char::isLetterOrDigit).equals(device.mac.filter(Char::isLetterOrDigit), true) }
         WifiDeviceCard(
             device = device,
+            configured = configured,
             busy = wifiState.busyIp == device.ip,
             onRefresh = { onWifiRefresh(device) },
             onPower = { on -> onWifiPower(device, on) },
             onColor = { red, green, blue -> onWifiColor(device, red, green, blue) },
+            onPreciseColor = { red, green, blue, brightness -> onWifiPreciseColor(device, red, green, blue, brightness) },
+            onEffect = { effect, speed -> onWifiEffect(device, effect, speed) },
+            onEdit = {
+                editingDevice = device
+                editingName = configured?.name.orEmpty()
+                editingRoom = configured?.room.orEmpty()
+            },
         )
     }
 
@@ -516,19 +546,67 @@ private fun LightPanel(
             }) { Text("Avbryt") }
         },
     )
+
+    editingDevice?.let { device ->
+        AlertDialog(
+            onDismissRequest = { editingDevice = null },
+            title = { Text("Namnge ljuset") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("${device.model} · ${device.mac}", style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = editingName,
+                        onValueChange = { editingName = it },
+                        label = { Text("Lampnamn, t.ex. Fönstret") },
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = editingRoom,
+                        onValueChange = { editingRoom = it },
+                        label = { Text("Rum, t.ex. köket") },
+                        singleLine = true,
+                    )
+                    Text("Namnet sparas i serverns lights.toml och blir tillgängligt för röststyrning.", style = MaterialTheme.typography.bodySmall)
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSaveConfig(device, editingName, editingRoom)
+                        editingDevice = null
+                    },
+                    enabled = editingName.isNotBlank() && editingRoom.isNotBlank(),
+                ) { Text("Spara namn") }
+            },
+            dismissButton = { TextButton(onClick = { editingDevice = null }) { Text("Avbryt") } },
+        )
+    }
 }
 
 @Composable
 private fun WifiDeviceCard(
     device: MagicHomeDevice,
+    configured: ServerEvent.ConfiguredLight?,
     busy: Boolean,
     onRefresh: () -> Unit,
     onPower: (Boolean) -> Unit,
     onColor: (Int, Int, Int) -> Unit,
+    onPreciseColor: (Int, Int, Int, Int) -> Unit,
+    onEffect: (String, Int) -> Unit,
+    onEdit: () -> Unit,
 ) {
+    var showPicker by remember(device.mac) { mutableStateOf(false) }
+    var showEffects by remember(device.mac) { mutableStateOf(false) }
+    var effectSpeed by remember(device.mac) { mutableStateOf(40f) }
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.76f))) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(device.model, fontWeight = FontWeight.Bold, color = Forest)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text(configured?.name ?: device.model, fontWeight = FontWeight.Bold, color = Forest)
+                    configured?.let { Text(it.room, style = MaterialTheme.typography.bodySmall, color = Forest) }
+                }
+                TextButton(onClick = onEdit) { Text(if (configured == null) "Namnge" else "Byt namn") }
+            }
             Text("${device.ip} · ${device.mac}", style = MaterialTheme.typography.bodySmall)
             Text(
                 when (device.powerOn) {
@@ -548,6 +626,108 @@ private fun WifiDeviceCard(
                 ColorPreset("Blå", Color(0xFF315DCC), Modifier.weight(1f), !busy) { onColor(0, 0, 255) }
                 ColorPreset("Vit", Color(0xFF777777), Modifier.weight(1f), !busy) { onColor(255, 255, 255) }
             }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                OutlinedButton(onClick = { showPicker = !showPicker }, modifier = Modifier.weight(1f)) {
+                    Text(if (showPicker) "Dölj färg" else "Exakt färg")
+                }
+                OutlinedButton(onClick = { showEffects = true }, modifier = Modifier.weight(1f)) { Text("Mönster") }
+            }
+            if (showPicker) {
+                MagicalColorRectangle(enabled = !busy, onCommit = onPreciseColor)
+            }
+        }
+    }
+    if (showEffects) AlertDialog(
+        onDismissRequest = { showEffects = false },
+        title = { Text("Blink och färgskiften") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("Hastighet ${effectSpeed.toInt()} %")
+                Slider(value = effectSpeed, onValueChange = { effectSpeed = it }, valueRange = 1f..100f)
+                MagicHomeProtocol.effects.keys.chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        row.forEach { label ->
+                            OutlinedButton(
+                                onClick = { onEffect(label, effectSpeed.toInt()); showEffects = false },
+                                enabled = !busy,
+                                modifier = Modifier.weight(1f),
+                            ) { Text(label, style = MaterialTheme.typography.bodySmall) }
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { showEffects = false }) { Text("Stäng") } },
+    )
+}
+
+@Composable
+private fun MagicalColorRectangle(enabled: Boolean, onCommit: (Int, Int, Int, Int) -> Unit) {
+    var hue by remember { mutableStateOf(285f) }
+    var saturation by remember { mutableStateOf(0.82f) }
+    var brightness by remember { mutableStateOf(80f) }
+    fun rgb(): Triple<Int, Int, Int> {
+        val color = Color.hsv(hue, saturation, 1f)
+        return Triple((color.red * 255).toInt(), (color.green * 255).toInt(), (color.blue * 255).toInt())
+    }
+    fun commit() {
+        val (red, green, blue) = rgb()
+        onCommit(red, green, blue, brightness.toInt())
+    }
+    val (red, green, blue) = rgb()
+    val selected = Color(red, green, blue)
+    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+        Row(Modifier.fillMaxWidth().height(126.dp), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Canvas(
+                Modifier.weight(1f).fillMaxSize().pointerInput(enabled) {
+                    if (!enabled) return@pointerInput
+                    fun update(position: Offset) {
+                        hue = (position.x / size.width).coerceIn(0f, 1f) * 360f
+                        saturation = 1f - (position.y / size.height).coerceIn(0f, 1f)
+                    }
+                    detectDragGestures(
+                        onDragStart = { update(it) },
+                        onDragEnd = ::commit,
+                    ) { change, _ -> change.consume(); update(change.position) }
+                },
+            ) {
+                val columns = 48
+                val rows = 16
+                val cellWidth = size.width / columns
+                val cellHeight = size.height / rows
+                repeat(columns) { x ->
+                    repeat(rows) { y ->
+                        drawRect(
+                            color = Color.hsv(x * 360f / columns, 1f - y.toFloat() / (rows - 1), 1f),
+                            topLeft = Offset(x * cellWidth, y * cellHeight),
+                            size = Size(cellWidth + 1f, cellHeight + 1f),
+                        )
+                    }
+                }
+                val marker = Offset(hue / 360f * size.width, (1f - saturation) * size.height)
+                drawCircle(Color.White, 9.dp.toPx(), marker)
+                drawCircle(Color.Black, 6.dp.toPx(), marker)
+                drawCircle(selected, 4.dp.toPx(), marker)
+            }
+            Canvas(
+                Modifier.size(width = 34.dp, height = 126.dp).pointerInput(enabled, selected) {
+                    if (!enabled) return@pointerInput
+                    fun update(position: Offset) { brightness = (100f - position.y / size.height * 100f).coerceIn(1f, 100f) }
+                    detectDragGestures(onDragStart = { update(it) }, onDragEnd = ::commit) { change, _ ->
+                        change.consume(); update(change.position)
+                    }
+                },
+            ) {
+                drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(selected, Color.Black)))
+                val y = (1f - brightness / 100f) * size.height
+                drawLine(Color.White, Offset(0f, y), Offset(size.width, y), strokeWidth = 4.dp.toPx())
+                drawLine(Color.Black, Offset(0f, y + 3.dp.toPx()), Offset(size.width, y + 3.dp.toPx()), strokeWidth = 2.dp.toPx())
+            }
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("#%02X%02X%02X".format(red, green, blue), style = MaterialTheme.typography.bodySmall)
+            Text("Ljusstyrka ${brightness.toInt()} %", style = MaterialTheme.typography.bodySmall)
         }
     }
 }

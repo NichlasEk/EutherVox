@@ -19,6 +19,7 @@ from gateway.playlists import PlaylistTrack, TomlPlaylistStore
 from gateway.session import Phase, ProtocolError, SentenceChunker, VoiceSession
 from gateway.youtube import CreatedPlaylist, PlaylistPreview
 from gateway.wikipedia import WikipediaArticle
+from gateway.lighting import MagicHomeLightService
 
 
 ROOT = Path(__file__).parents[2]
@@ -217,6 +218,55 @@ def test_binary_audio_without_active_utterance_is_rejected():
             assert False, "ProtocolError expected"
         except ProtocolError as error:
             assert error.code == "UNEXPECTED_AUDIO"
+    asyncio.run(scenario())
+
+
+def test_authenticated_session_saves_named_light_to_toml_and_returns_config(tmp_path: Path):
+    async def scenario():
+        session, sent = make_session()
+        session.authenticated_user = "nichlas"
+        session.lights = MagicHomeLightService(
+            {"enabled": True, "config_file": str(tmp_path / "lights.toml")},
+            ROOT,
+        )
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({
+            "type": "light.config.upsert",
+            "name": "Fönstret",
+            "room": "köket",
+            "host": "192.168.1.20",
+            "mac": "AABBCCDDEE20",
+            "model": "AK001-ZJ200",
+        }))
+
+        configs = [item for item in sent if isinstance(item, dict) and item["type"] == "lights.config"]
+        assert configs[-1]["lights"][0]["name"] == "Fönstret"
+        assert configs[-1]["lights"][0]["host"] == "192.168.1.20"
+        assert "Fönstret" in (tmp_path / "lights.toml").read_text(encoding="utf-8")
+
+    asyncio.run(scenario())
+
+
+def test_anonymous_session_cannot_save_lan_light_address(tmp_path: Path):
+    async def scenario():
+        session, sent = make_session()
+        session.lights = MagicHomeLightService(
+            {"enabled": True, "config_file": str(tmp_path / "lights.toml")}, ROOT
+        )
+        await session.handle_text(start_message())
+        assert not any(
+            isinstance(item, dict) and item.get("type") == "lights.config"
+            for item in sent
+        )
+        try:
+            await session.handle_text(json.dumps({
+                "type": "light.config.upsert", "name": "X", "room": "Y",
+                "host": "192.168.1.20", "mac": "AABBCCDDEE20", "model": "AK001-ZJ200",
+            }))
+            assert False
+        except ProtocolError as error:
+            assert error.code == "AUTH_REQUIRED"
+
     asyncio.run(scenario())
 
 

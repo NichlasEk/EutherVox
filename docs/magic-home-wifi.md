@@ -17,9 +17,43 @@ paketfamiljen innan styrknappar lades till i Android-appen.
 3. Tryck `Sök Wi-Fi`.
 4. Modellen, IP-adressen, MAC-adressen och status visas.
 5. Prova först `Tänd` och `Släck`, därefter en grundfärg.
+6. Tryck `Namnge`, ange exempelvis `Fönstret` och `köket`. Appen måste vara
+   ansluten och inloggad mot gatewayen för att spara serverkonfigurationen.
 
 Kommandona går direkt mellan telefonen och modulen på det lokala nätet. De går
 inte genom EutherVox Gateway.
+
+Den exakta färgkontrollen är en kompakt rektangel där vågrät position väljer
+kulör och lodrät position väljer mättnad. Listen till höger ställer
+ljusstyrkan. Paketet skickas när fingret släpps. Namn och rum sparas i
+`state/lights.toml`; därefter kan gatewayen även styra enheten när telefonen är
+på 5G.
+
+Exempel på serverns redigerbara register:
+
+```toml
+schema_version = 1
+
+[[lights]]
+id = "genererad-uuid"
+name = "Fönstret"
+room = "köket"
+host = "192.168.32.6"
+mac = "600194B95929"
+model = "AK001-ZJ200"
+```
+
+Appen uppdaterar posten med MAC-adressen som stabil identitet. Filen är
+Git-ignorerad, skrivs atomiskt och får filrättighet `0600`.
+
+## Röst och mönster
+
+Gatewayens språkmodell får bara välja en lampa eller ett rum som redan finns i
+TOML-registret. `light_set` hanterar av/på, `#RRGGBB` och 1–100 procents
+ljusstyrka. `light_effect` använder en fast lista över klassiska Magic Home-
+mönster och 1–100 procents hastighet. Ett fysiskt prov mot `AK001-ZJ200`
+bekräftade att mönster måste föregås av ett tändkommando; båda drivrutinerna gör
+det automatiskt.
 
 ## Ny modul
 
@@ -44,16 +78,16 @@ inte en hårdkodad `10.10.x.x`-adress.
 
 ## Säkerhetsgräns
 
-Provisionering ska vara en fysisk, lokal telefonfunktion och ska inte exponeras
-som röstverktyg. Ett kommande MCP-lager får endast styra namngivna, i förväg
-godkända enheter och färger/effekter. Det får inte ta emot IP-adresser, råa
+Provisionering är en fysisk, lokal telefonfunktion och exponeras inte som
+röstverktyg. MCP-lagret får endast styra namngivna, i förväg godkända enheter
+och allowlistade färger/effekter. Det kan inte ta emot IP-adresser, råa
 protokollpaket eller Wi-Fi-hemligheter från språkmodellen.
 
 ## Kända begränsningar
 
 - Första betan stöder WPA2-PSK/AES och 2,4 GHz. WPA3-only är inte implementerat.
 - Installation måste provas fysiskt med en återställd reserv-/ny modul.
-- RGB-knapparna använder den verifierade klassiska paketfamiljen. Vita kanaler
-  och inbyggda animationsmönster varierar mellan hårdvarurevisioner och läggs
-  inte till innan de har provats mot dessa exemplar.
+- RGB och de klassiska preset-mönstren använder den verifierade paketfamiljen.
+  Separata vita kanaler kan variera mellan hårdvarurevisioner och styrs ännu
+  inte individuellt.
 - LAN-discovery kan blockeras av gästnät eller accesspunkter med klientisolering.

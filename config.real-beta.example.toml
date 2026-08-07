@@ -105,6 +105,11 @@ playback_confirmation_seconds = 8
 enabled = true
 planner_timeout_seconds = 8
 
+[lights]
+enabled = true
+config_file = "state/lights.toml"
+timeout_seconds = 2
+
 [wikipedia]
 enabled = true
 api_url = "https://sv.wikipedia.org/w/api.php"

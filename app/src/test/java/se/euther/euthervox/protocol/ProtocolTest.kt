@@ -61,4 +61,18 @@ class ProtocolTest {
         assertEquals("action.confirm", json["type"].asString)
         assertEquals("a1", json["action_id"].asString)
     }
+
+    @Test fun serializesAndParsesLightConfigurationWithoutLosingSwedishNames() {
+        val saved = JsonParser.parseString(
+            lightConfigUpsert("Fönstret", "dotterns rum", "192.168.1.20", "AABBCCDDEE20", "AK001-ZJ200")
+        ).asJsonObject
+        assertEquals("light.config.upsert", saved["type"].asString)
+        assertEquals("Fönstret", saved["name"].asString)
+
+        val event = parseServerEvent(
+            """{"type":"lights.config","lights":[{"id":"l1","name":"Fönstret","room":"dotterns rum","host":"192.168.1.20","mac":"AABBCCDDEE20","model":"AK001-ZJ200"}]}"""
+        ) as ServerEvent.LightsConfig
+        assertEquals("dotterns rum", event.lights.single().room)
+        assertEquals("AABBCCDDEE20", event.lights.single().mac)
+    }
 }

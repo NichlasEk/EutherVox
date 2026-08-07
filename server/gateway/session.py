@@ -26,6 +26,7 @@ from .playlists import TomlPlaylistStore
 from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .wikipedia import WikipediaService
+from .lighting import MagicHomeLightService
 
 
 SendJson = Callable[[dict], Awaitable[None]]
@@ -93,6 +94,7 @@ class VoiceSession:
     cast: CastService | None = None
     tool_planner: OllamaToolPlanner | None = None
     wikipedia: WikipediaService | None = None
+    lights: MagicHomeLightService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -127,6 +129,8 @@ class VoiceSession:
                 await self._action_result(message)
             elif message_type == "action.confirm":
                 await self._action_confirm(message)
+            elif message_type == "light.config.upsert":
+                await self._upsert_light(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -174,12 +178,39 @@ class VoiceSession:
         if available_voices:
             ready["available_voices"] = list(available_voices)
         await self.send_json(ready)
+        if self.authenticated_user and self.lights and self.lights.enabled:
+            await self._send_light_config()
         LOG.info(
             "session_ready session=%s character=%s voice=%s",
             self.session_id,
             self.character_name,
             self.voice_id,
         )
+
+    async def _upsert_light(self, message: dict) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("AUTH_REQUIRED", "Inloggning krävs för att spara lampor")
+        if not self.lights or not self.lights.enabled:
+            raise ProtocolError("LIGHTS_DISABLED", "Ljustjänsten är inte aktiverad")
+        try:
+            self.lights.upsert(
+                name=str(message["name"]),
+                room=str(message["room"]),
+                host=str(message["host"]),
+                mac=str(message["mac"]),
+                model=str(message["model"]),
+            )
+        except (KeyError, TypeError, ValueError, RuntimeError) as error:
+            raise ProtocolError("LIGHT_CONFIG_INVALID", str(error)) from error
+        await self._send_light_config()
+
+    async def _send_light_config(self) -> None:
+        await self.send_json({
+            "type": "lights.config",
+            "lights": self.lights.list_public(include_network=True) if self.lights else [],
+        })
 
     async def _start_audio(self, message: dict) -> None:
         if self.phase is not Phase.READY:
@@ -413,6 +444,56 @@ class VoiceSession:
                         self._reset()
                         return
                 output_room = str(action.arguments.get("output_room", ""))
+                if action.name in {"lights.set", "lights.effect"}:
+                    try:
+                        if not self.lights:
+                            raise RuntimeError("Ljustjänsten är inte konfigurerad")
+                        await self.send_json({
+                            "type": "action.status",
+                            "action_id": action.action_id,
+                            "status": "running",
+                            "message": "Styr rummets ljus…",
+                        })
+                        if action.name == "lights.set":
+                            result = await self.lights.set_light(
+                                str(action.arguments["target"]),
+                                power=action.arguments.get("power"),
+                                color=action.arguments.get("color"),
+                                brightness=action.arguments.get("brightness"),
+                            )
+                        else:
+                            result = await self.lights.set_effect(
+                                str(action.arguments["target"]),
+                                str(action.arguments["effect"]),
+                                int(action.arguments.get("speed", 50)),
+                            )
+                        character = self._character()
+                        spoken = action.acknowledgement
+                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken})
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
+                        try:
+                            await self._stream_action_speech(utterance_id, spoken, character)
+                        except Exception:
+                            LOG.exception("light_acknowledgement_tts_failed session=%s", self.session_id)
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "completed",
+                            "message": result,
+                        })
+                        self._remember_turn(transcript, spoken)
+                    except Exception as error:
+                        LOG.exception("light_action_failed session=%s", self.session_id)
+                        failure = f"Jag kunde inte styra ljuset: {error}"
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": failure})
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "failed",
+                            "message": failure,
+                        })
+                    self._reset()
+                    return
                 if action.name == "knowledge.wikipedia":
                     query = str(action.arguments.get("query", "")).strip()
                     if not query:

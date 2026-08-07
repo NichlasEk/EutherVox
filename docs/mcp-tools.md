@@ -18,10 +18,10 @@ STT text
                                               |
                          authenticated VoiceSession execution
                                               |
-                              Wikipedia / YouTube / Cast / Android node
+                         Wikipedia / YouTube / Cast / Magic Home / Android node
 ```
 
-Den deterministiska vägen ligger först eftersom vanliga kommandon då inte behöver ett extra modellanrop. Verktygsplaneraren anropas endast för yttranden med musik- eller rumsindikatorer. Om Ollama inte väljer exakt ett verktyg fortsätter yttrandet till den vanliga figurresponsen.
+Den deterministiska vägen ligger först eftersom vanliga kommandon då inte behöver ett extra modellanrop. Verktygsplaneraren anropas för yttranden med musik-, rums- eller ljusindikatorer. Om Ollama inte väljer exakt ett verktyg fortsätter yttrandet till den vanliga figurresponsen.
 
 ## Verktyg
 
@@ -61,6 +61,23 @@ Argument i den interna modellvägen:
 
 Den fristående MCP-serverns `wikipedia_lookup` returnerar `title`, `extract` och `url` direkt. Den är skrivskyddad och kan varken redigera Wikipedia eller välja en annan värd genom verktygsargument.
 
+### `lights_list`, `light_set` och `light_effect`
+
+`lights_list` returnerar bara `id`, namn, rum och modell från serverns
+`state/lights.toml`. Nätverksadresser lämnas aldrig till modellen eller en
+MCP-klient.
+
+```json
+{"target":"köket","color":"#6B20A8","brightness":30}
+```
+
+`light_set` accepterar ett registrerat lampnamn eller rum, valfri `power`, en
+validerad `#RRGGBB`-färg och ljusstyrka 1–100. `light_effect` accepterar samma
+mål, ett mönster ur verktygets fasta enum och hastighet 1–100. MCP-anropen
+verkställs av gatewayens Magic Home-driver; Ollama-vägen skapar motsvarande
+validerade `lights.set`/`lights.effect` och verkställs i den autentiserade
+röstsessionen.
+
 ## Säkerhetsgräns
 
 - Endast registrerade verktygsnamn accepteras.
@@ -69,7 +86,8 @@ Den fristående MCP-serverns `wikipedia_lookup` returnerar `title`, `extract` oc
 - Rum måste finnas i gatewayens uttryckliga Cast-konfiguration.
 - Modellen kan inte ange IP, port, UUID, URL, filväg, shellkommando eller EutherOxide-användare.
 - Wikipedia-värden anges endast i serverns TOML; modellen får bara ange söktext och uppläsningsläge.
-- MCP stdio-servern får göra skrivskyddade Wikipedia-uppslag men har ingen fristående behörighet att styra musik eller enheter.
+- Lampornas IP och MAC finns endast i server-TOML och kan inte anges som verktygsargument.
+- Wi-Fi-provisionering och lösenord exponeras aldrig genom MCP.
 
 En framtida Streamable HTTP-transport ska ligga bakom EutherOxides autentisering. Den måste översätta verifierad identitet till en kortlivad sessionskontext och får inte acceptera användaridentitet som verktygsargument.
 

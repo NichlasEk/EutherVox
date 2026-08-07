@@ -50,6 +50,24 @@ object MagicHomeProtocol {
         byteArrayOf(0x31, red.clampByte(), green.clampByte(), blue.clampByte(), 0x00, 0xf0.toByte(), 0x0f),
     )
 
+    val effects: Map<String, Int> = linkedMapOf(
+        "Regnbåge mjuk" to 0x25,
+        "Regnbåge blink" to 0x30,
+        "Röd blink" to 0x31,
+        "Grön blink" to 0x32,
+        "Blå blink" to 0x33,
+        "Lila blink" to 0x36,
+        "Vit blink" to 0x37,
+        "Regnbåge hopp" to 0x38,
+    )
+
+    fun effect(label: String, speed: Int): ByteArray {
+        val code = effects[label] ?: error("Okänt mönster")
+        val safeSpeed = speed.coerceIn(1, 100)
+        val delay = ((100 - safeSpeed) * 30 / 100) + 1
+        return withChecksum(byteArrayOf(0x61, code.toByte(), delay.toByte(), 0x0f))
+    }
+
     fun parseStatus(ip: String, mac: String, model: String, bytes: ByteArray): MagicHomeDevice? {
         if (bytes.size < 12 || bytes[0] != 0x81.toByte()) return null
         val powerOn = when (bytes[2].toInt() and 0xff) {
@@ -135,6 +153,25 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
     fun setColor(device: MagicHomeDevice, red: Int, green: Int, blue: Int) = runDeviceAction(device, "Byter färg…") {
         sendCommand(device.ip, MagicHomeProtocol.color(red, green, blue))
         queryStatus(device).copy(powerOn = true, colorHex = "#%02X%02X%02X".format(red, green, blue))
+    }
+
+    fun setColorBrightness(device: MagicHomeDevice, red: Int, green: Int, blue: Int, brightness: Int) =
+        runDeviceAction(device, "Ställer exakt färg…") {
+            val level = brightness.coerceIn(1, 100) / 100f
+            val scaledRed = (red.coerceIn(0, 255) * level).toInt()
+            val scaledGreen = (green.coerceIn(0, 255) * level).toInt()
+            val scaledBlue = (blue.coerceIn(0, 255) * level).toInt()
+            sendCommand(device.ip, MagicHomeProtocol.color(scaledRed, scaledGreen, scaledBlue))
+            queryStatus(device).copy(
+                powerOn = true,
+                colorHex = "#%02X%02X%02X".format(red, green, blue),
+            )
+        }
+
+    fun setEffect(device: MagicHomeDevice, label: String, speed: Int) = runDeviceAction(device, "Startar mönster…") {
+        sendCommand(device.ip, MagicHomeProtocol.power(true))
+        sendCommand(device.ip, MagicHomeProtocol.effect(label, speed))
+        queryStatus(device).copy(powerOn = true)
     }
 
     fun provision(ssid: String, password: String, onFinished: () -> Unit) {
