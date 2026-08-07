@@ -79,6 +79,12 @@ private data class Timeline(
     var lastTts: Long = 0,
 )
 
+private data class PendingLightConfig(
+    val device: MagicHomeDevice,
+    val name: String,
+    val room: String,
+)
+
 class VoiceController(context: Context, private val scope: CoroutineScope) : VoiceTransport.Listener {
     private val microphone = PcmMicrophoneSource(context.applicationContext, scope)
     private val speaker: StreamingAudioSink = PcmAudioTrackSink(scope)
@@ -103,6 +109,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     @Volatile private var automaticEndpointHandled = false
     private var cancelledUtteranceId: String? = null
     @Volatile private var serverActionInProgress = false
+    private var pendingLightConfig: PendingLightConfig? = null
     private var timeline = Timeline()
 
     fun connect(
@@ -324,13 +331,28 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun saveLightConfig(device: MagicHomeDevice, name: String, room: String) {
+        pendingLightConfig = PendingLightConfig(device, name, room)
         if (!ready) {
-            mutableState.value = mutableState.value.copy(lightConfigMessage = "Anslut till servern under Röst först.")
+            mutableState.value = mutableState.value.copy(
+                lightConfigMessage = if (shouldReconnect) {
+                    "Väntar på serveranslutning; namnet sparas automatiskt när den är klar."
+                } else {
+                    "Anslut till servern under Röst först."
+                },
+            )
             return
         }
+        sendPendingLightConfig()
+    }
+
+    private fun sendPendingLightConfig() {
+        val pending = pendingLightConfig ?: return
         mutableState.value = mutableState.value.copy(lightConfigMessage = "Sparar lampnamnet i serverns TOML…")
         scope.launch {
-            val sent = transport?.sendText(lightConfigUpsert(name, room, device.ip, device.mac, device.model)) == true
+            val device = pending.device
+            val sent = transport?.sendText(
+                lightConfigUpsert(pending.name, pending.room, device.ip, device.mac, device.model),
+            ) == true
             if (!sent) mutableState.value = mutableState.value.copy(lightConfigMessage = "Kunde inte skicka lampnamnet till servern.")
         }
     }
@@ -391,6 +413,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             is ServerEvent.Ready -> {
                 ready = true
                 mutableState.value = mutableState.value.copy(connectionLabel = "Ansluten", status = VoiceStatus.Idle, canTalk = true, errorMessage = null)
+                sendPendingLightConfig()
             }
             is ServerEvent.SttPartial -> {
                 if (timeline.sttPartial == 0L) {
@@ -467,10 +490,13 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                     canTalk = ready,
                 )
             }
-            is ServerEvent.LightsConfig -> mutableState.value = mutableState.value.copy(
-                configuredLights = event.lights,
-                lightConfigMessage = if (event.lights.isEmpty()) null else "Namn och rum är sparade i serverns lights.toml.",
-            )
+            is ServerEvent.LightsConfig -> {
+                pendingLightConfig = null
+                mutableState.value = mutableState.value.copy(
+                    configuredLights = event.lights,
+                    lightConfigMessage = if (event.lights.isEmpty()) null else "Namn och rum är sparade i serverns lights.toml.",
+                )
+            }
             is ServerEvent.Error -> fail("${event.code}: ${event.message}", event.recoverable)
             is ServerEvent.Unknown -> Unit
         }
