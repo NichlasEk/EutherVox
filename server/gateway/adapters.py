@@ -23,6 +23,7 @@ class Character:
     voice_id: str
     speed: float
     pitch: float
+    pronunciations: dict[str, str]
     max_initial_sentence_words: int
     music_acknowledgements: tuple[str, ...]
     music_control_acknowledgements: dict[str, str]
@@ -60,6 +61,10 @@ class TomlCharacterProvider:
             voice_id=data["voice"]["voice_id"],
             speed=float(data["voice"]["speed"]),
             pitch=float(data["voice"]["pitch"]),
+            pronunciations={
+                str(written): str(spoken)
+                for written, spoken in data.get("pronunciation", {}).items()
+            },
             max_initial_sentence_words=int(data["behavior"]["max_initial_sentence_words"]),
             music_acknowledgements=tuple(str(item) for item in data.get("music", {}).get("acknowledgements", [])),
             music_control_acknowledgements={
@@ -330,6 +335,10 @@ def build_engines(config):
     elif config.tts_provider == "piper":
         settings = config.tts_settings
         tts = PiperTextToSpeechEngine(str(settings["model_path"]), int(settings.get("frame_ms", 20)))
+    elif config.tts_provider == "router":
+        from .tts import build_routed_tts
+
+        tts = build_routed_tts(config.tts_settings)
     else:
         raise ValueError(f"Unsupported TTS provider: {config.tts_provider}")
     return stt, llm, tts

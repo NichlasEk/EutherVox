@@ -62,6 +62,11 @@ def load_config(path: str | Path) -> GatewayConfig:
             value = Path(settings[key])
             if not value.is_absolute():
                 settings[key] = str(config_path.parent / value)
+    for voice in dict(tts_settings.get("voices", {})).values():
+        if "model_path" in voice:
+            value = Path(voice["model_path"])
+            if not value.is_absolute():
+                voice["model_path"] = str(config_path.parent / value)
     return GatewayConfig(
         config_dir=config_path.parent,
         host=server.get("host", "0.0.0.0"),

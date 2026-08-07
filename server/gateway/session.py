@@ -97,6 +97,7 @@ class VoiceSession:
     phase: Phase = Phase.CONNECTED
     utterance_id: str | None = None
     character_name: str = ""
+    voice_id: str = ""
     node_name: str = "unknown"
     audio: bytearray = field(default_factory=bytearray)
     response_task: asyncio.Task | None = None
@@ -157,10 +158,27 @@ class VoiceSession:
             raise ProtocolError("UNSUPPORTED_AUDIO", "Expected mono pcm_s16le, 16000 Hz, 20 ms frames", False)
         self.character_name = message.get("character", self.config.default_character)
         self.node_name = str(message.get("node_name", "unknown"))
-        self.characters.get(self.character_name)
+        character = self.characters.get(self.character_name)
+        requested_voice = str(message.get("voice_id", character.voice_id))
+        resolver = getattr(self.tts, "resolve_voice", None)
+        self.voice_id = resolver(requested_voice) if resolver else requested_voice
         self.phase = Phase.READY
-        await self.send_json({"type": "session.ready", "session_id": self.session_id, "protocol_version": 1})
-        LOG.info("session_ready session=%s character=%s", self.session_id, self.character_name)
+        ready = {
+            "type": "session.ready",
+            "session_id": self.session_id,
+            "protocol_version": 1,
+            "voice_id": self.voice_id,
+        }
+        available_voices = getattr(self.tts, "voice_ids", ())
+        if available_voices:
+            ready["available_voices"] = list(available_voices)
+        await self.send_json(ready)
+        LOG.info(
+            "session_ready session=%s character=%s voice=%s",
+            self.session_id,
+            self.character_name,
+            self.voice_id,
+        )
 
     async def _start_audio(self, message: dict) -> None:
         if self.phase is not Phase.READY:
@@ -389,7 +407,7 @@ class VoiceSession:
                     if not query:
                         self.pending_wikipedia_mode = str(action.arguments.get("mode", "summary"))
                         clarification = "Vad vill du att jag slår upp på Wikipedia?"
-                        character = self.characters.get(self.character_name)
+                        character = self._character()
                         await self.send_json({
                             "type": "assistant.text.delta",
                             "utterance_id": utterance_id,
@@ -415,7 +433,7 @@ class VoiceSession:
                         })
                         mode = str(action.arguments.get("mode", "summary"))
                         article = await self.wikipedia.lookup(query)
-                        character = self.characters.get(self.character_name)
+                        character = self._character()
                         if mode == "introduction":
                             spoken_response = article.extract
                             await self.send_json({
@@ -484,7 +502,7 @@ class VoiceSession:
                             "message": "Styr uppspelningen…",
                         })
                         controlled_room = await self.cast.control_playback(command, output_room)
-                        character = self.characters.get(self.character_name)
+                        character = self._character()
                         acknowledgement = render_music_control_acknowledgement(character, command, controlled_room)
                         await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": acknowledgement})
                         await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": acknowledgement})
@@ -517,7 +535,7 @@ class VoiceSession:
                             raise RuntimeError("YouTube-kontot är inte kopplat")
                         if not self.cast or not self.cast.configured(output_room):
                             raise RuntimeError(f"Ingen Cast-enhet är konfigurerad för {output_room}")
-                        character = self.characters.get(self.character_name)
+                        character = self._character()
                         spoken_acknowledgement = render_music_acknowledgement(
                             character,
                             str(action.arguments["query"]),
@@ -589,7 +607,7 @@ class VoiceSession:
                 )
                 self._reset()
                 return
-            character = self.characters.get(self.character_name)
+            character = self._character()
             response = await self._stream_generated_response(utterance_id, transcript, character)
             if self.config.text_logging:
                 LOG.info("assistant_final session=%s utterance=%s text=%r", self.session_id, utterance_id, response)
@@ -707,6 +725,10 @@ class VoiceSession:
             self.conversation_history.pop(0)
         while self.conversation_history and sum(len(user) + len(assistant) for user, assistant in self.conversation_history) > max_chars:
             self.conversation_history.pop(0)
+
+    def _character(self):
+        character = self.characters.get(self.character_name)
+        return replace(character, voice_id=self.voice_id) if self.voice_id else character
 
     async def _stream_action_speech(self, utterance_id: str, text: str, character: object) -> None:
         await self.send_json({

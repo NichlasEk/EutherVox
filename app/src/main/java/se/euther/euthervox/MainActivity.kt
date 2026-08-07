@@ -83,6 +83,7 @@ fun EutherVoxApp() {
     var address by remember { mutableStateOf(preferences.getString("server_address", "").orEmpty()) }
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
     var username by remember { mutableStateOf(preferences.getString("username", "").orEmpty()) }
+    var voiceId by remember { mutableStateOf(preferences.getString("voice_id", "piper-nst").orEmpty()) }
     var password by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
@@ -105,11 +106,20 @@ fun EutherVoxApp() {
                 Text("⛏", style = MaterialTheme.typography.displayMedium, color = Parchment)
             }
             Text("Skinnskattaren", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+            Text(
+                "Röst: " + when (voiceId) {
+                    "piper-lisa" -> "Lisa"
+                    "chatterbox" -> "Chatterbox"
+                    else -> "NST"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = Forest,
+            )
             Text(state.connectionLabel, color = if (state.canTalk) Forest else Copper)
             Text(state.serverAddress.ifBlank { "Ingen server vald" }, style = MaterialTheme.typography.bodySmall)
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { controller.connect(address, nodeName, username) }, enabled = address.isNotBlank()) { Text("Anslut") }
+                Button(onClick = { controller.connect(address, nodeName, username, requestedVoiceId = voiceId) }, enabled = address.isNotBlank()) { Text("Anslut") }
                 OutlinedButton(onClick = { showSettings = true }) { Text("Inställningar") }
             }
 
@@ -181,10 +191,17 @@ fun EutherVoxApp() {
         onDismissRequest = { if (address.isNotBlank()) showSettings = false },
         title = { Text("Anslutning") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 OutlinedTextField(address, { address = it }, label = { Text("Serveradress") }, placeholder = { Text("wss://apothictech.se/euthervox/ws") }, singleLine = true)
                 OutlinedTextField(nodeName, { nodeName = it }, label = { Text("Nodnamn") }, singleLine = true)
                 OutlinedTextField(username, { username = it }, label = { Text("EutherOxide-användare") }, singleLine = true)
+                Text("Skinnskattarens röst", fontWeight = FontWeight.Bold, color = Forest)
+                VoiceChoice("piper-nst", "NST – snabb", voiceId) { voiceId = it }
+                VoiceChoice("piper-lisa", "Lisa – alternativ", voiceId) { voiceId = it }
+                VoiceChoice("chatterbox", "Chatterbox – naturlig (experimentell)", voiceId) { voiceId = it }
                 OutlinedTextField(
                     password,
                     { password = it },
@@ -216,13 +233,23 @@ fun EutherVoxApp() {
                     putString("server_address", address.trim())
                     putString("node_name", nodeName.trim())
                     putString("username", username.trim())
+                    putString("voice_id", voiceId)
                 }
                 showSettings = false
-                controller.connect(address, nodeName, username, password)
+                controller.connect(address, nodeName, username, password, voiceId)
                 password = ""
             }, enabled = address.isNotBlank()) { Text("Spara och anslut") }
         },
     )
+}
+
+@Composable
+private fun VoiceChoice(id: String, label: String, selected: String, onSelect: (String) -> Unit) {
+    if (selected == id) {
+        Button(onClick = { onSelect(id) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
+    } else {
+        OutlinedButton(onClick = { onSelect(id) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
+    }
 }
 
 @Composable

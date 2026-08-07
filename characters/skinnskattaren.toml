@@ -11,9 +11,18 @@ bilder från gruvor, berg, järn, dimma och skog.
 """
 
 [voice]
-voice_id = "default-sv"
+voice_id = "piper-nst"
 speed = 0.92
 pitch = -0.08
+
+[pronunciation]
+"AI" = "A I"
+"STT" = "S T T"
+"TTS" = "T T S"
+"VAIO" = "vajo"
+"YT Music" = "YouTube Music"
+"EutherVox" = "Euter Vox"
+"EutherOxide" = "Euter Oxid"
 
 [behavior]
 acknowledge_immediately = true

@@ -90,6 +90,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var bargeInJob: Job? = null
     private var address = ""
     private var nodeName = "android-phone"
+    private var voiceId = "piper-nst"
     private var shouldReconnect = false
     private var ready = false
     private var utteranceId: String? = null
@@ -99,7 +100,13 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     @Volatile private var serverActionInProgress = false
     private var timeline = Timeline()
 
-    fun connect(serverAddress: String, requestedNodeName: String, username: String = "", password: String = "") {
+    fun connect(
+        serverAddress: String,
+        requestedNodeName: String,
+        username: String = "",
+        password: String = "",
+        requestedVoiceId: String = "piper-nst",
+    ) {
         val normalized = serverAddress.trim().trimEnd('/')
         if (normalized.isBlank()) {
             fail("Ange serveradress, till exempel wss://server/euthervox/ws", recoverable = false)
@@ -108,6 +115,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         disconnect()
         address = normalized
         nodeName = requestedNodeName.ifBlank { "android-phone" }
+        voiceId = requestedVoiceId.ifBlank { "piper-nst" }
         shouldReconnect = true
         mutableState.value = mutableState.value.copy(serverAddress = normalized, status = VoiceStatus.Connecting, connectionLabel = "Ansluter…", errorMessage = null)
         connectionJob = scope.launch {
@@ -310,7 +318,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     override suspend fun onOpen() {
         mutableState.value = mutableState.value.copy(connectionLabel = "Handshake…", status = VoiceStatus.Connecting)
-        transport?.sendText(sessionStart(nodeName))
+        transport?.sendText(sessionStart(nodeName, voiceId = voiceId))
     }
 
     override suspend fun onText(text: String) {

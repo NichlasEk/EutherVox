@@ -7,10 +7,11 @@ import org.junit.Test
 
 class ProtocolTest {
     @Test fun sessionStartAdvertisesExactPcmFormat() {
-        val json = JsonParser.parseString(sessionStart("pixel")).asJsonObject
+        val json = JsonParser.parseString(sessionStart("pixel", voiceId = "chatterbox")).asJsonObject
         val audio = json["input_audio"].asJsonObject
         assertEquals(1, json["protocol_version"].asInt)
         assertEquals("pixel", json["node_name"].asString)
+        assertEquals("chatterbox", json["voice_id"].asString)
         assertEquals("pcm_s16le", audio["codec"].asString)
         assertEquals(16_000, audio["sample_rate"].asInt)
         assertEquals(20, audio["frame_ms"].asInt)

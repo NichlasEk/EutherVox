@@ -45,7 +45,10 @@ Meddelandena och fälten följer exemplen i arbetsuppdraget:
 - Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.confirm`, `action.result`.
 - Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `error`.
 
-`session.start.input_audio` valideras innan `session.ready`. Alla yttrandemeddelanden ska använda samma `utterance_id` som aktiverades med `audio.start`.
+`session.start.input_audio` valideras innan `session.ready`. `session.start.voice_id` är
+valfri för äldre klienter; då används figurprofilens standardröst. Betaservern skickar
+även vald `voice_id` och `available_voices` i `session.ready`. Alla yttrandemeddelanden
+ska använda samma `utterance_id` som aktiverades med `audio.start`.
 
 Fel har formen:
 

@@ -5,7 +5,11 @@ import com.google.gson.JsonParser
 
 const val PROTOCOL_VERSION = 1
 
-fun sessionStart(nodeName: String = "android-phone", character: String = "skinnskattaren"): String =
+fun sessionStart(
+    nodeName: String = "android-phone",
+    character: String = "skinnskattaren",
+    voiceId: String = "piper-nst",
+): String =
     JsonObject().apply {
         addProperty("type", "session.start")
         addProperty("protocol_version", PROTOCOL_VERSION)
@@ -13,6 +17,7 @@ fun sessionStart(nodeName: String = "android-phone", character: String = "skinns
         addProperty("node_name", nodeName)
         addProperty("room", "mobile")
         addProperty("character", character)
+        addProperty("voice_id", voiceId)
         add("input_audio", JsonObject().apply {
             addProperty("codec", "pcm_s16le")
             addProperty("sample_rate", 16_000)

@@ -1,0 +1,18 @@
+[Unit]
+Description=EutherVox Chatterbox multilingual TTS worker
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nichlas/EutherVox/chatterbox-worker
+ExecStart=/home/nichlas/EutherVox/chatterbox-worker/.venv/bin/python worker.py --host 127.0.0.1 --port 8790 --sample-rate 22050
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=HF_HOME=/home/nichlas/EutherVox/models/chatterbox-cache
+Environment=HF_HUB_OFFLINE=1
+Environment=EUTHERVOX_CHATTERBOX_REFERENCE=/home/nichlas/EutherVox/models/chatterbox-reference/sv_f.flac
+EnvironmentFile=-/home/nichlas/.config/euthervox/chatterbox.env
+
+[Install]
+WantedBy=default.target

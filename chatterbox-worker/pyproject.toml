@@ -1,0 +1,13 @@
+[project]
+name = "euthervox-chatterbox-worker"
+version = "0.1.0"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "chatterbox-tts",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+chatterbox-tts = { git = "https://github.com/resemble-ai/chatterbox.git" }

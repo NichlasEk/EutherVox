@@ -139,7 +139,8 @@ def test_recent_turns_are_passed_to_history_aware_model():
 def test_real_beta_model_paths_are_resolved_from_config_location():
     config = load_config(ROOT / "config.real-beta.example.toml")
     assert Path(config.stt_settings["download_root"]).is_absolute()
-    assert Path(config.tts_settings["model_path"]).is_absolute()
+    assert Path(config.tts_settings["voices"]["piper-nst"]["model_path"]).is_absolute()
+    assert Path(config.tts_settings["voices"]["piper-lisa"]["model_path"]).is_absolute()
     assert config.stt_settings["language"] == "sv"
 
 

@@ -1,10 +1,18 @@
-# EutherVox 0.9 beta
+# EutherVox 0.10 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
 Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var ligger min lödkolv?`, svarar som Skinnskattaren och strömmar en kort testton som TTS-ljud. Tonen gör att hela ljudvägen kan verifieras, men är inte syntetiserat tal.
 
 Det finns även en riktig svensk betaprofil: flerspråkig faster-whisper för STT, en liten svensk-capabel Qwen-modell via Ollama och Piper `sv_SE-nst-medium` för snabb CPU-TTS. Dots/VoxCPM är avsiktligt inte dialogstandard; de passar bättre som valbara kvalitetsmotorer för längre uppläsning.
+
+Betaprofilen har tre valbara röster i Android-inställningarna:
+
+- `NST – snabb`: svensk Piper-standard och automatisk fallback.
+- `Lisa – alternativ`: den andra officiella svenska Piper-rösten.
+- `Chatterbox – naturlig`: Chatterbox Multilingual V3 via en isolerad lokal GPU-worker.
+
+Skinnskattarens TOML-profil innehåller en uttalsordlista för namn och förkortningar.
 
 ## Snabbstart
 
@@ -32,8 +40,31 @@ Installera den isolerade runtime-miljön och hämta den svenska rösten:
 uv sync --extra dev --extra real --extra cuda
 mkdir -p models/piper models/faster-whisper
 uv run python -m piper.download_voices --download-dir models/piper sv_SE-nst-medium
+uv run python -m piper.download_voices --download-dir models/piper sv_SE-lisa-medium
 ollama pull qwen3:4b-instruct
 ```
+
+Chatterbox installeras separat för att inte blanda dess PyTorch-beroenden med gatewayn:
+
+```bash
+cd chatterbox-worker
+uv sync
+HF_HOME=../models/chatterbox-cache .venv/bin/python worker.py
+```
+
+Workern binder endast till `127.0.0.1:8790`. Om kvalitetsrösten inte svarar innan
+första ljudblocket går röstroutern automatiskt tillbaka till NST. Samma provtext
+kan renderas med samtliga röster via:
+
+```bash
+uv run python scripts/compare_tts.py
+```
+
+Chatterbox är experimentell för dialog. På RTX 4090 tog ett varmt kort svar cirka
+3,9 sekunder och den längre jämförelsefrasen cirka 8,8 sekunder innan första PCM-
+blocket. Workern använde cirka 3,9 GB VRAM. Piper började däremot lämna ljud efter
+ungefär 0,23–0,26 sekunder. Välj därför Chatterbox för röstkvalitetstest och NST
+för det snabbaste samtalet.
 
 Whisper-modellen laddas ner första gången profilen startas. Därefter väljer adaptern den lokala snapshotsökvägen direkt och gör ingen Hugging Face-kontroll vid normal start. Starta med:
 
