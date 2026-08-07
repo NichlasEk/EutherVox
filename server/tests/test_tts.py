@@ -122,13 +122,17 @@ def test_router_rejects_unknown_voice():
 
 def test_http_pcm_engine_frames_a_streamed_response_without_buffering_whole_audio():
     frame_bytes = 22_050 * 2 * 20 // 1000
+    requests: list[dict] = []
 
     class TwoChunkStream(httpx.AsyncByteStream):
         async def __aiter__(self):
             yield b"a" * frame_bytes
             yield b"b" * 17
 
-    async def handler(_request: httpx.Request) -> httpx.Response:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        requests.append(json.loads(request.content))
         return httpx.Response(
             200,
             headers={"X-Sample-Rate": "22050"},
@@ -139,6 +143,7 @@ def test_http_pcm_engine_frames_a_streamed_response_without_buffering_whole_audi
         engine = HttpPcmTextToSpeechEngine(
             "http://moss.test",
             22_050,
+            profile="christian",
             transport=httpx.MockTransport(handler),
         )
         return [
@@ -151,3 +156,13 @@ def test_http_pcm_engine_frames_a_streamed_response_without_buffering_whole_audi
     frames = asyncio.run(scenario())
     assert frames[0] == b"a" * frame_bytes
     assert frames[1] == b"b" * 17 + bytes(frame_bytes - 17)
+    assert requests == [{"text": "Skogen väntar.", "language_id": "sv", "voice_id": "christian"}]
+
+
+def test_christian_is_a_separate_character_with_his_own_voice():
+    config = load_config(ROOT / "config.real-beta.example.toml")
+    christian = TomlCharacterProvider(config.profile_dir).get("christian-grosshandlare")
+
+    assert christian.display_name == "Christian Grosshandlare"
+    assert christian.voice_id == "moss-christian"
+    assert "dansk grosshandlare" in christian.description

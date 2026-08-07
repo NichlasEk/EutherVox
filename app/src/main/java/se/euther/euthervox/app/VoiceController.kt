@@ -90,6 +90,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var bargeInJob: Job? = null
     private var address = ""
     private var nodeName = "android-phone"
+    private var characterId = "skinnskattaren"
     private var voiceId = "piper-nst"
     private var shouldReconnect = false
     private var ready = false
@@ -106,6 +107,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         username: String = "",
         password: String = "",
         requestedVoiceId: String = "piper-nst",
+        requestedCharacterId: String = "skinnskattaren",
     ) {
         val normalized = serverAddress.trim().trimEnd('/')
         if (normalized.isBlank()) {
@@ -115,6 +117,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         disconnect()
         address = normalized
         nodeName = requestedNodeName.ifBlank { "android-phone" }
+        characterId = requestedCharacterId.ifBlank { "skinnskattaren" }
         voiceId = requestedVoiceId.ifBlank { "piper-nst" }
         shouldReconnect = true
         mutableState.value = mutableState.value.copy(serverAddress = normalized, status = VoiceStatus.Connecting, connectionLabel = "Ansluter…", errorMessage = null)
@@ -318,7 +321,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     override suspend fun onOpen() {
         mutableState.value = mutableState.value.copy(connectionLabel = "Handshake…", status = VoiceStatus.Connecting)
-        transport?.sendText(sessionStart(nodeName, voiceId = voiceId))
+        transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId))
     }
 
     override suspend fun onText(text: String) {

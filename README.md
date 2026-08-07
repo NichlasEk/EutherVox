@@ -79,11 +79,16 @@ Stormakt3020. Kopiera den utan radiofiltret till den ignorerade modellkatalogen:
 mkdir -p models/moss-reference/stormakt3020
 cp ../WaylandForge/assets/stormakt3020/radio/references/soren-svartkrut-reference.wav \
   models/moss-reference/stormakt3020/soren-svartkrut-reference.wav
+cp ../WaylandForge/assets/stormakt3020/radio/references/kung-christian-reference.wav \
+  models/moss-reference/stormakt3020/kung-christian-reference.wav
 ```
 
 Referensfilen anges i servicefilen och versionshanteras inte. Om den saknas
 startar workern med en inbyggd röst. `GET /health` visar `reference_name`, så det
-går att verifiera vilken profil som faktiskt laddades.
+går att verifiera vilken profil som faktiskt laddades. Samma MOSS-process kan
+ha flera namngivna, tillåtna referenser utan att ladda modellen flera gånger.
+Android-appen skickar `soren` för Skinnskattaren och `christian` för den danske
+grosshandlaren; godtyckliga filsökvägar accepteras aldrig över HTTP.
 
 Chatterbox-workern binder endast till `127.0.0.1:8790`. Om kvalitetsrösten inte svarar innan
 första ljudblocket går röstroutern automatiskt tillbaka till NST. Samma provtext
@@ -296,7 +301,8 @@ Implementera gränssnitten `SpeechToTextEngine`, `TextGenerationEngine` och `Tex
 
 En STT-adapter får PCM som bytes och samplingsfrekvens. Generatorn är en async iterator så att textdelta kan skickas direkt. TTS-adaptern är också en async iterator och ska ge små PCM-block; klienten behöver därför inte ändras när en verklig lokal motor kopplas in. `AudioStreamFormat` och ljudgränssnitten avskiljer PCM-detaljerna så att Opus senare kan införas bakom nya implementationer.
 
-Figurens personlighet och röstparametrar ligger separat i `characters/skinnskattaren.toml`.
+Figurernas personligheter och röstparametrar ligger separat i
+`characters/skinnskattaren.toml` och `characters/christian-grosshandlare.toml`.
 
 ## Kända begränsningar
 

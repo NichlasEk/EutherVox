@@ -40,11 +40,13 @@ class HttpPcmTextToSpeechEngine:
         base_url: str,
         sample_rate: int,
         timeout_seconds: float = 60.0,
+        profile: str = "",
         transport: httpx.AsyncBaseTransport | None = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.sample_rate = sample_rate
         self.timeout_seconds = timeout_seconds
+        self.profile = profile
         self.transport = transport
 
     async def synthesize(
@@ -59,7 +61,7 @@ class HttpPcmTextToSpeechEngine:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/synthesize",
-                json={"text": text, "language_id": "sv"},
+                json={"text": text, "language_id": "sv", "voice_id": self.profile},
             ) as response:
                 response.raise_for_status()
                 returned_rate = int(response.headers.get("X-Sample-Rate", self.sample_rate))
@@ -163,6 +165,7 @@ def build_routed_tts(settings: dict) -> RoutedTextToSpeechEngine:
                 str(voice_settings["base_url"]),
                 int(voice_settings.get("sample_rate", 22050)),
                 float(voice_settings.get("timeout_seconds", 60)),
+                str(voice_settings.get("profile", "")),
             )
         else:
             raise ValueError(f"Unsupported routed TTS provider: {provider}")

@@ -83,16 +83,20 @@ fun EutherVoxApp() {
     var address by remember { mutableStateOf(preferences.getString("server_address", "").orEmpty()) }
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
     var username by remember { mutableStateOf(preferences.getString("username", "").orEmpty()) }
+    var characterId by remember { mutableStateOf(preferences.getString("character_id", "skinnskattaren").orEmpty()) }
     var voiceId by remember { mutableStateOf(preferences.getString("voice_id", "piper-nst").orEmpty()) }
     var settingsAddress by remember { mutableStateOf(address) }
     var settingsNodeName by remember { mutableStateOf(nodeName) }
     var settingsUsername by remember { mutableStateOf(username) }
+    var settingsCharacterId by remember { mutableStateOf(characterId) }
     var settingsVoiceId by remember { mutableStateOf(voiceId) }
     var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> hasPermission = granted }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val characterName = if (characterId == "christian-grosshandlare") "Christian Grosshandlare" else "Skinnskattaren"
+    val characterSymbol = if (characterId == "christian-grosshandlare") "⚓" else "⛏"
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) controller.onPause() }
@@ -107,14 +111,15 @@ fun EutherVoxApp() {
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
-                Text("⛏", style = MaterialTheme.typography.displayMedium, color = Parchment)
+                Text(characterSymbol, style = MaterialTheme.typography.displayMedium, color = Parchment)
             }
-            Text("Skinnskattaren", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+            Text(characterName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
             Text(
                 "Röst: " + when (voiceId) {
                     "piper-lisa" -> "Lisa"
                     "chatterbox" -> "Chatterbox"
                     "moss-nano" -> "MOSS Nano"
+                    "moss-christian" -> "Christian"
                     else -> "NST"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -124,11 +129,12 @@ fun EutherVoxApp() {
             Text(state.serverAddress.ifBlank { "Ingen server vald" }, style = MaterialTheme.typography.bodySmall)
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { controller.connect(address, nodeName, username, requestedVoiceId = voiceId) }, enabled = address.isNotBlank()) { Text("Anslut") }
+                Button(onClick = { controller.connect(address, nodeName, username, requestedVoiceId = voiceId, requestedCharacterId = characterId) }, enabled = address.isNotBlank()) { Text("Anslut") }
                 OutlinedButton(onClick = {
                     settingsAddress = address
                     settingsNodeName = nodeName
                     settingsUsername = username
+                    settingsCharacterId = characterId
                     settingsVoiceId = voiceId
                     settingsPassword = ""
                     showSettings = true
@@ -156,9 +162,9 @@ fun EutherVoxApp() {
                 }
                 Text(
                     when {
-                        state.interruptionListening -> "Samtalsläge: du kan avbryta Skinnskattaren genom att tala"
+                        state.interruptionListening -> "Samtalsläge: du kan avbryta $characterName genom att tala"
                         state.microphoneActive -> "Samtalsläge: lyssnar efter din röst"
-                        else -> "Samtalsläge: Skinnskattaren svarar"
+                        else -> "Samtalsläge: $characterName svarar"
                     },
                     color = Forest,
                     textAlign = TextAlign.Center,
@@ -175,7 +181,7 @@ fun EutherVoxApp() {
 
             TranscriptCard("Preliminärt", state.partialTranscript)
             TranscriptCard("Du sade", state.finalTranscript)
-            TranscriptCard("Skinnskattaren", state.responseText)
+            TranscriptCard(characterName, state.responseText)
             if (state.actionMessage != null) {
                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -210,11 +216,24 @@ fun EutherVoxApp() {
                 OutlinedTextField(settingsAddress, { settingsAddress = it }, label = { Text("Serveradress") }, placeholder = { Text("wss://apothictech.se/euthervox/ws") }, singleLine = true)
                 OutlinedTextField(settingsNodeName, { settingsNodeName = it }, label = { Text("Nodnamn") }, singleLine = true)
                 OutlinedTextField(settingsUsername, { settingsUsername = it }, label = { Text("EutherOxide-användare") }, singleLine = true)
-                Text("Skinnskattarens röst", fontWeight = FontWeight.Bold, color = Forest)
-                VoiceChoice("piper-nst", "NST – snabb (rekommenderad)", settingsVoiceId) { settingsVoiceId = it }
-                VoiceChoice("piper-lisa", "Lisa – alternativ", settingsVoiceId) { settingsVoiceId = it }
-                VoiceChoice("moss-nano", "MOSS Nano – snabb AI-röst (experimentell)", settingsVoiceId) { settingsVoiceId = it }
-                VoiceChoice("chatterbox", "Chatterbox – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }
+                Text("Figur", fontWeight = FontWeight.Bold, color = Forest)
+                CharacterChoice("skinnskattaren", "Skinnskattaren", settingsCharacterId) {
+                    settingsCharacterId = it
+                    if (settingsVoiceId == "moss-christian") settingsVoiceId = "moss-nano"
+                }
+                CharacterChoice("christian-grosshandlare", "Christian – ilsken dansk grosshandlare", settingsCharacterId) {
+                    settingsCharacterId = it
+                    settingsVoiceId = "moss-christian"
+                }
+                Text("Röst", fontWeight = FontWeight.Bold, color = Forest)
+                if (settingsCharacterId == "christian-grosshandlare") {
+                    VoiceChoice("moss-christian", "Christian – dansk MOSS-röst", settingsVoiceId) { settingsVoiceId = it }
+                } else {
+                    VoiceChoice("piper-nst", "NST – snabb (rekommenderad)", settingsVoiceId) { settingsVoiceId = it }
+                    VoiceChoice("piper-lisa", "Lisa – alternativ", settingsVoiceId) { settingsVoiceId = it }
+                    VoiceChoice("moss-nano", "MOSS Nano – Sören Svartkrut", settingsVoiceId) { settingsVoiceId = it }
+                    VoiceChoice("chatterbox", "Chatterbox – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }
+                }
                 OutlinedTextField(
                     settingsPassword,
                     { settingsPassword = it },
@@ -245,19 +264,22 @@ fun EutherVoxApp() {
                 val savedAddress = settingsAddress.trim()
                 val savedNodeName = settingsNodeName.trim()
                 val savedUsername = settingsUsername.trim()
+                val savedCharacterId = settingsCharacterId
                 val savedVoiceId = settingsVoiceId
                 preferences.edit(commit = true) {
                     putString("server_address", savedAddress)
                     putString("node_name", savedNodeName)
                     putString("username", savedUsername)
+                    putString("character_id", savedCharacterId)
                     putString("voice_id", savedVoiceId)
                 }
                 address = savedAddress
                 nodeName = savedNodeName
                 username = savedUsername
+                characterId = savedCharacterId
                 voiceId = savedVoiceId
                 showSettings = false
-                controller.connect(savedAddress, savedNodeName, savedUsername, settingsPassword, savedVoiceId)
+                controller.connect(savedAddress, savedNodeName, savedUsername, settingsPassword, savedVoiceId, savedCharacterId)
                 settingsPassword = ""
             }, enabled = settingsAddress.isNotBlank()) { Text("Spara och stäng") }
         },
@@ -269,6 +291,15 @@ fun EutherVoxApp() {
 
 @Composable
 private fun VoiceChoice(id: String, label: String, selected: String, onSelect: (String) -> Unit) {
+    if (selected == id) {
+        Button(onClick = { onSelect(id) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
+    } else {
+        OutlinedButton(onClick = { onSelect(id) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
+    }
+}
+
+@Composable
+private fun CharacterChoice(id: String, label: String, selected: String, onSelect: (String) -> Unit) {
     if (selected == id) {
         Button(onClick = { onSelect(id) }, modifier = Modifier.fillMaxWidth()) { Text(label) }
     } else {

@@ -23,6 +23,7 @@ LOG = logging.getLogger("euthervox.moss")
 class SynthesisRequest(BaseModel):
     text: str
     language_id: str = "sv"
+    voice_id: str = ""
 
 
 class MossRuntime:
@@ -34,6 +35,7 @@ class MossRuntime:
         voice: str,
         threads: int,
         output_sample_rate: int,
+        reference_profiles: dict[str, Path] | None = None,
     ) -> None:
         self.engine = OnnxNanoTTSServiceAdapter(
             model_dir=model_dir,
@@ -45,6 +47,9 @@ class MossRuntime:
         voices = [str(item["voice"]) for item in self.engine.runtime.list_builtin_voices()]
         self.voice = voice if voice in voices else voices[0]
         self.reference_audio = reference_audio if reference_audio and reference_audio.is_file() else None
+        self.reference_profiles = {
+            name: path for name, path in (reference_profiles or {}).items() if path.is_file()
+        }
         self.output_sample_rate = output_sample_rate
         self._lock = threading.Lock()
         LOG.info(
@@ -57,15 +62,17 @@ class MossRuntime:
             ",".join(voices),
         )
 
-    def synthesize(self, text: str):
+    def synthesize(self, text: str, voice_id: str = ""):
         started = time.monotonic()
         first_audio_ms: int | None = None
+        reference_audio = self.reference_profiles.get(voice_id, self.reference_audio)
+        profile_name = voice_id if voice_id in self.reference_profiles else "default"
         with self._lock:
             stream = self.engine.synthesize_stream(
                 text=text,
                 mode="voice_clone",
                 voice=self.voice,
-                prompt_audio_path=str(self.reference_audio) if self.reference_audio else None,
+                prompt_audio_path=str(reference_audio) if reference_audio else None,
                 max_new_frames=375,
                 voice_clone_max_text_tokens=75,
                 attn_implementation="fixed",
@@ -99,17 +106,24 @@ class MossRuntime:
                 if output.size:
                     if first_audio_ms is None:
                         first_audio_ms = int((time.monotonic() - started) * 1000)
-                        LOG.info("moss_first_audio_ms=%d text_chars=%d", first_audio_ms, len(text))
+                        LOG.info(
+                            "moss_first_audio_ms=%d text_chars=%d profile=%s reference=%s",
+                            first_audio_ms,
+                            len(text),
+                            profile_name,
+                            reference_audio.stem if reference_audio else "builtin",
+                        )
                     yield self._pcm16(output)
             if resampler is not None:
                 tail = resampler.resample_chunk(np.zeros(0, dtype=np.float32), last=True)
                 if tail.size:
                     yield self._pcm16(tail)
         LOG.info(
-            "moss_complete elapsed_ms=%d first_audio_ms=%s text_chars=%d",
+            "moss_complete elapsed_ms=%d first_audio_ms=%s text_chars=%d profile=%s",
             int((time.monotonic() - started) * 1000),
             first_audio_ms,
             len(text),
+            profile_name,
         )
 
     @staticmethod
@@ -129,6 +143,7 @@ def build_app(runtime: MossRuntime) -> FastAPI:
             "voice": runtime.voice,
             "reference_audio": runtime.reference_audio is not None,
             "reference_name": runtime.reference_audio.stem if runtime.reference_audio else "builtin",
+            "reference_profiles": sorted(runtime.reference_profiles),
         }
 
     @app.post("/synthesize")
@@ -139,12 +154,13 @@ def build_app(runtime: MossRuntime) -> FastAPI:
         if request.language_id != "sv":
             raise HTTPException(status_code=400, detail="only Swedish is enabled")
         return StreamingResponse(
-            runtime.synthesize(text),
+            runtime.synthesize(text, request.voice_id),
             media_type="application/octet-stream",
             headers={
                 "X-Sample-Rate": str(runtime.output_sample_rate),
                 "X-Channels": "1",
                 "X-Sample-Format": "pcm_s16le",
+                "X-Voice-Profile": request.voice_id if request.voice_id in runtime.reference_profiles else "default",
             },
         )
 
@@ -160,9 +176,22 @@ def main() -> None:
     parser.add_argument("--model-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path("/tmp/euthervox-moss-output"))
     parser.add_argument("--reference-audio", type=Path)
+    parser.add_argument(
+        "--reference-profile",
+        action="append",
+        default=[],
+        metavar="NAME=PATH",
+        help="Allowlisted named reference profile; may be repeated",
+    )
     parser.add_argument("--voice", default="Junhao")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    reference_profiles: dict[str, Path] = {}
+    for entry in args.reference_profile:
+        name, separator, path = entry.partition("=")
+        if not separator or not name.strip() or not path.strip():
+            parser.error("--reference-profile must use NAME=PATH")
+        reference_profiles[name.strip()] = Path(path.strip()).resolve()
     runtime = MossRuntime(
         args.model_dir.resolve(),
         args.output_dir.resolve(),
@@ -170,6 +199,7 @@ def main() -> None:
         args.voice,
         args.threads,
         args.sample_rate,
+        reference_profiles,
     )
     uvicorn.run(build_app(runtime), host=args.host, port=args.port, log_level="info")
 
