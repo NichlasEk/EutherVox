@@ -1,6 +1,8 @@
 package se.euther.euthervox
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
@@ -61,6 +63,11 @@ import se.euther.euthervox.app.Latencies
 import se.euther.euthervox.app.VoiceController
 import se.euther.euthervox.app.VoiceStatus
 import se.euther.euthervox.network.EutherAuthClient
+import se.euther.euthervox.lights.BleLightController
+import se.euther.euthervox.lights.BleLightDevice
+import se.euther.euthervox.lights.BleLightProtocol
+import se.euther.euthervox.lights.hasBlePermissions
+import se.euther.euthervox.lights.requiredBlePermissions
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,7 +93,9 @@ fun EutherVoxApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val controller = remember { VoiceController(context, scope) }
+    val lightController = remember { BleLightController(context, scope) }
     val state by controller.state.collectAsStateWithLifecycle()
+    val lightState by lightController.state.collectAsStateWithLifecycle()
     val preferences = remember { context.getSharedPreferences("euthervox", 0) }
     var address by remember { mutableStateOf(preferences.getString("server_address", "").orEmpty()) }
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
@@ -100,17 +109,28 @@ fun EutherVoxApp() {
     var settingsVoiceId by remember { mutableStateOf(voiceId) }
     var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
+    var selectedTab by remember { mutableStateOf("voice") }
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
+    var hasBlePermission by remember { mutableStateOf(hasBlePermissions(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> hasPermission = granted }
+    val blePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        hasBlePermission = result.values.all { it } && hasBlePermissions(context)
+        if (hasBlePermission) lightController.startScan()
+    }
     val lifecycleOwner = LocalLifecycleOwner.current
     val character = characterUi(characterId)
     val characterName = character.name
     val characterSymbol = character.symbol
 
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) controller.onPause() }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) {
+                controller.onPause()
+                lightController.stopScan()
+            }
+        }
         lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); controller.disconnect() }
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer); controller.disconnect(); lightController.close() }
     }
 
     Surface(color = Parchment, modifier = Modifier.fillMaxSize()) {
@@ -119,6 +139,11 @@ fun EutherVoxApp() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                TabChoice("Röst", selectedTab == "voice", Modifier.weight(1f)) { selectedTab = "voice" }
+                TabChoice("Ljus", selectedTab == "lights", Modifier.weight(1f)) { selectedTab = "lights" }
+            }
+            if (selectedTab == "voice") {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
                 Text(characterSymbol, style = MaterialTheme.typography.displayMedium, color = Parchment)
             }
@@ -210,6 +235,16 @@ fun EutherVoxApp() {
 
             OutlinedButton(onClick = controller::cancelResponse, enabled = state.status == VoiceStatus.Speaking || state.status == VoiceStatus.Processing) {
                 Text("Avbryt uppspelning")
+            }
+            } else {
+                LightPanel(
+                    state = lightState,
+                    hasPermission = hasBlePermission,
+                    onRequestPermission = { blePermissionLauncher.launch(requiredBlePermissions()) },
+                    onStartScan = lightController::startScan,
+                    onStopScan = lightController::stopScan,
+                    onInspect = lightController::inspect,
+                )
             }
             Spacer(Modifier.height(12.dp))
         }
@@ -303,6 +338,85 @@ fun EutherVoxApp() {
             TextButton(onClick = { showSettings = false }) { Text("Avbryt") }
         },
     )
+}
+
+@Composable
+private fun TabChoice(label: String, selected: Boolean, modifier: Modifier = Modifier, onSelect: () -> Unit) {
+    if (selected) {
+        Button(onClick = onSelect, modifier = modifier) { Text(label) }
+    } else {
+        OutlinedButton(onClick = onSelect, modifier = modifier) { Text(label) }
+    }
+}
+
+@Composable
+private fun LightPanel(
+    state: se.euther.euthervox.lights.BleLightUiState,
+    hasPermission: Boolean,
+    onRequestPermission: () -> Unit,
+    onStartScan: () -> Unit,
+    onStopScan: () -> Unit,
+    onInspect: (BleLightDevice) -> Unit,
+) {
+    val context = LocalContext.current
+    Text("BLE-ljuslaboratorium", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+    Text(
+        "Först identifierar vi kontrollerns riktiga protokoll. Inga styrkommandon skickas i denna version.",
+        textAlign = TextAlign.Center,
+        color = Forest,
+    )
+    if (!hasPermission) {
+        Button(onClick = onRequestPermission) { Text("Tillåt enheter i närheten") }
+    } else {
+        Button(onClick = if (state.scanning) onStopScan else onStartScan) {
+            Text(if (state.scanning) "Stoppa sökning" else "Sök efter slingor")
+        }
+    }
+    Text(state.status, textAlign = TextAlign.Center)
+    state.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
+
+    state.devices.forEach { device ->
+        BleDeviceCard(device, state.inspectingAddress == device.address) { onInspect(device) }
+    }
+
+    val inspected = state.inspectedDevice
+    if (inspected != null) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE4DDCB))) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("GATT-diagnostik", fontWeight = FontWeight.Bold, color = Forest)
+                Text("${inspected.name} · ${inspected.protocol.label}")
+                if (state.characteristics.isEmpty()) {
+                    Text("Inga karakteristiker lästa ännu.")
+                } else {
+                    state.characteristics.forEach {
+                        Text("${it.serviceUuid} → ${it.characteristicUuid} · ${it.properties}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Button(onClick = {
+                        val clipboard = context.getSystemService(ClipboardManager::class.java)
+                        clipboard.setPrimaryClip(ClipData.newPlainText("EutherVox BLE diagnostic", state.diagnosticText()))
+                    }) { Text("Kopiera diagnostik") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BleDeviceCard(device: BleLightDevice, inspecting: Boolean, onInspect: () -> Unit) {
+    val likely = device.protocol != BleLightProtocol.Unknown
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = if (likely) Color(0xFFFFF1C7) else Color.White.copy(alpha = 0.72f)),
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(device.name, fontWeight = FontWeight.Bold, color = Forest)
+            Text("${device.protocol.label} · RSSI ${device.rssi} dBm", style = MaterialTheme.typography.bodySmall)
+            Text(device.address, style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onInspect, enabled = !inspecting) {
+                Text(if (inspecting) "Undersöker…" else "Undersök")
+            }
+        }
+    }
 }
 
 @Composable

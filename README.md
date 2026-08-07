@@ -1,6 +1,11 @@
-# EutherVox 0.13 beta
+# EutherVox 0.14 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
+
+Android-appen har även ett första lokalt BLE-ljuslaboratorium under fliken `Ljus`.
+Det skannar efter närliggande kontrollers och läser deras GATT-tjänster utan att
+skicka styrkommandon. Diagnostiken används för att välja rätt protokolldrivrutin
+innan färg, ljusstyrka och effekter aktiveras; se `docs/ble-light-research.md`.
 
 Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var ligger min lödkolv?`, svarar som Skinnskattaren och strömmar en kort testton som TTS-ljud. Tonen gör att hela ljudvägen kan verifieras, men är inte syntetiserat tal.
 
