@@ -55,6 +55,27 @@ def build_mcp_server(registry: EutherVoxToolRegistry, wikipedia: WikipediaServic
         return {"status": "completed", "message": message}
 
     @server.tool()
+    def tvs_list() -> list[dict[str, object]]:
+        """Lista namngivna NEC-TV-apparater och rum utan nätverksadresser."""
+        return registry.list_tv_targets()
+
+    @server.tool()
+    async def tvs_discover() -> list[dict[str, object]]:
+        """Sök efter NEC-skärmar på det konfigurerade privata /24-nätet."""
+        if registry.television is None:
+            raise RuntimeError("TV-tjänsten är inte konfigurerad")
+        return await registry.television.discover()
+
+    @server.tool()
+    async def tv_control(target: str, command: str) -> dict[str, str]:
+        """Styr ström eller en allowlistad ingång på en TV i tvs.toml."""
+        action = registry.create_action("tv_control", {"target": target, "command": command}, "mcp-client")
+        if registry.television is None:
+            raise RuntimeError("TV-tjänsten är inte konfigurerad")
+        message = await registry.television.control(str(action.arguments["target"]), str(action.arguments["command"]))
+        return {"status": "completed", "message": message}
+
+    @server.tool()
     def music_play(query: str, output_room: str = "") -> dict:
         """Skapa ett validerat förslag om att spela musik på telefonen eller i ett tillåtet rum."""
         return asdict(registry.create_action("music_play", {"query": query, "output_room": output_room}, "mcp-client"))
@@ -87,9 +108,11 @@ def cli() -> None:
     args = parser.parse_args()
     config = load_config(args.config)
     from .lighting import MagicHomeLightService
+    from .television import NecTvService
     registry = EutherVoxToolRegistry(
         CastService(config.cast_settings),
         MagicHomeLightService(config.light_settings, config.config_dir),
+        NecTvService(config.television_settings, config.config_dir),
     )
     wikipedia = WikipediaService(config.wikipedia_settings)
     build_mcp_server(registry, wikipedia).run(transport="stdio")

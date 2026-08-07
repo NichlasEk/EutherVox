@@ -52,6 +52,23 @@ fun lightConfigUpsert(name: String, room: String, host: String, mac: String, mod
     addProperty("model", model)
 }.toString()
 
+fun tvDiscover() = JsonObject().apply { addProperty("type", "tv.discover") }.toString()
+
+fun tvConfigUpsert(name: String, room: String, host: String) = JsonObject().apply {
+    addProperty("type", "tv.config.upsert")
+    addProperty("name", name)
+    addProperty("room", room)
+    addProperty("host", host)
+    addProperty("port", 7142)
+    addProperty("model", "NEC display")
+}.toString()
+
+fun tvCommand(target: String, command: String) = JsonObject().apply {
+    addProperty("type", "tv.command")
+    addProperty("target", target)
+    addProperty("command", command)
+}.toString()
+
 private fun message(type: String, utteranceId: String) = JsonObject().apply {
     addProperty("type", type)
     addProperty("utterance_id", utteranceId)
@@ -66,6 +83,8 @@ sealed interface ServerEvent {
         val mac: String,
         val model: String,
     )
+    data class ConfiguredTv(val id: String, val name: String, val room: String, val host: String, val port: Int, val model: String)
+    data class DiscoveredTv(val host: String, val port: Int, val model: String)
     data class Ready(val sessionId: String) : ServerEvent
     data class SttPartial(val utteranceId: String, val text: String) : ServerEvent
     data class SttFinal(val utteranceId: String, val text: String) : ServerEvent
@@ -88,6 +107,9 @@ sealed interface ServerEvent {
     data class ActionStatus(val actionId: String, val status: String, val message: String) : ServerEvent
     data class ActionCompleted(val actionId: String, val status: String, val message: String) : ServerEvent
     data class LightsConfig(val lights: List<ConfiguredLight>) : ServerEvent
+    data class TvsConfig(val televisions: List<ConfiguredTv>) : ServerEvent
+    data class TvsDiscovered(val televisions: List<DiscoveredTv>) : ServerEvent
+    data class TvCommandResult(val status: String, val message: String) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -142,6 +164,20 @@ fun parseServerEvent(raw: String): ServerEvent {
                 }
             },
         )
+        "tvs.config" -> ServerEvent.TvsConfig(
+            json["tvs"].asJsonArray.map { item -> item.asJsonObject.let { tv ->
+                ServerEvent.ConfiguredTv(
+                    id = tv["id"].asString, name = tv["name"].asString, room = tv["room"].asString,
+                    host = tv["host"].asString, port = tv["port"]?.asInt ?: 7142, model = tv["model"]?.asString ?: "NEC display",
+                )
+            } },
+        )
+        "tvs.discovered" -> ServerEvent.TvsDiscovered(
+            json["tvs"].asJsonArray.map { item -> item.asJsonObject.let { tv ->
+                ServerEvent.DiscoveredTv(tv["host"].asString, tv["port"]?.asInt ?: 7142, tv["model"]?.asString ?: "NEC display")
+            } },
+        )
+        "tv.command.result" -> ServerEvent.TvCommandResult(json["status"].asString, json["message"].asString)
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)
     }

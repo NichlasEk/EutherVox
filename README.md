@@ -1,4 +1,4 @@
-# EutherVox 0.17 beta
+# EutherVox 0.18 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -23,6 +23,14 @@ färgkommandon ungefär 20 gånger per sekund; rått ljud skickas, loggas eller
 sparas aldrig. Push-to-talk och samtalsläge stoppar musikmikrofonen innan de tar
 över AudioRecord. Första betan använder en telefon som dirigent; valbara
 Raspberry Pi-rumsmikrofoner är en senare protokollutvidgning.
+
+Fliken `TV` återanvänder det verifierade NEC-protokollet från
+[NecFjärr](https://github.com/NichlasEk/NecFjarr). Gatewayen söker TCP 7142 inom
+det privata `/24` som anges i `[television]`, sparar godkända mål i
+`state/tvs.toml` och styr dem från servern. Fliken fungerar därför även när
+telefonen är på 5G. Ström och de fasta ingångarna HDMI 1–3, VGA RGB, VGA
+Component och A/V kan väljas från fliken, med röst eller MCP. Fri hexkod
+exponeras inte.
 
 Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var ligger min lödkolv?`, svarar som Skinnskattaren och strömmar en kort testton som TTS-ljud. Tonen gör att hela ljudvägen kan verifieras, men är inte syntetiserat tal.
 
@@ -328,6 +336,9 @@ Den exponerar:
 - `music_play`: skapar ett validerat uppspelningsförslag.
 - `playlist_create`: skapar ett validerat förslag som kräver bekräftelse.
 - `wikipedia_lookup`: hämtar titel, artikelinledning och käll-URL skrivskyddat från svenska Wikipedia.
+- `tvs_list`: listar namngivna TV-mål utan nätverksadresser.
+- `tvs_discover`: söker TCP 7142 inom det konfigurerade privata `/24`-nätet.
+- `tv_control`: skickar endast allowlistade NEC-kommandon till ett mål i `tvs.toml`.
 
 Skinnskattaren kan använda samma Wikipedia-verktyg direkt i röstflödet. Exempel:
 

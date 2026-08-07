@@ -27,6 +27,7 @@ from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
+from .television import NecTvService
 
 
 SendJson = Callable[[dict], Awaitable[None]]
@@ -95,6 +96,7 @@ class VoiceSession:
     tool_planner: OllamaToolPlanner | None = None
     wikipedia: WikipediaService | None = None
     lights: MagicHomeLightService | None = None
+    television: NecTvService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -131,6 +133,12 @@ class VoiceSession:
                 await self._action_confirm(message)
             elif message_type == "light.config.upsert":
                 await self._upsert_light(message)
+            elif message_type == "tv.config.upsert":
+                await self._upsert_tv(message)
+            elif message_type == "tv.discover":
+                await self._discover_tvs()
+            elif message_type == "tv.command":
+                await self._tv_command(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -180,6 +188,8 @@ class VoiceSession:
         await self.send_json(ready)
         if self.authenticated_user and self.lights and self.lights.enabled:
             await self._send_light_config()
+        if self.authenticated_user and self.television and self.television.enabled:
+            await self._send_tv_config()
         LOG.info(
             "session_ready session=%s character=%s voice=%s",
             self.session_id,
@@ -211,6 +221,44 @@ class VoiceSession:
             "type": "lights.config",
             "lights": self.lights.list_public(include_network=True) if self.lights else [],
         })
+
+    async def _upsert_tv(self, message: dict) -> None:
+        self._require_tv_access()
+        try:
+            self.television.upsert(
+                name=str(message["name"]), room=str(message["room"]), host=str(message["host"]),
+                port=int(message.get("port", 7142)), model=str(message.get("model", "NEC display")),
+            )
+        except (KeyError, TypeError, ValueError, RuntimeError) as error:
+            raise ProtocolError("TV_CONFIG_INVALID", str(error)) from error
+        await self._send_tv_config()
+
+    async def _discover_tvs(self) -> None:
+        self._require_tv_access()
+        try:
+            found = await self.television.discover()
+        except (ValueError, RuntimeError) as error:
+            raise ProtocolError("TV_DISCOVERY_FAILED", str(error)) from error
+        await self.send_json({"type": "tvs.discovered", "tvs": found})
+
+    async def _tv_command(self, message: dict) -> None:
+        self._require_tv_access()
+        try:
+            result = await self.television.control(str(message["target"]), str(message["command"]))
+        except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("TV_COMMAND_FAILED", str(error)) from error
+        await self.send_json({"type": "tv.command.result", "status": "completed", "message": result})
+
+    async def _send_tv_config(self) -> None:
+        await self.send_json({"type": "tvs.config", "tvs": self.television.list_public(include_network=True) if self.television else []})
+
+    def _require_tv_access(self) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("TV_AUTH_REQUIRED", "Inloggning krävs för TV-styrning")
+        if not self.television or not self.television.enabled:
+            raise ProtocolError("TV_DISABLED", "TV-tjänsten är inte aktiverad")
 
     async def _start_audio(self, message: dict) -> None:
         if self.phase is not Phase.READY:
@@ -492,6 +540,29 @@ class VoiceSession:
                             "status": "failed",
                             "message": failure,
                         })
+                    self._reset()
+                    return
+                if action.name == "tv.control":
+                    try:
+                        if not self.television:
+                            raise RuntimeError("TV-tjänsten är inte konfigurerad")
+                        await self.send_json({"type": "action.status", "action_id": action.action_id, "status": "running", "message": "Styr TV:n…"})
+                        result = await self.television.control(str(action.arguments["target"]), str(action.arguments["command"]))
+                        character = self._character()
+                        spoken = action.acknowledgement
+                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken})
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
+                        try:
+                            await self._stream_action_speech(utterance_id, spoken, character)
+                        except Exception:
+                            LOG.exception("tv_acknowledgement_tts_failed session=%s", self.session_id)
+                        await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "completed", "message": result})
+                        self._remember_turn(transcript, spoken)
+                    except Exception as error:
+                        LOG.exception("tv_action_failed session=%s", self.session_id)
+                        failure = f"Jag kunde inte styra TV:n: {error}"
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": failure})
+                        await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "failed", "message": failure})
                     self._reset()
                     return
                 if action.name == "knowledge.wikipedia":

@@ -110,6 +110,14 @@ enabled = true
 config_file = "state/lights.toml"
 timeout_seconds = 2
 
+[television]
+enabled = true
+config_file = "state/tvs.toml"
+# Begränsa sökningen till TV:ns privata /24-nät.
+scan_network = "192.168.32.0/24"
+timeout_seconds = 1.5
+scan_concurrency = 32
+
 [wikipedia]
 enabled = true
 api_url = "https://sv.wikipedia.org/w/api.php"

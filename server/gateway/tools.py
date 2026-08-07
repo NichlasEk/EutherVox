@@ -8,6 +8,7 @@ from uuid import uuid4
 from .actions import DeviceAction
 from .cast import CastService
 from .lighting import EFFECTS, MagicHomeLightService
+from .television import INPUTS, NecTvService
 
 
 class ToolValidationError(ValueError):
@@ -107,11 +108,28 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(
+            name="tv_control",
+            description="Slå på eller av en namngiven NEC-TV och välj en tillåten bildingång.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target": {"type": "string", "description": "TV-namn eller rum från tvs.toml."},
+                    "command": {
+                        "type": "string",
+                        "enum": ["power_on", "power_off", *[f"input_{key}" for key in INPUTS]],
+                    },
+                },
+                "required": ["target", "command"],
+                "additionalProperties": False,
+            },
+        ),
     )
 
-    def __init__(self, cast: CastService | None = None, lights: MagicHomeLightService | None = None):
+    def __init__(self, cast: CastService | None = None, lights: MagicHomeLightService | None = None, television: NecTvService | None = None):
         self.cast = cast
         self.lights = lights
+        self.television = television
 
     @property
     def ollama_tools(self) -> list[dict[str, Any]]:
@@ -129,6 +147,11 @@ class EutherVoxToolRegistry:
         if not self.lights or not self.lights.enabled:
             return []
         return self.lights.list_public()
+
+    def list_tv_targets(self) -> list[dict[str, object]]:
+        if not self.television or not self.television.enabled:
+            return []
+        return self.television.list_public()
 
     def create_action(self, tool_name: str, arguments: dict[str, Any], node_name: str) -> DeviceAction:
         if not isinstance(arguments, dict):
@@ -182,6 +205,31 @@ class EutherVoxToolRegistry:
                 target_node=node_name,
                 arguments=result,
                 acknowledgement=f"Jag ställer ljuset i {canonical_target}.",
+            )
+
+        if tool_name == "tv_control":
+            if not self.television or not self.television.enabled:
+                raise ToolValidationError("TV-tjänsten är inte konfigurerad")
+            target = self._clean_text(arguments.get("target"), "target")
+            command = str(arguments.get("command", ""))
+            allowed_commands = {"power_on", "power_off", *[f"input_{key}" for key in INPUTS]}
+            if command not in allowed_commands:
+                raise ToolValidationError("Otillåtet TV-kommando")
+            try:
+                tv = self.television.store.resolve(target)
+            except ValueError as error:
+                raise ToolValidationError(str(error)) from error
+            description = {
+                "power_on": "slår på",
+                "power_off": "stänger av",
+                **{f"input_{key}": f"byter till {label}" for key, (label, _payload) in INPUTS.items()},
+            }[command]
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="tv.control",
+                target_node=node_name,
+                arguments={"target": tv.name, "command": command},
+                acknowledgement=f"Jag {description} {tv.name} i {tv.room}.",
             )
 
         query_key = "description" if tool_name == "playlist_create" else "query"

@@ -11,6 +11,7 @@ from gateway.mcp_server import build_mcp_server
 from gateway.tool_planner import OllamaToolPlanner
 from gateway.tools import EutherVoxToolRegistry, ToolValidationError
 from gateway.lighting import MagicHomeLightService
+from gateway.television import NecTvService
 from pathlib import Path
 
 
@@ -30,7 +31,9 @@ def make_registry(tmp_path: Path | None = None) -> EutherVoxToolRegistry:
     root = tmp_path or Path("/tmp/euthervox-tool-tests")
     lights = MagicHomeLightService({"enabled": True, "config_file": "lights.toml"}, root)
     lights.upsert(name="Fönster", room="köket", host="192.168.1.20", mac="AABBCCDDEE20", model="AK001-ZJ200")
-    return EutherVoxToolRegistry(cast, lights)
+    television = NecTvService({"enabled": True, "config_file": "tvs.toml", "scan_network": "192.168.1.0/24"}, root)
+    television.upsert(name="Stora TV:n", room="vardagsrummet", host="192.168.1.40")
+    return EutherVoxToolRegistry(cast, lights, television)
 
 
 def test_registry_creates_allowlisted_music_and_confirmed_playlist_actions():
@@ -89,6 +92,20 @@ def test_registry_creates_only_toml_targeted_light_actions(tmp_path: Path):
         pass
 
 
+def test_registry_creates_only_allowlisted_toml_targeted_tv_actions(tmp_path: Path):
+    registry = make_registry(tmp_path)
+    action = registry.create_action("tv_control", {"target": "vardagsrummet", "command": "input_hdmi2"}, "pixel")
+    assert action.name == "tv.control"
+    assert action.arguments == {"target": "Stora TV:n", "command": "input_hdmi2"}
+    assert "host" not in action.arguments
+    for arguments in ({"target": "Stora TV:n", "command": "raw_hex"}, {"target": "okänd", "command": "power_on"}):
+        try:
+            registry.create_action("tv_control", arguments, "pixel")
+            assert False
+        except ToolValidationError:
+            pass
+
+
 def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
     async def scenario():
         registry = make_registry()
@@ -97,7 +114,7 @@ def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
 
         assert {tool.name for tool in tools} == {
             "cast_list_targets", "lights_list", "light_set", "light_effect",
-            "music_play", "playlist_create", "wikipedia_lookup",
+            "tvs_list", "tvs_discover", "tv_control", "music_play", "playlist_create", "wikipedia_lookup",
         }
         target = registry.list_cast_targets()[0]
         assert target == {"room": "köket", "display_name": "Kök 2", "model": "Google Nest Mini"}
@@ -111,7 +128,7 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
         payload = json.loads(request.content)
         assert request.url.path == "/api/chat"
         assert {tool["function"]["name"] for tool in payload["tools"]} == {
-            "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect",
+            "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect", "tv_control",
         }
         return httpx.Response(200, json={
             "message": {

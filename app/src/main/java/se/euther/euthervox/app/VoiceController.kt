@@ -31,6 +31,9 @@ import se.euther.euthervox.protocol.parseServerEvent
 import se.euther.euthervox.protocol.responseCancel
 import se.euther.euthervox.protocol.sessionStart
 import se.euther.euthervox.protocol.lightConfigUpsert
+import se.euther.euthervox.protocol.tvCommand
+import se.euther.euthervox.protocol.tvConfigUpsert
+import se.euther.euthervox.protocol.tvDiscover
 import se.euther.euthervox.lights.MagicHomeDevice
 import java.util.UUID
 
@@ -64,6 +67,10 @@ data class VoiceUiState(
     val interruptionListening: Boolean = false,
     val configuredLights: List<ServerEvent.ConfiguredLight> = emptyList(),
     val lightConfigMessage: String? = null,
+    val configuredTvs: List<ServerEvent.ConfiguredTv> = emptyList(),
+    val discoveredTvs: List<ServerEvent.DiscoveredTv> = emptyList(),
+    val tvMessage: String? = null,
+    val tvBusy: Boolean = false,
 )
 
 private data class Timeline(
@@ -345,6 +352,45 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         sendPendingLightConfig()
     }
 
+    fun discoverTvs() {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(tvMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(tvBusy = true, tvMessage = "Söker NEC-TV på serverns lokalnät…", discoveredTvs = emptyList())
+        scope.launch {
+            if (transport?.sendText(tvDiscover()) != true) {
+                mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = "Kunde inte starta TV-sökningen.")
+            }
+        }
+    }
+
+    fun saveTv(host: String, name: String, room: String) {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(tvMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(tvBusy = true, tvMessage = "Sparar TV:n i serverns tvs.toml…")
+        scope.launch {
+            if (transport?.sendText(tvConfigUpsert(name.trim(), room.trim(), host.trim())) != true) {
+                mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = "Kunde inte spara TV:n.")
+            }
+        }
+    }
+
+    fun controlTv(target: String, command: String) {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(tvMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(tvBusy = true, tvMessage = "Skickar TV-kommandot…")
+        scope.launch {
+            if (transport?.sendText(tvCommand(target, command)) != true) {
+                mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = "Kunde inte skicka TV-kommandot.")
+            }
+        }
+    }
+
     private fun sendPendingLightConfig() {
         val pending = pendingLightConfig ?: return
         mutableState.value = mutableState.value.copy(lightConfigMessage = "Sparar lampnamnet i serverns TOML…")
@@ -497,7 +543,20 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                     lightConfigMessage = if (event.lights.isEmpty()) null else "Namn och rum är sparade i serverns lights.toml.",
                 )
             }
-            is ServerEvent.Error -> fail("${event.code}: ${event.message}", event.recoverable)
+            is ServerEvent.TvsConfig -> mutableState.value = mutableState.value.copy(
+                configuredTvs = event.televisions, tvBusy = false,
+                tvMessage = if (event.televisions.isEmpty()) "Ingen TV sparad ännu." else "TV-konfigurationen är sparad i serverns tvs.toml.",
+            )
+            is ServerEvent.TvsDiscovered -> mutableState.value = mutableState.value.copy(
+                discoveredTvs = event.televisions, tvBusy = false,
+                tvMessage = if (event.televisions.isEmpty()) "Ingen enhet med NEC-port 7142 hittades." else "Hittade ${event.televisions.size} möjlig NEC-TV.",
+            )
+            is ServerEvent.TvCommandResult -> mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = event.message)
+            is ServerEvent.Error -> if (event.code.startsWith("TV_")) {
+                mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = event.message)
+            } else {
+                fail("${event.code}: ${event.message}", event.recoverable)
+            }
             is ServerEvent.Unknown -> Unit
         }
     }

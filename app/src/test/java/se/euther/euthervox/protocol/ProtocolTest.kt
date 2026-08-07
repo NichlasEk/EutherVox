@@ -75,4 +75,16 @@ class ProtocolTest {
         assertEquals("dotterns rum", event.lights.single().room)
         assertEquals("AABBCCDDEE20", event.lights.single().mac)
     }
+
+    @Test fun serializesAndParsesAllowlistedTvMessages() {
+        val command = JsonParser.parseString(tvCommand("Stora TV:n", "input_hdmi2")).asJsonObject
+        assertEquals("tv.command", command["type"].asString)
+        assertEquals("input_hdmi2", command["command"].asString)
+
+        val event = parseServerEvent(
+            """{"type":"tvs.config","tvs":[{"id":"t1","name":"Stora TV:n","room":"vardagsrummet","host":"192.168.32.40","port":7142,"model":"NEC display"}]}"""
+        ) as ServerEvent.TvsConfig
+        assertEquals("vardagsrummet", event.televisions.single().room)
+        assertEquals(7142, event.televisions.single().port)
+    }
 }

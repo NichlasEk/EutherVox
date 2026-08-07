@@ -176,6 +176,7 @@ fun EutherVoxApp() {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TabChoice("Röst", selectedTab == "voice", Modifier.weight(1f)) { selectedTab = "voice" }
                 TabChoice("Ljus", selectedTab == "lights", Modifier.weight(1f)) { selectedTab = "lights" }
+                TabChoice("TV", selectedTab == "tv", Modifier.weight(1f)) { selectedTab = "tv" }
             }
             if (selectedTab == "voice") {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
@@ -276,7 +277,7 @@ fun EutherVoxApp() {
             OutlinedButton(onClick = controller::cancelResponse, enabled = state.status == VoiceStatus.Speaking || state.status == VoiceStatus.Processing) {
                 Text("Avbryt uppspelning")
             }
-            } else {
+            } else if (selectedTab == "lights") {
                 LightPanel(
                     wifiState = wifiLightState,
                     bleState = lightState,
@@ -302,6 +303,16 @@ fun EutherVoxApp() {
                     onStartScan = lightController::startScan,
                     onStopScan = lightController::stopScan,
                     onInspect = lightController::inspect,
+                )
+            } else {
+                TvPanel(
+                    configured = state.configuredTvs,
+                    discovered = state.discoveredTvs,
+                    message = state.tvMessage,
+                    busy = state.tvBusy,
+                    onDiscover = controller::discoverTvs,
+                    onSave = controller::saveTv,
+                    onCommand = controller::controlTv,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -404,6 +415,70 @@ private fun TabChoice(label: String, selected: Boolean, modifier: Modifier = Mod
         Button(onClick = onSelect, modifier = modifier) { Text(label) }
     } else {
         OutlinedButton(onClick = onSelect, modifier = modifier) { Text(label) }
+    }
+}
+
+@Composable
+private fun TvPanel(
+    configured: List<ServerEvent.ConfiguredTv>,
+    discovered: List<ServerEvent.DiscoveredTv>,
+    message: String?,
+    busy: Boolean,
+    onDiscover: () -> Unit,
+    onSave: (String, String, String) -> Unit,
+    onCommand: (String, String) -> Unit,
+) {
+    var manualHost by remember { mutableStateOf("") }
+    var manualName by remember { mutableStateOf("TV") }
+    var manualRoom by remember { mutableStateOf("vardagsrummet") }
+
+    Text("NEC-TV", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+    Text("Servern styr TV:n på lokalnätet, även när telefonen använder 5G.", textAlign = TextAlign.Center)
+    Button(onClick = onDiscover, enabled = !busy) { Text(if (busy) "Arbetar…" else "Sök på lokalnätet") }
+    message?.let { Text(it, color = Forest, textAlign = TextAlign.Center) }
+
+    discovered.filter { candidate -> configured.none { it.host == candidate.host } }.forEach { candidate ->
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.72f))) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Hittad: ${candidate.host}:${candidate.port}", fontWeight = FontWeight.Bold, color = Forest)
+                OutlinedTextField(manualName, { manualName = it }, label = { Text("Namn") }, singleLine = true)
+                OutlinedTextField(manualRoom, { manualRoom = it }, label = { Text("Rum") }, singleLine = true)
+                Button(onClick = { onSave(candidate.host, manualName, manualRoom) }, enabled = manualName.isNotBlank() && manualRoom.isNotBlank() && !busy) { Text("Spara i tvs.toml") }
+            }
+        }
+    }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.72f))) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Lägg till med IP", fontWeight = FontWeight.Bold, color = Forest)
+            OutlinedTextField(manualHost, { manualHost = it }, label = { Text("Privat IPv4-adress") }, placeholder = { Text("192.168.32.1") }, singleLine = true)
+            OutlinedTextField(manualName, { manualName = it }, label = { Text("Namn") }, singleLine = true)
+            OutlinedTextField(manualRoom, { manualRoom = it }, label = { Text("Rum") }, singleLine = true)
+            OutlinedButton(onClick = { onSave(manualHost, manualName, manualRoom) }, enabled = manualHost.isNotBlank() && manualName.isNotBlank() && manualRoom.isNotBlank() && !busy) { Text("Spara TV") }
+        }
+    }
+
+    configured.forEach { tv ->
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(tv.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+                Text("${tv.room} · ${tv.host}:${tv.port}", style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { onCommand(tv.name, "power_on") }, enabled = !busy, modifier = Modifier.weight(1f)) { Text("PÅ") }
+                    Button(onClick = { onCommand(tv.name, "power_off") }, enabled = !busy, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Copper)) { Text("AV") }
+                }
+                listOf(
+                    "HDMI 1" to "input_hdmi1", "HDMI 2" to "input_hdmi2", "HDMI 3" to "input_hdmi3",
+                    "VGA RGB" to "input_vga_rgb", "VGA Comp" to "input_vga_component", "A/V" to "input_av",
+                ).chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        row.forEach { (label, command) ->
+                            OutlinedButton(onClick = { onCommand(tv.name, command) }, enabled = !busy, modifier = Modifier.weight(1f)) { Text(label) }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

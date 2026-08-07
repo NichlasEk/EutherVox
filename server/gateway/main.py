@@ -22,12 +22,13 @@ from .tool_planner import OllamaToolPlanner
 from .tools import EutherVoxToolRegistry
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
+from .television import NecTvService
 
 
 LOG = logging.getLogger("euthervox.gateway")
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -46,6 +47,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         tool_planner=tool_planner,
         wikipedia=wikipedia,
         lights=lights,
+        television=television,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -126,7 +128,8 @@ async def run(config: GatewayConfig) -> None:
     cast = CastService(config.cast_settings)
     wikipedia = WikipediaService(config.wikipedia_settings)
     lights = MagicHomeLightService(config.light_settings, config.config_dir)
-    tool_registry = EutherVoxToolRegistry(cast, lights)
+    television = NecTvService(config.television_settings, config.config_dir)
+    tool_registry = EutherVoxToolRegistry(cast, lights, television)
     tool_planner = None
     if bool(config.mcp_settings.get("enabled", False)) and config.llm_provider == "ollama":
         tool_planner = OllamaToolPlanner(
@@ -149,7 +152,7 @@ async def run(config: GatewayConfig) -> None:
     )
     oauth_http = OAuthHttpHandler(youtube)
     async with serve(
-        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights),
+        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television),
         config.host,
         config.port,
         max_size=2**20,

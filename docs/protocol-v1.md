@@ -45,8 +45,8 @@ formatet och startar AudioTrack efter cirka 120 ms eller när en kort ström tar
 
 Meddelandena och fälten följer exemplen i arbetsuppdraget:
 
-- Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.confirm`, `action.result`, `light.config.upsert`.
-- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `lights.config`, `error`.
+- Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.confirm`, `action.result`, `light.config.upsert`, `tv.discover`, `tv.config.upsert`, `tv.command`.
+- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `lights.config`, `tvs.discovered`, `tvs.config`, `tv.command.result`, `error`.
 
 `session.start.input_audio` valideras innan `session.ready`. `session.start.voice_id` är
 valfri för äldre klienter; då används figurprofilens standardröst. Betaservern skickar
@@ -101,6 +101,18 @@ posten atomiskt i `state/lights.toml`.
 
 Samma lampnamn får bara förekomma en gång i ett rum. Ett `lights.config` med den
 nya serverversionen av registret skickas efter en lyckad uppdatering.
+
+## NEC-TV
+
+`tv.discover` saknar argument. Den autentiserade gatewayen söker endast port
+7142 inom `television.scan_network` och svarar med `tvs.discovered`. Klienten
+namnger en träff med `tv.config.upsert`; gatewayen validerar privat IPv4 och
+sparar mål, rum och port i `tvs.toml`. `tvs.config` fungerar som kvittens.
+
+`tv.command` innehåller `target` och ett av `power_on`, `power_off`,
+`input_hdmi1`, `input_hdmi2`, `input_hdmi3`, `input_vga_rgb`,
+`input_vga_component` eller `input_av`. Binära eller fria NEC-paket accepteras
+inte. Endast en autentiserad, startad session får söka, spara eller styra TV.
 
 ## Enhetsåtgärder
 

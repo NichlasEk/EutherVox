@@ -19,7 +19,7 @@ class OllamaToolPlanner:
     """Turns natural language into one validated action through Ollama tool calls."""
 
     _ACTION_HINT = re.compile(
-        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg)\b",
+        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg|tv|teven|skärm|hdmi|vga|bildingång)\b",
         re.IGNORECASE,
     )
     _LIGHT_INTENT = re.compile(
@@ -62,11 +62,18 @@ class OllamaToolPlanner:
         if deterministic_light is not None:
             LOG.info("tool_planned_deterministic action=%s target=%s", deterministic_light.name, deterministic_light.arguments["target"])
             return deterministic_light
+        deterministic_tv = self._plan_tv(transcript, node_name)
+        if deterministic_tv is not None:
+            LOG.info("tool_planned_deterministic action=%s target=%s", deterministic_tv.name, deterministic_tv.arguments["target"])
+            return deterministic_tv
         if not self._ACTION_HINT.search(transcript):
             return None
         rooms = ", ".join(item["room"] for item in self.registry.list_cast_targets()) or "inga"
         lights = ", ".join(
             f"{item['name']} i {item['room']}" for item in self.registry.list_light_targets()
+        ) or "inga"
+        televisions = ", ".join(
+            f"{item['name']} i {item['room']}" for item in self.registry.list_tv_targets()
         ) or "inga"
         payload = {
             "model": self.model,
@@ -77,7 +84,7 @@ class OllamaToolPlanner:
                     "role": "system",
                     "content": (
                         "Du väljer EutherVox-verktyg. Anropa exakt ett verktyg endast när användaren faktiskt ber "
-                        "om musik, en spellista, ljusstyrning eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
+                        "om musik, en spellista, ljusstyrning, TV-styrning eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
                         "Indirekta önskemål som 'jag är sugen på mörk cyberpunk i köket' betyder att musiken ska spelas nu. "
                         "Önskemål om en bestämd låt, till exempel 'jag vill höra November Rain', ska anropa music_play "
                         "och behålla låttitel och eventuell artist exakt i query. "
@@ -88,7 +95,8 @@ class OllamaToolPlanner:
                         "bara när användaren uttryckligen ber att få artikelns inledning uppläst; välj annars summary. "
                         "Använd light_set för av/på, statisk färg och intensitet. Översätt användarens färgbeskrivning till #RRGGBB. "
                         "Använd light_effect bara för ett mönster ur verktygets enum och välj normalt speed 40. "
-                        f"Konfigurerade Cast-rum: {rooms}. Konfigurerade lampor: {lights}. Hitta aldrig på mål. "
+                        "Använd tv_control för ström eller ingång på en konfigurerad NEC-TV. "
+                        f"Konfigurerade Cast-rum: {rooms}. Konfigurerade lampor: {lights}. Konfigurerade TV-apparater: {televisions}. Hitta aldrig på mål. "
                         "Behåll genre och stämning i query eller description."
                     ),
                 },
@@ -146,6 +154,38 @@ class OllamaToolPlanner:
         if len(arguments) == 1:
             return None
         return self.registry.create_action("light_set", arguments, node_name)
+
+    def _plan_tv(self, transcript: str, node_name: str) -> DeviceAction | None:
+        targets = self.registry.list_tv_targets()
+        lowered = transcript.casefold()
+        if not targets or not re.search(r"\b(?:tv|tv:n|teven|skärm(?:en)?|hdmi|vga|a/v)\b", lowered):
+            return None
+        labels = []
+        for item in targets:
+            labels.extend([str(item["name"]), str(item["room"])])
+        target = next((label for label in labels if self._compact(label) in self._compact(transcript)), "")
+        if not target and len(targets) == 1:
+            target = str(targets[0]["name"])
+        if not target:
+            return None
+        command = ""
+        if re.search(r"\b(?:stäng|slå)\w*\s+av\b", lowered):
+            command = "power_off"
+        elif re.search(r"\b(?:sätt|slå|starta)\w*\s+på\b", lowered):
+            command = "power_on"
+        elif re.search(r"\bhdmi\s*(?:1|ett)\b", lowered):
+            command = "input_hdmi1"
+        elif re.search(r"\bhdmi\s*(?:2|två)\b", lowered):
+            command = "input_hdmi2"
+        elif re.search(r"\bhdmi\s*(?:3|tre)\b", lowered):
+            command = "input_hdmi3"
+        elif "component" in lowered:
+            command = "input_vga_component"
+        elif "vga" in lowered:
+            command = "input_vga_rgb"
+        elif re.search(r"\ba\s*/?\s*v\b", lowered):
+            command = "input_av"
+        return self.registry.create_action("tv_control", {"target": target, "command": command}, node_name) if command else None
 
     @classmethod
     def _match_light_target(cls, transcript: str, targets: list[dict[str, object]]) -> str:
