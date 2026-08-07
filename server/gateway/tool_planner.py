@@ -27,6 +27,10 @@ class OllamaToolPlanner:
         r"blinka|blinkande|skifta|låt)\b",
         re.IGNORECASE,
     )
+    _TV_REFERENCE = re.compile(
+        r"\b(?:tv(?::n)?|teven|teve(?:n)?|skärm(?:en)?|nec[\s-]?(?:tv|teve(?:n)?)|necteven|nekteven|hdmi|vga|a\s*/?\s*v)\b",
+        re.IGNORECASE,
+    )
     _COLORS = (
         (re.compile(r"r[öo](?:d|t{1,2})\b", re.IGNORECASE), "#FF0000"),
         (re.compile(r"gr[öo](?:n|nt)\b", re.IGNORECASE), "#00FF00"),
@@ -158,7 +162,7 @@ class OllamaToolPlanner:
     def _plan_tv(self, transcript: str, node_name: str) -> DeviceAction | None:
         targets = self.registry.list_tv_targets()
         lowered = transcript.casefold()
-        if not targets or not re.search(r"\b(?:tv|tv:n|teven|skärm(?:en)?|hdmi|vga|a/v)\b", lowered):
+        if not targets or not self._TV_REFERENCE.search(lowered):
             return None
         labels = []
         for item in targets:

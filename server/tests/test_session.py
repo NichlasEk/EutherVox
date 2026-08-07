@@ -830,6 +830,59 @@ def test_music_control_runs_on_server_and_speaks_character_acknowledgement():
     asyncio.run(scenario())
 
 
+def test_tv_action_uses_fast_acknowledgement_and_returns_ready():
+    class TvStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Kan du sätta på Necteven?"
+
+    class FakeToolPlanner:
+        async def plan(self, transcript: str, node_name: str):
+            return DeviceAction(
+                action_id="tv-action", name="tv.control", target_node=node_name,
+                arguments={"target": "TV", "command": "power_on"},
+                acknowledgement="Jag slår på TV i vardagsrummet.",
+            )
+
+    class FakeTelevision:
+        calls = []
+
+        async def control(self, target: str, command: str) -> str:
+            self.calls.append((target, command))
+            return "TV i vardagsrummet: på."
+
+    class FastTts:
+        sample_rate = 24_000
+        fast_calls = []
+
+        async def synthesize_fast(self, text, character, sample_rate):
+            self.fast_calls.append(text)
+            yield bytes(960)
+
+        async def synthesize(self, text, character, sample_rate):
+            raise AssertionError("TV acknowledgement must not use the slow selected voice")
+            yield bytes(960)
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = TvStt()
+        session.tool_planner = FakeToolPlanner()
+        session.television = FakeTelevision()
+        session.tts = FastTts()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "tv-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "tv-1"}))
+        await session.response_task
+
+        assert session.television.calls == [("TV", "power_on")]
+        assert session.tts.fast_calls == ["Jag slår på TV i vardagsrummet."]
+        assert session.phase is Phase.READY
+        controls = [item for item in sent if isinstance(item, dict)]
+        assert any(item.get("type") == "action.completed" and item.get("status") == "completed" for item in controls)
+
+    asyncio.run(scenario())
+
+
 def test_wikipedia_tool_summarizes_source_speaks_and_shows_link():
     class WikipediaStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:

@@ -520,7 +520,7 @@ class VoiceSession:
                         await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken})
                         await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
                         try:
-                            await self._stream_action_speech(utterance_id, spoken, character)
+                            await self._stream_action_speech(utterance_id, spoken, character, fast=True)
                         except Exception:
                             LOG.exception("light_acknowledgement_tts_failed session=%s", self.session_id)
                         await self.send_json({
@@ -553,7 +553,7 @@ class VoiceSession:
                         await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken})
                         await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
                         try:
-                            await self._stream_action_speech(utterance_id, spoken, character)
+                            await self._stream_action_speech(utterance_id, spoken, character, fast=True)
                         except Exception:
                             LOG.exception("tv_acknowledgement_tts_failed session=%s", self.session_id)
                         await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "completed", "message": result})
@@ -782,7 +782,11 @@ class VoiceSession:
             raise
         except Exception as error:
             LOG.exception("response_failed session=%s utterance=%s", self.session_id, utterance_id)
-            await self.send_json({"type": "error", "code": "PIPELINE_FAILED", "message": str(error), "recoverable": True})
+            try:
+                await self.send_json({"type": "error", "code": "PIPELINE_FAILED", "message": str(error), "recoverable": True})
+            except Exception:
+                LOG.info("pipeline_error_not_delivered session=%s utterance=%s", self.session_id, utterance_id)
+        finally:
             self._reset()
 
     async def _stream_generated_response(self, utterance_id: str, transcript: str, character: object) -> str:
@@ -893,14 +897,16 @@ class VoiceSession:
         character = self.characters.get(self.character_name)
         return replace(character, voice_id=self.voice_id) if self.voice_id else character
 
-    async def _stream_action_speech(self, utterance_id: str, text: str, character: object) -> None:
+    async def _stream_action_speech(self, utterance_id: str, text: str, character: object, fast: bool = False) -> None:
         await self.send_json({
             "type": "tts.start",
             "utterance_id": utterance_id,
             "audio": {"codec": "pcm_s16le", "sample_rate": self.tts.sample_rate, "channels": 1},
         })
         try:
-            async for frame in self.tts.synthesize(text, character, self.tts.sample_rate):
+            synthesizer = getattr(self.tts, "synthesize_fast", None) if fast else None
+            stream = synthesizer(text, character, self.tts.sample_rate) if synthesizer else self.tts.synthesize(text, character, self.tts.sample_rate)
+            async for frame in stream:
                 await self.send_binary(frame)
         finally:
             await self.send_json({"type": "tts.end", "utterance_id": utterance_id})

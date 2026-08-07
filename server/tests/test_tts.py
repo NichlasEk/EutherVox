@@ -87,6 +87,25 @@ def test_router_falls_back_if_quality_voice_fails_before_audio():
     asyncio.run(scenario())
 
 
+def test_router_fast_path_skips_slow_selected_voice():
+    async def scenario():
+        nst = RecordingTts((b"fast",))
+        moss = RecordingTts((b"slow",))
+        router = RoutedTextToSpeechEngine(
+            {"piper-nst": nst, "moss-christian": moss}, "piper-nst", "piper-nst"
+        )
+        frames = [
+            frame async for frame in router.synthesize_fast(
+                "TV:n är av.", replace(character(), voice_id="moss-christian"), 22_050
+            )
+        ]
+        assert frames == [b"fast"]
+        assert nst.texts == ["TV:n är av."]
+        assert not moss.texts
+
+    asyncio.run(scenario())
+
+
 def test_router_can_leave_quality_voice_text_unmodified():
     async def scenario():
         nst = RecordingTts()

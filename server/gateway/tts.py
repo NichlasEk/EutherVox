@@ -154,6 +154,19 @@ class RoutedTextToSpeechEngine:
             ):
                 yield frame
 
+    async def synthesize_fast(
+        self, text: str, character: Character, sample_rate: int
+    ) -> AsyncIterator[bytes]:
+        """Use the low-latency fallback voice for short device acknowledgements."""
+        selected_text = (
+            self.normalizer.normalize(text, character)
+            if self.fallback_voice in self.normalized_voices else text
+        )
+        async for frame in self.voices[self.fallback_voice].synthesize(
+            selected_text, character, sample_rate
+        ):
+            yield frame
+
 
 def build_routed_tts(settings: dict) -> RoutedTextToSpeechEngine:
     voices: dict[str, TextToSpeechEngine] = {}

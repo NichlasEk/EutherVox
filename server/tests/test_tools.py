@@ -240,6 +240,23 @@ def test_ollama_tool_planner_maps_natural_light_request_to_toml_target(tmp_path:
     asyncio.run(scenario())
 
 
+def test_tv_planner_handles_joined_nec_tv_stt_variant_without_ollama(tmp_path: Path):
+    async def fail_if_called(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("deterministic TV commands must not call Ollama")
+
+    async def scenario():
+        planner = OllamaToolPlanner(
+            make_registry(tmp_path), "http://ollama.test", "qwen-test",
+            transport=httpx.MockTransport(fail_if_called),
+        )
+        action = await planner.plan("Kan du sätta på Necteven?", "pixel")
+        assert action is not None
+        assert action.name == "tv.control"
+        assert action.arguments == {"target": "Stora TV:n", "command": "power_on"}
+
+    asyncio.run(scenario())
+
+
 def test_light_planner_handles_saved_room_and_joined_stt_color_without_ollama(tmp_path: Path):
     async def fail_if_called(_request: httpx.Request) -> httpx.Response:
         raise AssertionError("deterministic light commands must not call Ollama")
