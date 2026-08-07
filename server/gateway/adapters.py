@@ -27,10 +27,14 @@ class Character:
     max_initial_sentence_words: int
     music_acknowledgements: tuple[str, ...]
     music_control_acknowledgements: dict[str, str]
+    input_language: str = "sv"
+    response_language: str = "sv"
 
 
 class SpeechToTextEngine(Protocol):
-    async def transcribe(self, pcm: bytes, sample_rate: int) -> str: ...
+    async def transcribe(
+        self, pcm: bytes, sample_rate: int, language: str | None = None
+    ) -> str: ...
 
 
 class TextGenerationEngine(Protocol):
@@ -70,6 +74,8 @@ class TomlCharacterProvider:
             music_control_acknowledgements={
                 str(key): str(value) for key, value in data.get("music", {}).get("control_acknowledgements", {}).items()
             },
+            input_language=str(data.get("language", {}).get("input", "sv")),
+            response_language=str(data.get("language", {}).get("response", "sv")),
         )
 
 
@@ -92,7 +98,9 @@ def render_music_control_acknowledgement(character: Character, command: str, roo
 class MockSpeechToTextEngine:
     initial_partial = "var ligger min"
 
-    async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+    async def transcribe(
+        self, pcm: bytes, sample_rate: int, language: str | None = None
+    ) -> str:
         await asyncio.sleep(0.08)
         return "Var ligger min lödkolv?"
 
@@ -125,7 +133,7 @@ class MockTextToSpeechEngine:
 
 
 class FasterWhisperSpeechToTextEngine:
-    """Multilingual local STT. Language is pinned to Swedish to prevent translation."""
+    """Multilingual local STT with an optional per-character language override."""
 
     def __init__(
         self,
@@ -153,22 +161,26 @@ class FasterWhisperSpeechToTextEngine:
             download_root=download_root,
         )
 
-    async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+    async def transcribe(
+        self, pcm: bytes, sample_rate: int, language: str | None = None
+    ) -> str:
         if sample_rate != 16000:
             raise ValueError(f"faster-whisper adapter expects 16000 Hz, got {sample_rate}")
         async with self._lock:
-            return await asyncio.to_thread(self._transcribe_sync, pcm)
+            requested_language = language or self.language
+            detected_language = None if requested_language == "auto" else requested_language
+            return await asyncio.to_thread(self._transcribe_sync, pcm, detected_language)
 
     async def warmup(self) -> None:
         await self.transcribe(bytes(3200), 16000)
 
-    def _transcribe_sync(self, pcm: bytes) -> str:
+    def _transcribe_sync(self, pcm: bytes, language: str | None) -> str:
         import numpy as np
 
         waveform = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
         segments, _ = self.model.transcribe(
             waveform,
-            language=self.language,
+            language=language,
             task="transcribe",
             beam_size=1,
             best_of=1,
@@ -231,14 +243,7 @@ class OllamaTextGenerationEngine:
         character: Character,
         history: tuple[tuple[str, str], ...],
     ) -> AsyncIterator[str]:
-        system = (
-            f"Du är {character.display_name}. {character.description}\n"
-            "Svara alltid på tydlig svenska. Var stämningsfull men aldrig gåtfull när viktig information ges. "
-            f"Första meningen får innehålla högst {character.max_initial_sentence_words} ord. "
-            "Svara kort, konkret och utan metakommentarer. "
-            "Du har ingen kunskap om användarens saker eller deras platser utöver det som står i frågan. "
-            "Hitta aldrig på en sakuppgift eller plats. Om en plats saknas ska du uttryckligen säga att du inte vet var saken ligger ännu och be om relevant information."
-        )
+        system = build_character_system_prompt(character)
         messages = [{"role": "system", "content": system}]
         for user_text, assistant_text in history:
             messages.append({"role": "user", "content": user_text})
@@ -264,6 +269,27 @@ class OllamaTextGenerationEngine:
                         yield piece
                     if message.get("done"):
                         break
+
+
+def build_character_system_prompt(character: Character) -> str:
+    if character.response_language == "en":
+        return (
+            f"You are {character.display_name}. {character.description}\n"
+            "Always answer in clear, natural English, even when the user speaks Swedish. "
+            "Never answer in Swedish and do not comment on which language the user chose. "
+            f"The first sentence may contain at most {character.max_initial_sentence_words} words. "
+            "Be concise, concrete, and avoid meta-commentary. "
+            "You know nothing about the user's possessions or their locations beyond the question. "
+            "Never invent a fact or location. If information is missing, say plainly that you do not know yet and ask for what is needed."
+        )
+    return (
+        f"Du är {character.display_name}. {character.description}\n"
+        "Svara alltid på tydlig svenska. Var stämningsfull men aldrig gåtfull när viktig information ges. "
+        f"Första meningen får innehålla högst {character.max_initial_sentence_words} ord. "
+        "Svara kort, konkret och utan metakommentarer. "
+        "Du har ingen kunskap om användarens saker eller deras platser utöver det som står i frågan. "
+        "Hitta aldrig på en sakuppgift eller plats. Om en plats saknas ska du uttryckligen säga att du inte vet var saken ligger ännu och be om relevant information."
+    )
 
 
 class PiperTextToSpeechEngine:

@@ -61,7 +61,12 @@ class HttpPcmTextToSpeechEngine:
             async with client.stream(
                 "POST",
                 f"{self.base_url}/synthesize",
-                json={"text": text, "language_id": "sv", "voice_id": self.profile},
+                json={
+                    "text": text,
+                    "language_id": character.response_language,
+                    "voice_id": self.profile,
+                    "speed": character.speed,
+                },
             ) as response:
                 response.raise_for_status()
                 returned_rate = int(response.headers.get("X-Sample-Rate", self.sample_rate))

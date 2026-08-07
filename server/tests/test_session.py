@@ -65,6 +65,40 @@ def test_complete_mock_pipeline_streams_control_and_binary_audio():
     asyncio.run(scenario())
 
 
+def test_sherlock_requests_automatic_swedish_or_english_stt_detection():
+    languages: list[str | None] = []
+
+    class LanguageAwareStt:
+        async def transcribe(
+            self, pcm: bytes, sample_rate: int, language: str | None = None
+        ) -> str:
+            languages.append(language)
+            return "Berätta vad du ser."
+
+    async def scenario():
+        session, _sent = make_session()
+        session.stt = LanguageAwareStt()
+        await session.handle_text(json.dumps({
+            "type": "session.start",
+            "protocol_version": 1,
+            "character": "sherlock-holmes",
+            "voice_id": "matcha-sherlock",
+            "input_audio": {
+                "codec": "pcm_s16le",
+                "sample_rate": 16000,
+                "channels": 1,
+                "frame_ms": 20,
+            },
+        }))
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "sherlock-1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "sherlock-1"}))
+        await session.response_task
+
+    asyncio.run(scenario())
+    assert languages == ["auto"]
+
+
 def test_sentence_chunker_releases_complete_sentences_and_keeps_remainder():
     chunker = SentenceChunker()
 

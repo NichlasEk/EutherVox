@@ -1,4 +1,4 @@
-# EutherVox 0.11 beta
+# EutherVox 0.13 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -6,12 +6,13 @@ Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var l
 
 Det finns även en riktig svensk betaprofil: flerspråkig faster-whisper för STT, en liten svensk-capabel Qwen-modell via Ollama och Piper `sv_SE-nst-medium` för snabb CPU-TTS. Dots/VoxCPM är avsiktligt inte dialogstandard; de passar bättre som valbara kvalitetsmotorer för längre uppläsning.
 
-Betaprofilen har fyra valbara röster i Android-inställningarna:
+Betaprofilen har fem valbara röster i Android-inställningarna:
 
 - `NST – snabb`: svensk Piper-standard och automatisk fallback.
 - `Lisa – alternativ`: den andra officiella svenska Piper-rösten.
 - `MOSS Nano – experimentell`: MOSS-TTS-Nano-100M med strömmande ONNX-inferens på CPU.
 - `Chatterbox – långsam`: Chatterbox Multilingual V3 via en isolerad lokal GPU-worker.
+- `GrapheneOS Matcha – English`: snabb engelsk CPU-röst för Sherlock Holmes.
 
 Skinnskattarens TOML-profil innehåller en uttalsordlista för namn och förkortningar.
 
@@ -69,6 +70,24 @@ cp deploy/euthervox-moss.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now euthervox-moss.service
 ```
+
+Sherlock Holmes använder den Matcha-röst som redan finns i GrapheneOS
+Speech Services-checkouten. Workern håller ONNX-modellen varm och binder endast till
+`127.0.0.1:8793`:
+
+```bash
+cp deploy/euthervox-matcha.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now euthervox-matcha.service
+curl http://127.0.0.1:8793/health
+```
+
+Servicefilen pekar på de befintliga tillgångarna under
+`/home/nichlas/SpeechServices/app/src/main/res/raw` och Matcha-renderaren i
+EutherLink. Dessa modeller kopieras inte in i EutherVox-repot. Sherlocks profil
+har `input = "auto"`, så samma flerspråkiga Whisper kan känna igen både svenska
+och engelska. Hans `response = "en"` styr både modellprompten och TTS-anropet:
+han svarar därför alltid på engelska oavsett vilket av de två språken du använder.
 
 MOSS-workern binder endast till `127.0.0.1:8791`, skickar mono PCM medan ONNX-
 avkodningen fortfarande arbetar och använder ingen GPU. Den lokala installationen
@@ -139,7 +158,7 @@ uv sync --extra dev --extra real
 uv run euthervox-gateway --config config.real-beta.cpu.example.toml
 ```
 
-Båda profilerna låser `language = "sv"` och `task = "transcribe"`, så den engelska snabbmodellen används inte och tal översätts inte till engelska. Lägg bara till `hotwords` efter mätning; en bred ordlista visade sig kunna förvränga vanliga svenska fraser. Gatewayen värmer STT och Qwen före den börjar lyssna; Ollama håller sedan Qwen varm i 30 minuter för att undvika dess uppmätta kallstart på cirka 4,45 sekunder.
+Båda profilerna använder normalt `language = "sv"` och `task = "transcribe"`, så Skinnskattaren och Christian förblir låsta till svenska och tal översätts inte. Sherlocks figurprofil gör ett avgränsat undantag med automatisk språkidentifiering för svenska eller engelska. Lägg bara till `hotwords` efter mätning; en bred ordlista visade sig kunna förvränga vanliga svenska fraser. Gatewayen värmer STT och Qwen före den börjar lyssna; Ollama håller sedan Qwen varm i 30 minuter för att undvika dess uppmätta kallstart på cirka 4,45 sekunder.
 
 ### Publik anslutning via EutherOxide
 

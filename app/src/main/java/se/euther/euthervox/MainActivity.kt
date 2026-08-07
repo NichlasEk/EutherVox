@@ -73,6 +73,14 @@ private val Forest = Color(0xFF254C3A)
 private val Copper = Color(0xFFB86035)
 private val Parchment = Color(0xFFF2EBDD)
 
+private data class CharacterUi(val name: String, val symbol: String)
+
+private fun characterUi(id: String) = when (id) {
+    "christian-grosshandlare" -> CharacterUi("Christian Grosshandlare", "⚓")
+    "sherlock-holmes" -> CharacterUi("Sherlock Holmes", "⌕")
+    else -> CharacterUi("Skinnskattaren", "⛏")
+}
+
 @Composable
 fun EutherVoxApp() {
     val context = LocalContext.current
@@ -95,8 +103,9 @@ fun EutherVoxApp() {
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> hasPermission = granted }
     val lifecycleOwner = LocalLifecycleOwner.current
-    val characterName = if (characterId == "christian-grosshandlare") "Christian Grosshandlare" else "Skinnskattaren"
-    val characterSymbol = if (characterId == "christian-grosshandlare") "⚓" else "⛏"
+    val character = characterUi(characterId)
+    val characterName = character.name
+    val characterSymbol = character.symbol
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_PAUSE) controller.onPause() }
@@ -120,6 +129,7 @@ fun EutherVoxApp() {
                     "chatterbox" -> "Chatterbox"
                     "moss-nano" -> "MOSS Nano"
                     "moss-christian" -> "Christian"
+                    "matcha-sherlock" -> "GrapheneOS Matcha English"
                     else -> "NST"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -219,15 +229,21 @@ fun EutherVoxApp() {
                 Text("Figur", fontWeight = FontWeight.Bold, color = Forest)
                 CharacterChoice("skinnskattaren", "Skinnskattaren", settingsCharacterId) {
                     settingsCharacterId = it
-                    if (settingsVoiceId == "moss-christian") settingsVoiceId = "moss-nano"
+                    if (settingsVoiceId == "moss-christian" || settingsVoiceId == "matcha-sherlock") settingsVoiceId = "piper-nst"
                 }
                 CharacterChoice("christian-grosshandlare", "Christian – ilsken dansk grosshandlare", settingsCharacterId) {
                     settingsCharacterId = it
                     settingsVoiceId = "moss-christian"
                 }
+                CharacterChoice("sherlock-holmes", "Sherlock Holmes – answers in English", settingsCharacterId) {
+                    settingsCharacterId = it
+                    settingsVoiceId = "matcha-sherlock"
+                }
                 Text("Röst", fontWeight = FontWeight.Bold, color = Forest)
                 if (settingsCharacterId == "christian-grosshandlare") {
                     VoiceChoice("moss-christian", "Christian – dansk MOSS-röst", settingsVoiceId) { settingsVoiceId = it }
+                } else if (settingsCharacterId == "sherlock-holmes") {
+                    VoiceChoice("matcha-sherlock", "GrapheneOS Matcha – English", settingsVoiceId) { settingsVoiceId = it }
                 } else {
                     VoiceChoice("piper-nst", "NST – snabb (rekommenderad)", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("piper-lisa", "Lisa – alternativ", settingsVoiceId) { settingsVoiceId = it }

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import httpx
 
-from gateway.adapters import TomlCharacterProvider
+from gateway.adapters import TomlCharacterProvider, build_character_system_prompt
 from gateway.config import load_config
 from gateway.tts import HttpPcmTextToSpeechEngine, RoutedTextToSpeechEngine, SwedishTextNormalizer
 
@@ -156,7 +156,12 @@ def test_http_pcm_engine_frames_a_streamed_response_without_buffering_whole_audi
     frames = asyncio.run(scenario())
     assert frames[0] == b"a" * frame_bytes
     assert frames[1] == b"b" * 17 + bytes(frame_bytes - 17)
-    assert requests == [{"text": "Skogen väntar.", "language_id": "sv", "voice_id": "christian"}]
+    assert requests == [{
+        "text": "Skogen väntar.",
+        "language_id": "sv",
+        "voice_id": "christian",
+        "speed": 0.92,
+    }]
 
 
 def test_christian_is_a_separate_character_with_his_own_voice():
@@ -177,3 +182,17 @@ def test_christian_pronunciation_uses_a_swedish_reading_without_changing_ui_text
     assert SwedishTextNormalizer().normalize(
         "Christian Grosshandlare granskar lasten.", christian
     ) == "Kristian gross handlare granskar lasten."
+
+
+def test_sherlock_understands_auto_language_but_always_answers_in_english():
+    config = load_config(ROOT / "config.real-beta.example.toml")
+    sherlock = TomlCharacterProvider(config.profile_dir).get("sherlock-holmes")
+
+    assert sherlock.display_name == "Sherlock Holmes"
+    assert sherlock.voice_id == "matcha-sherlock"
+    assert sherlock.input_language == "auto"
+    assert sherlock.response_language == "en"
+    prompt = build_character_system_prompt(sherlock)
+    assert "Always answer in clear, natural English" in prompt
+    assert "even when the user speaks Swedish" in prompt
+    assert config.tts_settings["voices"]["matcha-sherlock"]["profile"] == "sherlock"

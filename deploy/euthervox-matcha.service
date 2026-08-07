@@ -1,0 +1,15 @@
+[Unit]
+Description=EutherVox GrapheneOS Matcha English TTS worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nichlas/EutherVox
+ExecStart=/home/nichlas/EutherLink/.venv-matcha/bin/python matcha-worker/worker.py --host 127.0.0.1 --port 8793 --assets-dir /home/nichlas/SpeechServices/app/src/main/res/raw --renderer /home/nichlas/EutherLink/scripts/render_graphene_matcha.py
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target

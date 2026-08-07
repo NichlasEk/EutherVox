@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass, field, replace
 from enum import Enum
 import json
@@ -353,9 +354,19 @@ class VoiceSession:
             initial_partial = getattr(self.stt, "initial_partial", None)
             if initial_partial:
                 await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": initial_partial})
+            character = self._character()
+            transcribe_parameters = inspect.signature(self.stt.transcribe).parameters
+            transcription = (
+                self.stt.transcribe(
+                    pcm,
+                    self.config.input_audio.sample_rate,
+                    language=character.input_language,
+                )
+                if "language" in transcribe_parameters
+                else self.stt.transcribe(pcm, self.config.input_audio.sample_rate)
+            )
             transcript = await asyncio.wait_for(
-                self.stt.transcribe(pcm, self.config.input_audio.sample_rate),
-                timeout=self.config.response_timeout_seconds,
+                transcription, timeout=self.config.response_timeout_seconds
             )
             if self.config.text_logging:
                 LOG.info("stt_final session=%s utterance=%s text=%r", self.session_id, utterance_id, transcript)
