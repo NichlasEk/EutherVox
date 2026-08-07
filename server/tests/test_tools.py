@@ -215,9 +215,76 @@ def test_ollama_tool_planner_maps_natural_light_request_to_toml_target(tmp_path:
             make_registry(tmp_path), "http://ollama.test", "qwen-test",
             transport=httpx.MockTransport(handler),
         )
-        action = await planner.plan("Gör ljuset i köket dovt lila på trettio procent", "pixel")
+        action = await planner.plan("Jag vill ha dovt lila sken i köket på trettio procent", "pixel")
         assert action is not None
         assert action.name == "lights.set"
         assert action.arguments == {"target": "Fönster", "color": "#6B20A8", "brightness": 30}
+
+    asyncio.run(scenario())
+
+
+def test_light_planner_handles_saved_room_and_joined_stt_color_without_ollama(tmp_path: Path):
+    async def fail_if_called(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("deterministic light commands must not call Ollama")
+
+    async def scenario():
+        registry = make_registry(tmp_path)
+        registry.lights.upsert(
+            name="Skrivbord", room="Sigrids rum", host="192.168.1.20",
+            mac="AABBCCDDEE20", model="AK001-ZJ200",
+        )
+        planner = OllamaToolPlanner(
+            registry, "http://ollama.test", "qwen-test",
+            transport=httpx.MockTransport(fail_if_called),
+        )
+
+        action = await planner.plan("Kan du göra ljuset i Sigrids rumröt?", "pixel")
+
+        assert action is not None
+        assert action.name == "lights.set"
+        assert action.arguments == {"target": "Skrivbord", "color": "#FF0000"}
+
+    asyncio.run(scenario())
+
+
+def test_light_planner_tolerates_small_stt_error_in_configured_room(tmp_path: Path):
+    async def scenario():
+        registry = make_registry(tmp_path)
+        registry.lights.upsert(
+            name="Skrivbord", room="Sigrids rum", host="192.168.1.20",
+            mac="AABBCCDDEE20", model="AK001-ZJ200",
+        )
+        registry.lights.upsert(
+            name="Bokhylla", room="Estrids rum", host="192.168.1.21",
+            mac="AABBCCDDEE21", model="AK001-ZJ200",
+        )
+        planner = OllamaToolPlanner(registry, "http://ollama.test", "qwen-test")
+
+        action = await planner.plan("Kan du göra ljuset i sigdidsrum rött?", "pixel")
+
+        assert action is not None
+        assert action.name == "lights.set"
+        assert action.arguments == {"target": "Skrivbord", "color": "#FF0000"}
+
+    asyncio.run(scenario())
+
+
+def test_light_planner_maps_room_brightness_and_effect_speed(tmp_path: Path):
+    async def scenario():
+        registry = make_registry(tmp_path)
+        registry.lights.upsert(
+            name="Skrivbord", room="Sigrids rum", host="192.168.1.20",
+            mac="AABBCCDDEE20", model="AK001-ZJ200",
+        )
+        planner = OllamaToolPlanner(registry, "http://ollama.test", "qwen-test")
+
+        dim = await planner.plan("Ställ Sigrids rum på lila och trettio procent", "pixel")
+        blink = await planner.plan("Låt Sigrids rum blinka blått långsamt", "pixel")
+
+        assert dim is not None
+        assert dim.arguments == {"target": "Skrivbord", "color": "#7A18C4", "brightness": 30}
+        assert blink is not None
+        assert blink.name == "lights.effect"
+        assert blink.arguments == {"target": "Skrivbord", "effect": "blue_strobe", "speed": 20}
 
     asyncio.run(scenario())

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 import httpx
@@ -21,6 +22,26 @@ class OllamaToolPlanner:
         r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg)\b",
         re.IGNORECASE,
     )
+    _LIGHT_INTENT = re.compile(
+        r"\b(?:gör(?:a)?|ställ(?:a)?|sätt(?:a)?|ändra|tänd|släck|dimma|höj|sänk|"
+        r"blinka|blinkande|skifta|låt)\b",
+        re.IGNORECASE,
+    )
+    _COLORS = (
+        (re.compile(r"r[öo](?:d|t{1,2})\b", re.IGNORECASE), "#FF0000"),
+        (re.compile(r"gr[öo](?:n|nt)\b", re.IGNORECASE), "#00FF00"),
+        (re.compile(r"bl[åa](?:tt?)?\b", re.IGNORECASE), "#0000FF"),
+        (re.compile(r"gul(?:t)?\b", re.IGNORECASE), "#FFD000"),
+        (re.compile(r"lila\b", re.IGNORECASE), "#7A18C4"),
+        (re.compile(r"orange(?:t)?\b", re.IGNORECASE), "#FF7000"),
+        (re.compile(r"rosa\b", re.IGNORECASE), "#FF4081"),
+        (re.compile(r"turkos(?:t)?\b", re.IGNORECASE), "#00D8C8"),
+        (re.compile(r"vit(?:t)?\b", re.IGNORECASE), "#FFFFFF"),
+    )
+    _NUMBER_WORDS = {
+        "tio": 10, "tjugo": 20, "trettio": 30, "fyrtio": 40, "femtio": 50,
+        "sextio": 60, "sjuttio": 70, "åttio": 80, "nittio": 90, "hundra": 100,
+    }
 
     def __init__(
         self,
@@ -37,6 +58,10 @@ class OllamaToolPlanner:
         self.transport = transport
 
     async def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
+        deterministic_light = self._plan_light(transcript, node_name)
+        if deterministic_light is not None:
+            LOG.info("tool_planned_deterministic action=%s target=%s", deterministic_light.name, deterministic_light.arguments["target"])
+            return deterministic_light
         if not self._ACTION_HINT.search(transcript):
             return None
         rooms = ", ".join(item["room"] for item in self.registry.list_cast_targets()) or "inga"
@@ -91,3 +116,101 @@ class OllamaToolPlanner:
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError, ToolValidationError) as error:
             LOG.warning("tool_planning_skipped error=%s", error)
             return None
+
+    def _plan_light(self, transcript: str, node_name: str) -> DeviceAction | None:
+        targets = self.registry.list_light_targets()
+        if not targets or not self._LIGHT_INTENT.search(transcript):
+            return None
+        target = self._match_light_target(transcript, targets)
+        if not target:
+            return None
+        lowered = transcript.casefold()
+        effect = self._effect(lowered)
+        if effect:
+            return self.registry.create_action(
+                "light_effect",
+                {"target": target, "effect": effect, "speed": self._speed(lowered)},
+                node_name,
+            )
+        arguments: dict[str, object] = {"target": target}
+        if re.search(r"\b(?:släck|släcka|stäng(?:a)?\s+av)\b", lowered):
+            arguments["power"] = False
+        elif re.search(r"\b(?:tänd|tända|sätt(?:a)?\s+på)\b", lowered):
+            arguments["power"] = True
+        color = next((value for pattern, value in self._COLORS if pattern.search(lowered)), None)
+        if color:
+            arguments["color"] = color
+        brightness = self._percentage(lowered)
+        if brightness is not None:
+            arguments["brightness"] = brightness
+        if len(arguments) == 1:
+            return None
+        return self.registry.create_action("light_set", arguments, node_name)
+
+    @classmethod
+    def _match_light_target(cls, transcript: str, targets: list[dict[str, object]]) -> str:
+        compact = cls._compact(transcript)
+        labels: list[str] = []
+        for item in targets:
+            for key in ("name", "room"):
+                label = str(item[key])
+                if label.casefold() not in {existing.casefold() for existing in labels}:
+                    labels.append(label)
+        exact = [label for label in labels if cls._compact(label) in compact]
+        if exact:
+            return max(exact, key=lambda label: len(cls._compact(label)))
+        scored = sorted(
+            ((cls._substring_similarity(compact, cls._compact(label)), label) for label in labels),
+            reverse=True,
+        )
+        if not scored or scored[0][0] < 0.78:
+            return ""
+        if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.08:
+            return ""
+        return scored[0][1]
+
+    @staticmethod
+    def _compact(value: str) -> str:
+        return "".join(character for character in value.casefold() if character.isalnum())
+
+    @staticmethod
+    def _substring_similarity(text: str, target: str) -> float:
+        if not text or not target:
+            return 0.0
+        best = 0.0
+        for length in range(max(2, len(target) - 2), len(target) + 3):
+            for start in range(max(1, len(text) - length + 1)):
+                best = max(best, SequenceMatcher(None, text[start:start + length], target).ratio())
+        return best
+
+    @classmethod
+    def _percentage(cls, text: str) -> int | None:
+        numeric = re.search(r"\b(100|[1-9]?\d)\s*(?:%|procent)\b", text)
+        if numeric:
+            return max(1, int(numeric.group(1)))
+        for word, value in cls._NUMBER_WORDS.items():
+            if re.search(rf"\b{word}\s+procent\b", text):
+                return value
+        return None
+
+    @staticmethod
+    def _effect(text: str) -> str:
+        if not re.search(r"\b(?:blinka|blinkande|strobe|skifta|regnbåg)\w*\b", text):
+            return ""
+        if "regnbåg" in text:
+            return "rainbow_strobe" if re.search(r"\b(?:blinka|blinkande|strobe)\b", text) else "rainbow_fade"
+        colors = {
+            "röd": "red_strobe", "rött": "red_strobe", "röt": "red_strobe",
+            "grön": "green_strobe", "grönt": "green_strobe",
+            "blå": "blue_strobe", "blått": "blue_strobe",
+            "lila": "purple_strobe", "vit": "white_strobe", "vitt": "white_strobe",
+        }
+        return next((effect for word, effect in colors.items() if word in text), "rainbow_fade")
+
+    @classmethod
+    def _speed(cls, text: str) -> int:
+        if re.search(r"\b(?:långsam|långsamt|sakta)\b", text):
+            return 20
+        if re.search(r"\b(?:snabb|snabbt|fort)\b", text):
+            return 80
+        return cls._percentage(text) or 40
