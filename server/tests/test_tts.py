@@ -4,9 +4,11 @@ import asyncio
 from dataclasses import replace
 from pathlib import Path
 
+import httpx
+
 from gateway.adapters import TomlCharacterProvider
 from gateway.config import load_config
-from gateway.tts import RoutedTextToSpeechEngine, SwedishTextNormalizer
+from gateway.tts import HttpPcmTextToSpeechEngine, RoutedTextToSpeechEngine, SwedishTextNormalizer
 
 
 ROOT = Path(__file__).parents[2]
@@ -116,3 +118,36 @@ def test_router_rejects_unknown_voice():
         assert False, "ValueError expected"
     except ValueError as error:
         assert "Okänd röst" in str(error)
+
+
+def test_http_pcm_engine_frames_a_streamed_response_without_buffering_whole_audio():
+    frame_bytes = 22_050 * 2 * 20 // 1000
+
+    class TwoChunkStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"a" * frame_bytes
+            yield b"b" * 17
+
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"X-Sample-Rate": "22050"},
+            stream=TwoChunkStream(),
+        )
+
+    async def scenario():
+        engine = HttpPcmTextToSpeechEngine(
+            "http://moss.test",
+            22_050,
+            transport=httpx.MockTransport(handler),
+        )
+        return [
+            frame
+            async for frame in engine.synthesize(
+                "Skogen väntar.", replace(character(), voice_id="moss-nano"), 22_050
+            )
+        ]
+
+    frames = asyncio.run(scenario())
+    assert frames[0] == b"a" * frame_bytes
+    assert frames[1] == b"b" * 17 + bytes(frame_bytes - 17)

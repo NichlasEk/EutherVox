@@ -35,10 +35,17 @@ class SwedishTextNormalizer:
 class HttpPcmTextToSpeechEngine:
     """Client for an isolated TTS worker returning mono signed 16-bit PCM."""
 
-    def __init__(self, base_url: str, sample_rate: int, timeout_seconds: float = 60.0):
+    def __init__(
+        self,
+        base_url: str,
+        sample_rate: int,
+        timeout_seconds: float = 60.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ):
         self.base_url = base_url.rstrip("/")
         self.sample_rate = sample_rate
         self.timeout_seconds = timeout_seconds
+        self.transport = transport
 
     async def synthesize(
         self, text: str, character: Character, sample_rate: int
@@ -46,24 +53,30 @@ class HttpPcmTextToSpeechEngine:
         if sample_rate != self.sample_rate:
             raise ValueError(f"HTTP TTS expects {self.sample_rate} Hz, got {sample_rate}")
         timeout = httpx.Timeout(self.timeout_seconds, connect=min(5.0, self.timeout_seconds))
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-            response = await client.post(
+        async with httpx.AsyncClient(
+            timeout=timeout, trust_env=False, transport=self.transport
+        ) as client:
+            async with client.stream(
+                "POST",
                 f"{self.base_url}/synthesize",
                 json={"text": text, "language_id": "sv"},
-            )
-            response.raise_for_status()
-        returned_rate = int(response.headers.get("X-Sample-Rate", self.sample_rate))
-        if returned_rate != self.sample_rate:
-            raise RuntimeError(
-                f"TTS worker returned {returned_rate} Hz, expected {self.sample_rate} Hz"
-            )
-        frame_bytes = self.sample_rate * 2 * 20 // 1000
-        for offset in range(0, len(response.content), frame_bytes):
-            frame = response.content[offset : offset + frame_bytes]
-            if len(frame) < frame_bytes:
-                frame += bytes(frame_bytes - len(frame))
-            yield frame
-            await asyncio.sleep(0)
+            ) as response:
+                response.raise_for_status()
+                returned_rate = int(response.headers.get("X-Sample-Rate", self.sample_rate))
+                if returned_rate != self.sample_rate:
+                    raise RuntimeError(
+                        f"TTS worker returned {returned_rate} Hz, expected {self.sample_rate} Hz"
+                    )
+                frame_bytes = self.sample_rate * 2 * 20 // 1000
+                buffered = bytearray()
+                async for chunk in response.aiter_bytes():
+                    buffered.extend(chunk)
+                    while len(buffered) >= frame_bytes:
+                        yield bytes(buffered[:frame_bytes])
+                        del buffered[:frame_bytes]
+                        await asyncio.sleep(0)
+                if buffered:
+                    yield bytes(buffered) + bytes(frame_bytes - len(buffered))
 
 
 class RoutedTextToSpeechEngine:

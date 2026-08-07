@@ -1,0 +1,15 @@
+[Unit]
+Description=EutherVox MOSS-TTS-Nano ONNX CPU worker
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nichlas/EutherVox/moss-worker
+ExecStart=/home/nichlas/EutherVox/moss-worker/.venv/bin/python worker.py --host 127.0.0.1 --port 8791 --threads 12 --sample-rate 22050 --model-dir /home/nichlas/EutherVox/models/moss-tts-nano-onnx --reference-audio /home/nichlas/EutherVox/models/chatterbox-reference/sv_f.flac
+Restart=on-failure
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+Environment=HF_HOME=/home/nichlas/EutherVox/models/moss-cache
+
+[Install]
+WantedBy=default.target

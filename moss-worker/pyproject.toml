@@ -1,0 +1,12 @@
+[project]
+name = "euthervox-moss-worker"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "moss-tts-nano",
+    "huggingface-hub>=0.34",
+    "soxr>=0.5",
+]
+
+[tool.uv.sources]
+moss-tts-nano = { git = "https://github.com/OpenMOSS/MOSS-TTS-Nano.git", rev = "cc7bdf19c7639c0870dab22045a33b442760f6be" }

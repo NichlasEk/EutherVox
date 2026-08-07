@@ -114,6 +114,7 @@ fun EutherVoxApp() {
                 "Röst: " + when (voiceId) {
                     "piper-lisa" -> "Lisa"
                     "chatterbox" -> "Chatterbox"
+                    "moss-nano" -> "MOSS Nano"
                     else -> "NST"
                 },
                 style = MaterialTheme.typography.bodySmall,
@@ -212,6 +213,7 @@ fun EutherVoxApp() {
                 Text("Skinnskattarens röst", fontWeight = FontWeight.Bold, color = Forest)
                 VoiceChoice("piper-nst", "NST – snabb (rekommenderad)", settingsVoiceId) { settingsVoiceId = it }
                 VoiceChoice("piper-lisa", "Lisa – alternativ", settingsVoiceId) { settingsVoiceId = it }
+                VoiceChoice("moss-nano", "MOSS Nano – snabb AI-röst (experimentell)", settingsVoiceId) { settingsVoiceId = it }
                 VoiceChoice("chatterbox", "Chatterbox – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }
                 OutlinedTextField(
                     settingsPassword,

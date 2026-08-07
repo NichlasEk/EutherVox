@@ -36,7 +36,10 @@ frame_ms = 20
 frame_bytes = 640
 ```
 
-Server till klient annonseras i `tts.start`. Prototypen använder mono `pcm_s16le` vid 24000 Hz och skickar normalt 20 ms/960 byte per frame. Klienten startar AudioTrack efter cirka 120 ms eller när en kort ström tar slut.
+Server till klient annonseras i `tts.start`. Aktuell betaprofil använder mono
+`pcm_s16le` vid 22050 Hz och skickar normalt 20 ms/882 byte per frame. Den
+generella mockprofilen använder 24000 Hz. Klienten använder alltid det annonserade
+formatet och startar AudioTrack efter cirka 120 ms eller när en kort ström tar slut.
 
 ## Kontrollmeddelanden
 

@@ -1,4 +1,4 @@
-# EutherVox 0.10 beta
+# EutherVox 0.11 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -6,11 +6,12 @@ Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var l
 
 Det finns även en riktig svensk betaprofil: flerspråkig faster-whisper för STT, en liten svensk-capabel Qwen-modell via Ollama och Piper `sv_SE-nst-medium` för snabb CPU-TTS. Dots/VoxCPM är avsiktligt inte dialogstandard; de passar bättre som valbara kvalitetsmotorer för längre uppläsning.
 
-Betaprofilen har tre valbara röster i Android-inställningarna:
+Betaprofilen har fyra valbara röster i Android-inställningarna:
 
 - `NST – snabb`: svensk Piper-standard och automatisk fallback.
 - `Lisa – alternativ`: den andra officiella svenska Piper-rösten.
-- `Chatterbox – naturlig`: Chatterbox Multilingual V3 via en isolerad lokal GPU-worker.
+- `MOSS Nano – experimentell`: MOSS-TTS-Nano-100M med strömmande ONNX-inferens på CPU.
+- `Chatterbox – långsam`: Chatterbox Multilingual V3 via en isolerad lokal GPU-worker.
 
 Skinnskattarens TOML-profil innehåller en uttalsordlista för namn och förkortningar.
 
@@ -52,6 +53,27 @@ uv sync
 HF_HOME=../models/chatterbox-cache .venv/bin/python worker.py
 ```
 
+MOSS Nano installeras i en separat CPU-miljö och använder de officiella ONNX-vikterna:
+
+```bash
+uv sync --project moss-worker --python 3.12 \
+  --extra-index-url https://download.pytorch.org/whl/cpu \
+  --index-strategy unsafe-best-match
+mkdir -p models/moss-tts-nano-onnx/MOSS-TTS-Nano-100M-ONNX
+mkdir -p models/moss-tts-nano-onnx/MOSS-Audio-Tokenizer-Nano-ONNX
+moss-worker/.venv/bin/hf download OpenMOSS-Team/MOSS-TTS-Nano-100M-ONNX \
+  --local-dir models/moss-tts-nano-onnx/MOSS-TTS-Nano-100M-ONNX
+moss-worker/.venv/bin/hf download OpenMOSS-Team/MOSS-Audio-Tokenizer-Nano-ONNX \
+  --local-dir models/moss-tts-nano-onnx/MOSS-Audio-Tokenizer-Nano-ONNX
+cp deploy/euthervox-moss.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now euthervox-moss.service
+```
+
+MOSS-workern binder endast till `127.0.0.1:8791`, skickar mono PCM medan ONNX-
+avkodningen fortfarande arbetar och använder ingen GPU. En valfri svensk
+referensfil anges i servicefilen; saknas filen används en inbyggd röst.
+
 Workern binder endast till `127.0.0.1:8790`. Om kvalitetsrösten inte svarar innan
 första ljudblocket går röstroutern automatiskt tillbaka till NST. Samma provtext
 kan renderas med samtliga röster via:
@@ -65,6 +87,12 @@ Chatterbox är experimentell för dialog. På RTX 4090 tog ett varmt kort svar c
 blocket. Workern använde cirka 3,9 GB VRAM. Piper började däremot lämna ljud efter
 ungefär 0,23–0,26 sekunder. Välj därför Chatterbox för röstkvalitetstest och NST
 för det snabbaste samtalet.
+
+På den lokala Xeon E5-2697 v3 gav MOSS Nano första router-ljudblocket efter cirka
+0,54–1,03 sekunder. Ett varmt kort svar tog 4,05 sekunder att generera och gav
+cirka 3,2 sekunder ljud. Det är mycket snabbare till första ljud än Chatterbox,
+men något långsammare än realtid totalt på denna äldre CPU. NST förblir standard
+tills MOSS har bedömts subjektivt på svenska.
 
 Whisper-modellen laddas ner första gången profilen startas. Därefter väljer adaptern den lokala snapshotsökvägen direkt och gör ingen Hugging Face-kontroll vid normal start. Starta med:
 
