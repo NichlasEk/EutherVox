@@ -12,8 +12,8 @@ android {
         applicationId = "se.euther.euthervox"
         minSdk = 26
         targetSdk = 36
-        versionCode = 23
-        versionName = "0.16.0-beta.5"
+        versionCode = 24
+        versionName = "0.17.0-beta.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

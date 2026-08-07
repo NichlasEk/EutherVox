@@ -1,4 +1,4 @@
-# EutherVox 0.16 beta
+# EutherVox 0.17 beta
 
 EutherVox är en lokal, strömmande röstprototyp. Android-telefonen står för mikrofon, högtalare och UI; gatewayen tar emot rå PCM över WebSocket och kör en utbytbar STT → figur → textgenerator → TTS-kedja.
 
@@ -12,9 +12,17 @@ BLE-laboratoriet finns kvar som en avancerad reserv. Se
 Upptäckta Wi-Fi-ljus kan namnges och knytas till rum i appen. Registret sparas
 atomiskt som server-TOML och används av samma allowlistade verktyg i Ollamas
 lokala tool calling och EutherVox MCP. Appen har en kompakt kulör-/mättnadsruta,
-lodrät ljusstyrka och verifierade Magic Home-mönster. Färgblinkning använder
-modulens beständiga custom-effekt med symmetrisk 50/50-puls, så
-hastighetsreglaget ger en tydlig och jämn blinkning.
+lodrät ljusstyrka och verifierade Magic Home-mönster. Färgblinkning tidsstyrs
+av appen över en beständig lokal TCP-anslutning eftersom vissa AK001-firmware
+ignorerar protokollets hastighetsbyte.
+
+`Musikljus` använder telefonens mikrofon som lokal analyskälla. Användaren kan
+välja ett eller flera upptäckta ljus, basfärg och känslighet. Appen extraherar
+endast ett adaptivt nivåvärde ur 50–145 Hz-bandet och skickar synkroniserade
+färgkommandon ungefär 20 gånger per sekund; rått ljud skickas, loggas eller
+sparas aldrig. Push-to-talk och samtalsläge stoppar musikmikrofonen innan de tar
+över AudioRecord. Första betan använder en telefon som dirigent; valbara
+Raspberry Pi-rumsmikrofoner är en senare protokollutvidgning.
 
 Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var ligger min lödkolv?`, svarar som Skinnskattaren och strömmar en kort testton som TTS-ljud. Tonen gör att hela ljudvägen kan verifieras, men är inte syntetiserat tal.
 

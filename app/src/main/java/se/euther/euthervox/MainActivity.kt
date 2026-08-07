@@ -35,6 +35,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -153,6 +155,7 @@ fun EutherVoxApp() {
             if (event == Lifecycle.Event.ON_PAUSE) {
                 controller.onPause()
                 lightController.stopScan()
+                wifiLightController.stopMusicMode()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -214,7 +217,10 @@ fun EutherVoxApp() {
             PushToTalkButton(
                 active = state.microphoneActive,
                 enabled = state.canTalk && hasPermission && !state.conversationActive,
-                onStart = controller::startTalking,
+                onStart = {
+                    wifiLightController.stopMusicMode()
+                    controller.startTalking()
+                },
                 onStop = controller::stopTalking,
             )
             if (state.conversationActive) {
@@ -237,7 +243,10 @@ fun EutherVoxApp() {
                 )
             } else {
                 Button(
-                    onClick = controller::startConversation,
+                    onClick = {
+                        wifiLightController.stopMusicMode()
+                        controller.startConversation()
+                    },
                     enabled = state.canTalk && hasPermission,
                 ) { Text("Starta samtal") }
             }
@@ -278,7 +287,14 @@ fun EutherVoxApp() {
                     onWifiColor = wifiLightController::setColor,
                     onWifiPreciseColor = wifiLightController::setColorBrightness,
                     onWifiEffect = wifiLightController::setEffect,
+                    onStartMusic = { devices, red, green, blue, sensitivity ->
+                        controller.onPause()
+                        wifiLightController.startMusicMode(devices, red, green, blue, sensitivity)
+                    },
+                    onStopMusic = wifiLightController::stopMusicMode,
                     onWifiProvision = wifiLightController::provision,
+                    hasMicrophonePermission = hasPermission,
+                    onRequestMicrophonePermission = { permissionLauncher.launch(Manifest.permission.RECORD_AUDIO) },
                     configuredLights = state.configuredLights,
                     configMessage = state.lightConfigMessage,
                     onSaveConfig = controller::saveLightConfig,
@@ -402,7 +418,11 @@ private fun LightPanel(
     onWifiColor: (MagicHomeDevice, Int, Int, Int) -> Unit,
     onWifiPreciseColor: (MagicHomeDevice, Int, Int, Int, Int) -> Unit,
     onWifiEffect: (MagicHomeDevice, String, Int) -> Unit,
+    onStartMusic: (List<MagicHomeDevice>, Int, Int, Int, Int) -> Unit,
+    onStopMusic: () -> Unit,
     onWifiProvision: (String, String, () -> Unit) -> Unit,
+    hasMicrophonePermission: Boolean,
+    onRequestMicrophonePermission: () -> Unit,
     configuredLights: List<ServerEvent.ConfiguredLight>,
     configMessage: String?,
     onSaveConfig: (MagicHomeDevice, String, String) -> Unit,
@@ -419,6 +439,9 @@ private fun LightPanel(
     var editingDevice by remember { mutableStateOf<MagicHomeDevice?>(null) }
     var editingName by remember { mutableStateOf("") }
     var editingRoom by remember { mutableStateOf("") }
+    var musicTargets by remember { mutableStateOf(emptySet<String>()) }
+    var musicSensitivity by remember { mutableStateOf(55f) }
+    var musicColor by remember { mutableStateOf(Triple(160, 0, 255)) }
 
     Text("Magic Home-ljus", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text(
@@ -437,6 +460,94 @@ private fun LightPanel(
     Text(wifiState.status, textAlign = TextAlign.Center)
     wifiState.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
     configMessage?.let { Text(it, color = Forest, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE4DDCB))) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Musikljus", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+            Text(
+                "Telefonens mikrofon mäter bara basnivån lokalt. Rått ljud skickas eller sparas aldrig.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text("Mikrofonkälla: Den här telefonen", fontWeight = FontWeight.Bold, color = Forest)
+            if (wifiState.devices.isEmpty()) {
+                Text("Sök efter Wi-Fi-ljus först.")
+            } else {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Ljus att synkronisera", fontWeight = FontWeight.Bold)
+                    TextButton(onClick = {
+                        musicTargets = if (musicTargets.size == wifiState.devices.size) {
+                            emptySet()
+                        } else {
+                            wifiState.devices.map { it.mac }.toSet()
+                        }
+                    }) { Text(if (musicTargets.size == wifiState.devices.size) "Avmarkera" else "Välj alla") }
+                }
+                wifiState.devices.forEach { device ->
+                    val configured = configuredLights.firstOrNull {
+                        it.mac.filter(Char::isLetterOrDigit).equals(device.mac.filter(Char::isLetterOrDigit), true)
+                    }
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = device.mac in musicTargets,
+                            onCheckedChange = { checked ->
+                                musicTargets = if (checked) musicTargets + device.mac else musicTargets - device.mac
+                            },
+                            enabled = !wifiState.musicReactive,
+                        )
+                        Text(configured?.let { "${it.name} · ${it.room}" } ?: "${device.model} · ${device.ip}")
+                    }
+                }
+                Text("Känslighet ${musicSensitivity.toInt()} %")
+                Slider(
+                    value = musicSensitivity,
+                    onValueChange = { musicSensitivity = it },
+                    valueRange = 1f..100f,
+                    enabled = !wifiState.musicReactive,
+                )
+                Text("Basfärg", fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ColorPreset("Röd", Color(0xFFD43A35), Modifier.weight(1f), !wifiState.musicReactive) {
+                        musicColor = Triple(255, 0, 0)
+                    }
+                    ColorPreset("Blå", Color(0xFF315DCC), Modifier.weight(1f), !wifiState.musicReactive) {
+                        musicColor = Triple(0, 80, 255)
+                    }
+                    ColorPreset("Lila", Color(0xFF8D35C7), Modifier.weight(1f), !wifiState.musicReactive) {
+                        musicColor = Triple(160, 0, 255)
+                    }
+                    ColorPreset("Vit", Color(0xFF777777), Modifier.weight(1f), !wifiState.musicReactive) {
+                        musicColor = Triple(255, 255, 255)
+                    }
+                }
+                if (!hasMicrophonePermission) {
+                    Button(onClick = onRequestMicrophonePermission) { Text("Tillåt musikmikrofon") }
+                } else if (wifiState.musicReactive) {
+                    Text("● Mikrofon aktiv · ${wifiState.musicTargetCount} ljus", color = Copper, fontWeight = FontWeight.Bold)
+                    LinearProgressIndicator(
+                        progress = { wifiState.musicLevel.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Button(onClick = onStopMusic, colors = ButtonDefaults.buttonColors(containerColor = Copper)) {
+                        Text("Stoppa musikljus")
+                    }
+                } else {
+                    Button(
+                        onClick = {
+                            val selected = wifiState.devices.filter { it.mac in musicTargets }
+                            onStartMusic(
+                                selected,
+                                musicColor.first,
+                                musicColor.second,
+                                musicColor.third,
+                                musicSensitivity.toInt(),
+                            )
+                        },
+                        enabled = musicTargets.isNotEmpty(),
+                    ) { Text("Starta bas-puls") }
+                }
+            }
+        }
+    }
 
     wifiState.devices.forEach { device ->
         val configured = configuredLights.firstOrNull { it.mac.filter(Char::isLetterOrDigit).equals(device.mac.filter(Char::isLetterOrDigit), true) }

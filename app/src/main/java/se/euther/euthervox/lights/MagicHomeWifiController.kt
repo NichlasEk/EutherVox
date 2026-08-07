@@ -1,7 +1,14 @@
 package se.euther.euthervox.lights
 
 import android.content.Context
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.net.wifi.WifiManager
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +20,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
@@ -20,6 +28,7 @@ import java.net.DatagramSocket
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.io.OutputStream
 
 data class MagicHomeDevice(
     val ip: String,
@@ -34,6 +43,9 @@ data class MagicHomeWifiUiState(
     val busyIp: String? = null,
     val provisioning: Boolean = false,
     val devices: List<MagicHomeDevice> = emptyList(),
+    val musicReactive: Boolean = false,
+    val musicLevel: Float = 0f,
+    val musicTargetCount: Int = 0,
     val status: String = "Sök efter Magic Home-moduler på ditt Wi-Fi.",
     val error: String? = null,
 )
@@ -166,6 +178,11 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
     val state: StateFlow<MagicHomeWifiUiState> = mutableState.asStateFlow()
     private var activeJob: Job? = null
     private val effectJobs = mutableMapOf<String, Job>()
+    private var musicCaptureJob: Job? = null
+    private var musicNetworkJob: Job? = null
+    private var musicRecorder: AudioRecord? = null
+    private var musicLevels: Channel<Float>? = null
+    @Volatile private var musicGeneration = 0L
 
     fun discover() {
         activeJob?.cancel()
@@ -194,12 +211,14 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
         device,
         if (on) "Tänder…" else "Släcker…",
     ) {
+        stopMusicMode()
         cancelEffect(device.ip)
         sendCommand(device.ip, MagicHomeProtocol.power(on))
         queryStatus(device).copy(powerOn = on)
     }
 
     fun setColor(device: MagicHomeDevice, red: Int, green: Int, blue: Int) = runDeviceAction(device, "Byter färg…") {
+        stopMusicMode()
         cancelEffect(device.ip)
         sendCommand(device.ip, MagicHomeProtocol.color(red, green, blue))
         queryStatus(device).copy(powerOn = true, colorHex = "#%02X%02X%02X".format(red, green, blue))
@@ -207,6 +226,7 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
 
     fun setColorBrightness(device: MagicHomeDevice, red: Int, green: Int, blue: Int, brightness: Int) =
         runDeviceAction(device, "Ställer exakt färg…") {
+            stopMusicMode()
             cancelEffect(device.ip)
             val level = brightness.coerceIn(1, 100) / 100f
             val scaledRed = (red.coerceIn(0, 255) * level).toInt()
@@ -220,6 +240,7 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
         }
 
     fun setEffect(device: MagicHomeDevice, label: String, speed: Int) {
+        stopMusicMode()
         val colors = MagicHomeProtocol.softwareBlinkColors(label)
         if (colors == null) {
             runDeviceAction(device, "Startar mönster…") {
@@ -285,10 +306,152 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
     }
 
     fun close() {
+        stopMusicMode()
         activeJob?.cancel()
         activeJob = null
         effectJobs.values.forEach(Job::cancel)
         effectJobs.clear()
+    }
+
+    @SuppressLint("MissingPermission")
+    fun startMusicMode(
+        devices: List<MagicHomeDevice>,
+        red: Int,
+        green: Int,
+        blue: Int,
+        sensitivity: Int,
+    ) {
+        if (ContextCompat.checkSelfPermission(appContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            mutableState.value = mutableState.value.copy(error = "Tillåt mikrofonen för att starta musikljus.")
+            return
+        }
+        if (devices.isEmpty()) {
+            mutableState.value = mutableState.value.copy(error = "Välj minst ett ljus för musikläget.")
+            return
+        }
+        stopMusicMode()
+        val targets = devices.distinctBy { it.ip }
+        val generation = ++musicGeneration
+        val levels = Channel<Float>(Channel.CONFLATED)
+        musicLevels = levels
+        mutableState.value = mutableState.value.copy(
+            musicReactive = true,
+            musicLevel = 0f,
+            musicTargetCount = targets.size,
+            status = "Musikljus lyssnar på basen med telefonens mikrofon.",
+            error = null,
+        )
+        scope.launch {
+            targets.forEach { cancelEffect(it.ip) }
+        }
+        musicNetworkJob = scope.launch(Dispatchers.IO) {
+            val connections = targets.associate { it.ip to PersistentLightConnection(it.ip) }
+            try {
+                connections.values.forEach { connection ->
+                    runCatching { connection.send(MagicHomeProtocol.power(true)) }
+                }
+                for (level in levels) {
+                    val brightness = (0.04f + level * 0.96f).coerceIn(0f, 1f)
+                    val packet = MagicHomeProtocol.color(
+                        (red.coerceIn(0, 255) * brightness).toInt(),
+                        (green.coerceIn(0, 255) * brightness).toInt(),
+                        (blue.coerceIn(0, 255) * brightness).toInt(),
+                    )
+                    connections.values.forEach { connection -> runCatching { connection.send(packet) } }
+                }
+            } finally {
+                connections.values.forEach(PersistentLightConnection::close)
+            }
+        }
+        musicCaptureJob = scope.launch(Dispatchers.IO) {
+            val analyzer = BassEnvelopeAnalyzer(MUSIC_SAMPLE_RATE)
+            try {
+                captureBass(analyzer, sensitivity.coerceIn(1, 100), levels, generation)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                if (generation == musicGeneration) {
+                    mutableState.value = mutableState.value.copy(
+                        musicReactive = false,
+                        musicLevel = 0f,
+                        error = "Musikmikrofonen stannade: ${error.safeMessage()}",
+                    )
+                }
+            } finally {
+                levels.close()
+                if (generation == musicGeneration) musicRecorder = null
+            }
+        }
+    }
+
+    fun stopMusicMode() {
+        musicGeneration++
+        musicRecorder?.runCatching { stop() }
+        musicRecorder?.runCatching { release() }
+        musicRecorder = null
+        musicCaptureJob?.cancel()
+        musicNetworkJob?.cancel()
+        musicLevels?.close()
+        musicCaptureJob = null
+        musicNetworkJob = null
+        musicLevels = null
+        if (mutableState.value.musicReactive) {
+            mutableState.value = mutableState.value.copy(
+                musicReactive = false,
+                musicLevel = 0f,
+                musicTargetCount = 0,
+                status = "Musikljus stoppat.",
+            )
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun captureBass(
+        analyzer: BassEnvelopeAnalyzer,
+        sensitivity: Int,
+        levels: Channel<Float>,
+        generation: Long,
+    ) {
+        val minimum = AudioRecord.getMinBufferSize(
+            MUSIC_SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT,
+        )
+        val bufferSize = maxOf(minimum, MUSIC_FRAME_SAMPLES * 4)
+        val recorder = sequenceOf(MediaRecorder.AudioSource.UNPROCESSED, MediaRecorder.AudioSource.MIC)
+            .mapNotNull { source ->
+                runCatching {
+                    AudioRecord(
+                        source,
+                        MUSIC_SAMPLE_RATE,
+                        AudioFormat.CHANNEL_IN_MONO,
+                        AudioFormat.ENCODING_PCM_16BIT,
+                        bufferSize,
+                    )
+                }.getOrNull()
+            }
+            .firstOrNull { candidate ->
+                if (candidate.state == AudioRecord.STATE_INITIALIZED) true else {
+                    candidate.release()
+                    false
+                }
+            }
+            ?: error("mikrofonen kunde inte initieras")
+        musicRecorder = recorder
+        val samples = ShortArray(MUSIC_FRAME_SAMPLES)
+        try {
+            recorder.startRecording()
+            while (generation == musicGeneration && !Thread.currentThread().isInterrupted) {
+                val count = recorder.read(samples, 0, samples.size, AudioRecord.READ_BLOCKING)
+                if (count < 0) error("AudioRecord.read gav felkod $count")
+                if (count == samples.size) {
+                    val level = analyzer.process(samples, sensitivity)
+                    levels.trySend(level)
+                    mutableState.value = mutableState.value.copy(musicLevel = level)
+                }
+            }
+        } finally {
+            recorder.runCatching { stop() }
+            recorder.release()
+        }
     }
 
     private suspend fun cancelEffect(ip: String) {
@@ -459,5 +622,42 @@ class MagicHomeWifiController(context: Context, private val scope: CoroutineScop
     companion object {
         private const val CONTROL_PORT = 5577
         private const val DISCOVERY_PORT = 48899
+        private const val MUSIC_SAMPLE_RATE = 16_000
+        private const val MUSIC_FRAME_SAMPLES = 800
+    }
+}
+
+private class PersistentLightConnection(private val ip: String) {
+    private var socket: Socket? = null
+    private var output: OutputStream? = null
+
+    fun send(packet: ByteArray) {
+        try {
+            ensureConnected().writeAndFlush(packet)
+        } catch (_: java.io.IOException) {
+            close()
+            ensureConnected().writeAndFlush(packet)
+        }
+    }
+
+    private fun ensureConnected(): OutputStream {
+        output?.let { return it }
+        val connected = Socket().apply {
+            connect(InetSocketAddress(ip, 5577), 1_000)
+            soTimeout = 1_000
+        }
+        socket = connected
+        return connected.getOutputStream().also { output = it }
+    }
+
+    private fun OutputStream.writeAndFlush(packet: ByteArray) {
+        write(packet)
+        flush()
+    }
+
+    fun close() {
+        output = null
+        socket?.runCatching { close() }
+        socket = null
     }
 }
