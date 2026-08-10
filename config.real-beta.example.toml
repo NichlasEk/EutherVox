@@ -29,6 +29,9 @@ cpu_threads = 8
 download_root = "models/faster-whisper"
 # Add domain words only after measuring them; broad hotword lists can bias ordinary phrases.
 hotwords = ""
+# Keep voice control available after a driver update until the host is rebooted.
+fallback_model = "base"
+fallback_compute_type = "int8"
 
 [llm]
 provider = "ollama"

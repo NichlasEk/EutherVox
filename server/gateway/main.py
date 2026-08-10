@@ -28,6 +28,19 @@ from .television import NecTvService
 LOG = logging.getLogger("euthervox.gateway")
 
 
+def configure_device_hotwords(stt: object, lights: MagicHomeLightService, television: NecTvService) -> int:
+    """Bias STT toward the names that are actually valid command targets."""
+    add_hotwords = getattr(stt, "add_hotwords", None)
+    if not add_hotwords:
+        return 0
+    phrases = ["EutherVox", "Skinnskattaren", "YouTube Music", "Wikipedia", "NEC-TV"]
+    for target in (*lights.list_public(), *television.list_public()):
+        phrases.extend((str(target.get("name", "")), str(target.get("room", ""))))
+    count = int(add_hotwords(phrases))
+    LOG.info("stt_hotwords_configured phrases=%d", count)
+    return count
+
+
 async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
@@ -129,6 +142,7 @@ async def run(config: GatewayConfig) -> None:
     wikipedia = WikipediaService(config.wikipedia_settings)
     lights = MagicHomeLightService(config.light_settings, config.config_dir)
     television = NecTvService(config.television_settings, config.config_dir)
+    configure_device_hotwords(engines[0], lights, television)
     tool_registry = EutherVoxToolRegistry(cast, lights, television)
     tool_planner = None
     if bool(config.mcp_settings.get("enabled", False)) and config.llm_provider == "ollama":

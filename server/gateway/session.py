@@ -205,13 +205,16 @@ class VoiceSession:
         if not self.lights or not self.lights.enabled:
             raise ProtocolError("LIGHTS_DISABLED", "Ljustjänsten är inte aktiverad")
         try:
-            self.lights.upsert(
+            saved = self.lights.upsert(
                 name=str(message["name"]),
                 room=str(message["room"]),
                 host=str(message["host"]),
                 mac=str(message["mac"]),
                 model=str(message["model"]),
             )
+            add_hotwords = getattr(self.stt, "add_hotwords", None)
+            if add_hotwords:
+                add_hotwords([saved.name, saved.room])
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             raise ProtocolError("LIGHT_CONFIG_INVALID", str(error)) from error
         await self._send_light_config()
@@ -225,10 +228,13 @@ class VoiceSession:
     async def _upsert_tv(self, message: dict) -> None:
         self._require_tv_access()
         try:
-            self.television.upsert(
+            saved = self.television.upsert(
                 name=str(message["name"]), room=str(message["room"]), host=str(message["host"]),
                 port=int(message.get("port", 7142)), model=str(message.get("model", "NEC display")),
             )
+            add_hotwords = getattr(self.stt, "add_hotwords", None)
+            if add_hotwords:
+                add_hotwords([saved.name, saved.room])
         except (KeyError, TypeError, ValueError, RuntimeError) as error:
             raise ProtocolError("TV_CONFIG_INVALID", str(error)) from error
         await self._send_tv_config()
@@ -471,9 +477,28 @@ class VoiceSession:
                 self.pending_wikipedia_mode = None
             else:
                 action = self.action_planner.plan(transcript, self.node_name)
+            action_source = "builtin" if action is not None else "conversation"
             if action is None and self.tool_planner is not None:
                 action = await self.tool_planner.plan(transcript, self.node_name)
+                if action is not None:
+                    action_source = "tool_planner"
+            LOG.info(
+                "intent_decision session=%s utterance=%s source=%s action=%s",
+                self.session_id,
+                utterance_id,
+                action_source,
+                action.name if action else "none",
+            )
             if action:
+                if action.name == "assistant.clarify":
+                    clarification = action.acknowledgement
+                    character = self._character()
+                    await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": clarification})
+                    await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": clarification})
+                    await self._stream_action_speech(utterance_id, clarification, character, fast=True)
+                    self._remember_turn(transcript, clarification)
+                    self._reset()
+                    return
                 if action.name == "playlist.create":
                     if not self.authenticated_user:
                         await self.send_json({

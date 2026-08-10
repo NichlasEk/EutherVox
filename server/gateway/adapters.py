@@ -5,6 +5,7 @@ import ctypes
 from dataclasses import dataclass
 import importlib.util
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -13,6 +14,9 @@ import tomllib
 from typing import AsyncIterator, Protocol
 
 import httpx
+
+
+LOG = logging.getLogger("euthervox.adapters")
 
 
 @dataclass(frozen=True)
@@ -144,6 +148,8 @@ class FasterWhisperSpeechToTextEngine:
         cpu_threads: int = 8,
         download_root: str | None = None,
         hotwords: str = "",
+        fallback_model: str = "base",
+        fallback_compute_type: str = "int8",
     ):
         if device == "cuda":
             _preload_cuda_runtime()
@@ -153,13 +159,44 @@ class FasterWhisperSpeechToTextEngine:
         self.hotwords = hotwords
         self._lock = asyncio.Lock()
         model_source = _cached_whisper_snapshot(model, download_root) or model
-        self.model = WhisperModel(
-            model_source,
-            device=device,
-            compute_type=compute_type,
-            cpu_threads=cpu_threads,
-            download_root=download_root,
-        )
+        try:
+            self.model = WhisperModel(
+                model_source,
+                device=device,
+                compute_type=compute_type,
+                cpu_threads=cpu_threads,
+                download_root=download_root,
+            )
+            self.runtime_device = device
+        except RuntimeError as error:
+            if device != "cuda":
+                raise
+            fallback_source = _cached_whisper_snapshot(fallback_model, download_root) or fallback_model
+            LOG.error(
+                "stt_cuda_unavailable fallback_device=cpu fallback_model=%s error=%s",
+                fallback_model,
+                error,
+            )
+            self.model = WhisperModel(
+                fallback_source,
+                device="cpu",
+                compute_type=fallback_compute_type,
+                cpu_threads=cpu_threads,
+                download_root=download_root,
+            )
+            self.runtime_device = "cpu"
+
+    def add_hotwords(self, phrases: list[str]) -> int:
+        """Add configured proper names without discarding operator supplied hints."""
+        existing = [part.strip() for part in self.hotwords.split(",") if part.strip()]
+        seen = {part.casefold() for part in existing}
+        for phrase in phrases:
+            cleaned = " ".join(str(phrase).strip().split())
+            if cleaned and cleaned.casefold() not in seen:
+                existing.append(cleaned)
+                seen.add(cleaned.casefold())
+        self.hotwords = ", ".join(existing)
+        return len(existing)
 
     async def transcribe(
         self, pcm: bytes, sample_rate: int, language: str | None = None
@@ -340,6 +377,8 @@ def build_engines(config):
             cpu_threads=int(settings.get("cpu_threads", 8)),
             download_root=settings.get("download_root"),
             hotwords=str(settings.get("hotwords", "")),
+            fallback_model=str(settings.get("fallback_model", "base")),
+            fallback_compute_type=str(settings.get("fallback_compute_type", "int8")),
         )
     else:
         raise ValueError(f"Unsupported STT provider: {config.stt_provider}")

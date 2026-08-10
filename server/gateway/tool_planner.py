@@ -5,6 +5,7 @@ import logging
 import re
 from difflib import SequenceMatcher
 from typing import Any
+from uuid import uuid4
 
 import httpx
 
@@ -25,6 +26,10 @@ class OllamaToolPlanner:
     _LIGHT_INTENT = re.compile(
         r"\b(?:gör(?:a)?|ställ(?:a)?|sätt(?:a)?|ändra|tänd|släck|dimma|höj|sänk|"
         r"blinka|blinkande|skifta|låt)\b",
+        re.IGNORECASE,
+    )
+    _LIGHT_REFERENCE = re.compile(
+        r"\b(?:lyse(?:t)?|ljus(?:et)?|lampa(?:n|or|orna)?|belysning(?:en)?)\b",
         re.IGNORECASE,
     )
     _TV_REFERENCE = re.compile(
@@ -64,13 +69,14 @@ class OllamaToolPlanner:
     async def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
         deterministic_light = self._plan_light(transcript, node_name)
         if deterministic_light is not None:
-            LOG.info("tool_planned_deterministic action=%s target=%s", deterministic_light.name, deterministic_light.arguments["target"])
+            LOG.info("tool_decision path=deterministic domain=lights action=%s target=%s", deterministic_light.name, deterministic_light.arguments.get("target", "none"))
             return deterministic_light
         deterministic_tv = self._plan_tv(transcript, node_name)
         if deterministic_tv is not None:
-            LOG.info("tool_planned_deterministic action=%s target=%s", deterministic_tv.name, deterministic_tv.arguments["target"])
+            LOG.info("tool_decision path=deterministic domain=television action=%s target=%s", deterministic_tv.name, deterministic_tv.arguments["target"])
             return deterministic_tv
         if not self._ACTION_HINT.search(transcript):
+            LOG.info("tool_decision path=conversation reason=no_action_hint")
             return None
         rooms = ", ".join(item["room"] for item in self.registry.list_cast_targets()) or "inga"
         lights = ", ".join(
@@ -131,11 +137,31 @@ class OllamaToolPlanner:
 
     def _plan_light(self, transcript: str, node_name: str) -> DeviceAction | None:
         targets = self.registry.list_light_targets()
-        if not targets or not self._LIGHT_INTENT.search(transcript):
+        if not targets:
+            return None
+        if not self._LIGHT_INTENT.search(transcript):
             return None
         target = self._match_light_target(transcript, targets)
+        light_reference = self._LIGHT_REFERENCE.search(transcript) is not None
+        if not target and light_reference and len(targets) == 1:
+            target = str(targets[0]["name"])
         if not target:
-            return None
+            if not light_reference:
+                return None
+            LOG.info("tool_decision path=fallback domain=lights reason=target_not_confident configured_targets=%d", len(targets))
+            rooms = []
+            for item in targets:
+                room = str(item["room"])
+                if room.casefold() not in {known.casefold() for known in rooms}:
+                    rooms.append(room)
+            examples = ", ".join(rooms[:3])
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="assistant.clarify",
+                target_node=node_name,
+                arguments={"domain": "lights"},
+                acknowledgement=f"Vilket rum menar du? Jag har ljus i {examples}.",
+            )
         lowered = transcript.casefold()
         effect = self._effect(lowered)
         if effect:
@@ -203,14 +229,24 @@ class OllamaToolPlanner:
         exact = [label for label in labels if cls._compact(label) in compact]
         if exact:
             return max(exact, key=lambda label: len(cls._compact(label)))
-        scored = sorted(
-            ((cls._substring_similarity(compact, cls._compact(label)), label) for label in labels),
-            reverse=True,
-        )
+        scored = []
+        for label in labels:
+            normalized = cls._compact(label)
+            variants = {normalized}
+            for suffix in ("rummet", "rum"):
+                if normalized.endswith(suffix) and len(normalized) > len(suffix) + 2:
+                    variants.add(normalized.removesuffix(suffix))
+            score = max(cls._substring_similarity(compact, variant) for variant in variants)
+            scored.append((score, label))
+        scored.sort(reverse=True)
         if not scored or scored[0][0] < 0.78:
             return ""
         if len(scored) > 1 and scored[0][0] - scored[1][0] < 0.08:
             return ""
+        LOG.info(
+            "target_match domain=lights target=%s score=%.3f runner_up=%.3f",
+            scored[0][1], scored[0][0], scored[1][0] if len(scored) > 1 else 0.0,
+        )
         return scored[0][1]
 
     @staticmethod
@@ -222,7 +258,10 @@ class OllamaToolPlanner:
         if not text or not target:
             return 0.0
         best = 0.0
-        for length in range(max(2, len(target) - 2), len(target) + 3):
+        # Names are often expanded by Whisper ("Estrids" -> "Esterhilds").
+        # A slightly wider window recovers that case while the confidence and
+        # runner-up margins above still prevent guessing between similar rooms.
+        for length in range(max(2, len(target) - 3), len(target) + 5):
             for start in range(max(1, len(text) - length + 1)):
                 best = max(best, SequenceMatcher(None, text[start:start + length], target).ratio())
         return best

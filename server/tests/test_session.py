@@ -3,8 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+import sys
+import types
 
 from gateway.adapters import (
+    FasterWhisperSpeechToTextEngine,
     MockSpeechToTextEngine,
     MockTextGenerationEngine,
     MockTextToSpeechEngine,
@@ -63,6 +66,39 @@ def test_complete_mock_pipeline_streams_control_and_binary_audio():
         assert tts_start["audio"]["sample_rate"] == 24000
         assert any(isinstance(item, bytes) and len(item) == 960 for item in sent)
         assert session.phase is Phase.READY
+    asyncio.run(scenario())
+
+
+def test_tool_clarification_is_spoken_without_running_the_character_llm():
+    class ClarifyingPlanner:
+        async def plan(self, _transcript: str, node_name: str):
+            return DeviceAction(
+                action_id="clarify-1",
+                name="assistant.clarify",
+                target_node=node_name,
+                arguments={"domain": "lights"},
+                acknowledgement="Vilket rum menar du?",
+            )
+
+    class FailingLlm:
+        async def generate(self, _transcript: str, _character):
+            raise AssertionError("clarifications must not reach the character LLM")
+            yield ""
+
+    async def scenario():
+        session, sent = make_session()
+        session.tool_planner = ClarifyingPlanner()
+        session.llm = FailingLlm()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "clarify-u1"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "clarify-u1"}))
+        await session.response_task
+
+        final = next(item for item in sent if isinstance(item, dict) and item["type"] == "assistant.text.final")
+        assert final["text"] == "Vilket rum menar du?"
+        assert session.phase is Phase.READY
+
     asyncio.run(scenario())
 
 
@@ -207,6 +243,37 @@ def test_cached_whisper_snapshot_avoids_remote_model_lookup(tmp_path: Path):
     (snapshot / "model.bin").touch()
 
     assert _cached_whisper_snapshot("small", str(tmp_path)) == str(snapshot)
+
+
+def test_faster_whisper_hotwords_merge_configured_names_without_duplicates():
+    engine = FasterWhisperSpeechToTextEngine.__new__(FasterWhisperSpeechToTextEngine)
+    engine.hotwords = "befintligt ord, Estrids rum"
+
+    count = engine.add_hotwords(["Estrids rum", "Bokhylla", "  YouTube   Music  ", ""])
+
+    assert count == 4
+    assert engine.hotwords == "befintligt ord, Estrids rum, Bokhylla, YouTube Music"
+
+
+def test_faster_whisper_falls_back_to_cpu_when_cuda_driver_is_unavailable(monkeypatch):
+    attempts: list[tuple[str, str, str]] = []
+
+    class FakeWhisperModel:
+        def __init__(self, model: str, *, device: str, compute_type: str, **_settings):
+            attempts.append((model, device, compute_type))
+            if device == "cuda":
+                raise RuntimeError("driver/library version mismatch")
+
+    monkeypatch.setattr("gateway.adapters._preload_cuda_runtime", lambda: None)
+    monkeypatch.setitem(sys.modules, "faster_whisper", types.SimpleNamespace(WhisperModel=FakeWhisperModel))
+
+    engine = FasterWhisperSpeechToTextEngine(
+        model="small", device="cuda", compute_type="float16",
+        fallback_model="base", fallback_compute_type="int8",
+    )
+
+    assert attempts == [("small", "cuda", "float16"), ("base", "cpu", "int8")]
+    assert engine.runtime_device == "cpu"
 
 
 def test_binary_audio_without_active_utterance_is_rejected():

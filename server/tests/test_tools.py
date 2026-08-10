@@ -303,6 +303,81 @@ def test_light_planner_tolerates_small_stt_error_in_configured_room(tmp_path: Pa
     asyncio.run(scenario())
 
 
+def test_light_planner_recovers_expanded_room_name_from_weekend_stt_log(tmp_path: Path):
+    async def fail_if_called(_request: httpx.Request) -> httpx.Response:
+        raise AssertionError("a confident configured target must not fall through to Ollama")
+
+    async def scenario():
+        registry = make_registry(tmp_path)
+        registry.lights.upsert(
+            name="Skrivbord", room="Sigrids rum", host="192.168.1.20",
+            mac="AABBCCDDEE20", model="AK001-ZJ200",
+        )
+        registry.lights.upsert(
+            name="Bokhylla", room="Estrids rum", host="192.168.1.21",
+            mac="AABBCCDDEE21", model="AK001-ZJ200",
+        )
+        planner = OllamaToolPlanner(
+            registry, "http://ollama.test", "qwen-test",
+            transport=httpx.MockTransport(fail_if_called),
+        )
+
+        action = await planner.plan("Tänd lyset i Esterhilds.", "pixel")
+
+        assert action is not None
+        assert action.name == "lights.set"
+        assert action.arguments == {"target": "Bokhylla", "power": True}
+
+    asyncio.run(scenario())
+
+
+def test_light_target_matcher_refuses_ambiguous_room_guess():
+    targets = [
+        {"name": "Första", "room": "Estrids rum"},
+        {"name": "Andra", "room": "Astrids rum"},
+    ]
+
+    assert OllamaToolPlanner._match_light_target("Tänd lyset i Strids rum", targets) == ""
+
+
+def test_light_planner_clarifies_an_ambiguous_spoken_room(tmp_path: Path):
+    async def scenario():
+        registry = make_registry(tmp_path)
+        registry.lights.upsert(
+            name="Första", room="Estrids rum", host="192.168.1.21",
+            mac="AABBCCDDEE21", model="AK001-ZJ200",
+        )
+        registry.lights.upsert(
+            name="Andra", room="Astrids rum", host="192.168.1.22",
+            mac="AABBCCDDEE22", model="AK001-ZJ200",
+        )
+        planner = OllamaToolPlanner(registry, "http://ollama.test", "qwen-test")
+
+        action = await planner.plan("Tänd ljuset i Strids rum", "pixel")
+
+        assert action is not None
+        assert action.name == "assistant.clarify"
+        assert "Estrids rum" in action.acknowledgement
+        assert "Astrids rum" in action.acknowledgement
+
+    asyncio.run(scenario())
+
+
+def test_light_planner_does_not_capture_an_unrelated_make_request(tmp_path: Path):
+    async def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"message": {"role": "assistant", "content": ""}, "done": True})
+
+    async def scenario():
+        planner = OllamaToolPlanner(
+            make_registry(tmp_path), "http://ollama.test", "qwen-test",
+            transport=httpx.MockTransport(handler),
+        )
+
+        assert await planner.plan("Gör en spellista med cyberpunk", "pixel") is None
+
+    asyncio.run(scenario())
+
+
 def test_light_planner_maps_room_brightness_and_effect_speed(tmp_path: Path):
     async def scenario():
         registry = make_registry(tmp_path)

@@ -526,14 +526,20 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 )
             }
             is ServerEvent.ActionCompleted -> {
+                val speechStillPlaying =
+                    event.status == "completed" && mutableState.value.status == VoiceStatus.Speaking
                 serverActionInProgress = false
-                finishUtterance()
+                if (!speechStillPlaying) finishUtterance()
                 mutableState.value = mutableState.value.copy(
-                    status = if (event.status == "completed") VoiceStatus.Idle else VoiceStatus.Error,
+                    status = when {
+                        event.status != "completed" -> VoiceStatus.Error
+                        speechStillPlaying -> VoiceStatus.Speaking
+                        else -> VoiceStatus.Idle
+                    },
                     actionMessage = event.message,
                     errorMessage = if (event.status == "completed") null else event.message,
                     pendingAction = null,
-                    canTalk = ready,
+                    canTalk = ready && !speechStillPlaying,
                 )
             }
             is ServerEvent.LightsConfig -> {
