@@ -102,6 +102,12 @@ private fun characterUi(id: String) = when (id) {
     else -> CharacterUi("Skinnskattaren", "⛏")
 }
 
+private fun llmModelLabel(model: String) = when (model) {
+    "qwen3:4b-instruct" -> "Qwen3 4B – snabb"
+    "qwen3.8:27b" -> "Qwen3.8 27B – smartare"
+    else -> model
+}
+
 @Composable
 fun EutherVoxApp() {
     val context = LocalContext.current
@@ -118,11 +124,13 @@ fun EutherVoxApp() {
     var username by remember { mutableStateOf(preferences.getString("username", "").orEmpty()) }
     var characterId by remember { mutableStateOf(preferences.getString("character_id", "skinnskattaren").orEmpty()) }
     var voiceId by remember { mutableStateOf(preferences.getString("voice_id", "piper-nst").orEmpty()) }
+    var llmModel by remember { mutableStateOf(preferences.getString("llm_model", "qwen3:4b-instruct").orEmpty()) }
     var settingsAddress by remember { mutableStateOf(address) }
     var settingsNodeName by remember { mutableStateOf(nodeName) }
     var settingsUsername by remember { mutableStateOf(username) }
     var settingsCharacterId by remember { mutableStateOf(characterId) }
     var settingsVoiceId by remember { mutableStateOf(voiceId) }
+    var settingsLlmModel by remember { mutableStateOf(llmModel) }
     var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var selectedTab by remember { mutableStateOf("voice") }
@@ -146,6 +154,7 @@ fun EutherVoxApp() {
                 username,
                 requestedVoiceId = voiceId,
                 requestedCharacterId = characterId,
+                requestedLlmModel = llmModel,
             )
         }
     }
@@ -199,13 +208,14 @@ fun EutherVoxApp() {
             Text(state.serverAddress.ifBlank { "Ingen server vald" }, style = MaterialTheme.typography.bodySmall)
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(onClick = { controller.connect(address, nodeName, username, requestedVoiceId = voiceId, requestedCharacterId = characterId) }, enabled = address.isNotBlank()) { Text("Anslut") }
+                Button(onClick = { controller.connect(address, nodeName, username, requestedVoiceId = voiceId, requestedCharacterId = characterId, requestedLlmModel = llmModel) }, enabled = address.isNotBlank()) { Text("Anslut") }
                 OutlinedButton(onClick = {
                     settingsAddress = address
                     settingsNodeName = nodeName
                     settingsUsername = username
                     settingsCharacterId = characterId
                     settingsVoiceId = voiceId
+                    settingsLlmModel = llmModel
                     settingsPassword = ""
                     showSettings = true
                 }) { Text("Inställningar") }
@@ -354,6 +364,18 @@ fun EutherVoxApp() {
                     VoiceChoice("moss-nano", "MOSS Nano – Sören Svartkrut", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("chatterbox", "Chatterbox – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }
                 }
+                Text("Språkmodell", fontWeight = FontWeight.Bold, color = Forest)
+                val selectableModels = (state.availableLlmModels + listOf(
+                    "qwen3:4b-instruct",
+                    settingsLlmModel,
+                )).filter { it.isNotBlank() }.distinct()
+                selectableModels.forEach { model ->
+                    VoiceChoice(model, llmModelLabel(model), settingsLlmModel) { settingsLlmModel = it }
+                }
+                Text(
+                    "Qwen3 4B svarar snabbast. Qwen3.8 27B är betydligt större och kan ta längre tid innan första svaret.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 OutlinedTextField(
                     settingsPassword,
                     { settingsPassword = it },
@@ -386,20 +408,23 @@ fun EutherVoxApp() {
                 val savedUsername = settingsUsername.trim()
                 val savedCharacterId = settingsCharacterId
                 val savedVoiceId = settingsVoiceId
+                val savedLlmModel = settingsLlmModel
                 preferences.edit(commit = true) {
                     putString("server_address", savedAddress)
                     putString("node_name", savedNodeName)
                     putString("username", savedUsername)
                     putString("character_id", savedCharacterId)
                     putString("voice_id", savedVoiceId)
+                    putString("llm_model", savedLlmModel)
                 }
                 address = savedAddress
                 nodeName = savedNodeName
                 username = savedUsername
                 characterId = savedCharacterId
                 voiceId = savedVoiceId
+                llmModel = savedLlmModel
                 showSettings = false
-                controller.connect(savedAddress, savedNodeName, savedUsername, settingsPassword, savedVoiceId, savedCharacterId)
+                controller.connect(savedAddress, savedNodeName, savedUsername, settingsPassword, savedVoiceId, savedCharacterId, savedLlmModel)
                 settingsPassword = ""
             }, enabled = settingsAddress.isNotBlank()) { Text("Spara och stäng") }
         },

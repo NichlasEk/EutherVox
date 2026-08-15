@@ -36,6 +36,8 @@ Den inbyggda mock-kedjan kräver inga AI-modeller. Den transkriberar till `Var l
 
 Det finns även en riktig svensk betaprofil: flerspråkig faster-whisper för STT, en liten svensk-capabel Qwen-modell via Ollama och Piper `sv_SE-nst-medium` för snabb CPU-TTS. Dots/VoxCPM är avsiktligt inte dialogstandard; de passar bättre som valbara kvalitetsmotorer för längre uppläsning.
 
+Betaprofilen har också ett allowlistat språkmodellval i Android-inställningarna. `Qwen3 4B` är fortsatt den snabba standarden och `Qwen3.8 27B` kan väljas för tyngre frågor. Tillåtna modellnamn kommer från `[llm].models` i gatewayens TOML och valet gäller bara den aktuella WebSocket-sessionen. Röstprofilen sätter `think = false` för låg svarstid; EutherPunk kan fortfarande använda modellens fulla resonemangsläge separat.
+
 Betaprofilen har fem valbara röster i Android-inställningarna:
 
 - `NST – snabb`: svensk Piper-standard och automatisk fallback.
@@ -74,6 +76,7 @@ mkdir -p models/piper models/faster-whisper
 uv run python -m piper.download_voices --download-dir models/piper sv_SE-nst-medium
 uv run python -m piper.download_voices --download-dir models/piper sv_SE-lisa-medium
 ollama pull qwen3:4b-instruct
+ollama pull qwen3.8:27b
 ```
 
 Chatterbox installeras separat för att inte blanda dess PyTorch-beroenden med gatewayn:

@@ -103,6 +103,7 @@ class VoiceSession:
     utterance_id: str | None = None
     character_name: str = ""
     voice_id: str = ""
+    llm_model: str = ""
     node_name: str = "unknown"
     audio: bytearray = field(default_factory=bytearray)
     response_task: asyncio.Task | None = None
@@ -171,6 +172,20 @@ class VoiceSession:
             raise ProtocolError("UNSUPPORTED_AUDIO", "Expected mono pcm_s16le, 16000 Hz, 20 ms frames", False)
         self.character_name = message.get("character", self.config.default_character)
         self.node_name = str(message.get("node_name", "unknown"))
+        available_models = self._available_llm_models()
+        if available_models:
+            requested_model = str(message.get("llm_model", available_models[0])).strip() or available_models[0]
+            if requested_model not in available_models:
+                raise ProtocolError("LLM_MODEL_NOT_ALLOWED", "Den valda språkmodellen är inte tillåten", False)
+            selector = getattr(self.llm, "with_model", None)
+            if selector:
+                self.llm = selector(requested_model)
+            elif requested_model != available_models[0]:
+                raise ProtocolError("LLM_MODEL_NOT_SUPPORTED", "Gatewayen kan inte byta språkmodell per session", False)
+            planner_selector = getattr(self.tool_planner, "with_model", None)
+            if planner_selector:
+                self.tool_planner = planner_selector(requested_model)
+            self.llm_model = requested_model
         character = self.characters.get(self.character_name)
         requested_voice = str(message.get("voice_id", character.voice_id))
         resolver = getattr(self.tts, "resolve_voice", None)
@@ -185,17 +200,32 @@ class VoiceSession:
         available_voices = getattr(self.tts, "voice_ids", ())
         if available_voices:
             ready["available_voices"] = list(available_voices)
+        if available_models:
+            ready["llm_model"] = self.llm_model
+            ready["available_llm_models"] = list(available_models)
         await self.send_json(ready)
         if self.authenticated_user and self.lights and self.lights.enabled:
             await self._send_light_config()
         if self.authenticated_user and self.television and self.television.enabled:
             await self._send_tv_config()
         LOG.info(
-            "session_ready session=%s character=%s voice=%s",
+            "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,
             self.character_name,
             self.voice_id,
+            self.llm_model or "default",
         )
+
+    def _available_llm_models(self) -> tuple[str, ...]:
+        if self.config.llm_provider != "ollama":
+            return ()
+        default_model = str(self.config.llm_settings.get("model", "")).strip()
+        configured = self.config.llm_settings.get("models", ())
+        if not isinstance(configured, list):
+            configured = ()
+        return tuple(dict.fromkeys(
+            model for model in (default_model, *(str(item).strip() for item in configured)) if model
+        ))
 
     async def _upsert_light(self, message: dict) -> None:
         if self.phase is Phase.CONNECTED:

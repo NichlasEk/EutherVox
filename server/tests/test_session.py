@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
@@ -66,6 +67,45 @@ def test_complete_mock_pipeline_streams_control_and_binary_audio():
         assert tts_start["audio"]["sample_rate"] == 24000
         assert any(isinstance(item, bytes) and len(item) == 960 for item in sent)
         assert session.phase is Phase.READY
+    asyncio.run(scenario())
+
+
+def test_session_selects_only_an_allowlisted_ollama_model():
+    class SelectableLlm:
+        def __init__(self, model: str):
+            self.model = model
+
+        def with_model(self, model: str):
+            return SelectableLlm(model)
+
+    async def scenario():
+        session, sent = make_session()
+        session.config = replace(
+            session.config,
+            llm_provider="ollama",
+            llm_settings={"model": "qwen3:4b-instruct", "models": ["qwen3.8:27b"]},
+        )
+        session.llm = SelectableLlm("qwen3:4b-instruct")
+        message = json.loads(start_message())
+        message["llm_model"] = "qwen3.8:27b"
+
+        await session.handle_text(json.dumps(message))
+
+        assert session.llm.model == "qwen3.8:27b"
+        assert sent[0]["llm_model"] == "qwen3.8:27b"
+        assert sent[0]["available_llm_models"] == ["qwen3:4b-instruct", "qwen3.8:27b"]
+
+        rejected, _ = make_session()
+        rejected.config = session.config
+        rejected.llm = SelectableLlm("qwen3:4b-instruct")
+        message["llm_model"] = "not-installed"
+        try:
+            await rejected.handle_text(json.dumps(message))
+        except ProtocolError as error:
+            assert error.code == "LLM_MODEL_NOT_ALLOWED"
+        else:
+            raise AssertionError("an unlisted model was accepted")
+
     asyncio.run(scenario())
 
 

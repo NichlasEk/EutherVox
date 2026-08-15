@@ -9,6 +9,7 @@ fun sessionStart(
     nodeName: String = "android-phone",
     character: String = "skinnskattaren",
     voiceId: String = "piper-nst",
+    llmModel: String = "",
 ): String =
     JsonObject().apply {
         addProperty("type", "session.start")
@@ -18,6 +19,7 @@ fun sessionStart(
         addProperty("room", "mobile")
         addProperty("character", character)
         addProperty("voice_id", voiceId)
+        if (llmModel.isNotBlank()) addProperty("llm_model", llmModel)
         add("input_audio", JsonObject().apply {
             addProperty("codec", "pcm_s16le")
             addProperty("sample_rate", 16_000)
@@ -85,7 +87,11 @@ sealed interface ServerEvent {
     )
     data class ConfiguredTv(val id: String, val name: String, val room: String, val host: String, val port: Int, val model: String)
     data class DiscoveredTv(val host: String, val port: Int, val model: String)
-    data class Ready(val sessionId: String) : ServerEvent
+    data class Ready(
+        val sessionId: String,
+        val llmModel: String = "",
+        val availableLlmModels: List<String> = emptyList(),
+    ) : ServerEvent
     data class SttPartial(val utteranceId: String, val text: String) : ServerEvent
     data class SttFinal(val utteranceId: String, val text: String) : ServerEvent
     data class TextDelta(val utteranceId: String, val text: String) : ServerEvent
@@ -119,7 +125,11 @@ fun parseServerEvent(raw: String): ServerEvent {
     val type = json["type"].asString
     val utterance = json["utterance_id"]?.asString.orEmpty()
     return when (type) {
-        "session.ready" -> ServerEvent.Ready(json["session_id"].asString)
+        "session.ready" -> ServerEvent.Ready(
+            sessionId = json["session_id"].asString,
+            llmModel = json["llm_model"]?.asString.orEmpty(),
+            availableLlmModels = json["available_llm_models"]?.asJsonArray?.map { it.asString }.orEmpty(),
+        )
         "stt.partial" -> ServerEvent.SttPartial(utterance, json["text"].asString)
         "stt.final" -> ServerEvent.SttFinal(utterance, json["text"].asString)
         "assistant.text.delta" -> ServerEvent.TextDelta(utterance, json["text"].asString)

@@ -127,6 +127,7 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
     async def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.content)
         assert request.url.path == "/api/chat"
+        assert payload["think"] is False
         assert {tool["function"]["name"] for tool in payload["tools"]} == {
             "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect", "tv_control",
         }

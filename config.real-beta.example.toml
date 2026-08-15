@@ -37,6 +37,8 @@ fallback_compute_type = "int8"
 provider = "ollama"
 base_url = "http://127.0.0.1:11434"
 model = "qwen3:4b-instruct"
+models = ["qwen3:4b-instruct", "qwen3.8:27b"]
+think = false
 timeout_seconds = 30.0
 
 [tts]

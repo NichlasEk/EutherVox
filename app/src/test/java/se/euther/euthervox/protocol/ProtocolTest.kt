@@ -7,15 +7,25 @@ import org.junit.Test
 
 class ProtocolTest {
     @Test fun sessionStartAdvertisesExactPcmFormat() {
-        val json = JsonParser.parseString(sessionStart("pixel", character = "christian-grosshandlare", voiceId = "moss-christian")).asJsonObject
+        val json = JsonParser.parseString(sessionStart("pixel", character = "christian-grosshandlare", voiceId = "moss-christian", llmModel = "qwen3.8:27b")).asJsonObject
         val audio = json["input_audio"].asJsonObject
         assertEquals(1, json["protocol_version"].asInt)
         assertEquals("pixel", json["node_name"].asString)
         assertEquals("christian-grosshandlare", json["character"].asString)
         assertEquals("moss-christian", json["voice_id"].asString)
+        assertEquals("qwen3.8:27b", json["llm_model"].asString)
         assertEquals("pcm_s16le", audio["codec"].asString)
         assertEquals(16_000, audio["sample_rate"].asInt)
         assertEquals(20, audio["frame_ms"].asInt)
+    }
+
+    @Test fun parsesAvailableLanguageModels() {
+        val event = parseServerEvent(
+            """{"type":"session.ready","session_id":"s1","llm_model":"qwen3.8:27b","available_llm_models":["qwen3:4b-instruct","qwen3.8:27b"]}"""
+        ) as ServerEvent.Ready
+
+        assertEquals("qwen3.8:27b", event.llmModel)
+        assertEquals(listOf("qwen3:4b-instruct", "qwen3.8:27b"), event.availableLlmModels)
     }
 
     @Test fun parsesTtsStart() {

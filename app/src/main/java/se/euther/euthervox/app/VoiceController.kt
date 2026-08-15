@@ -71,6 +71,8 @@ data class VoiceUiState(
     val discoveredTvs: List<ServerEvent.DiscoveredTv> = emptyList(),
     val tvMessage: String? = null,
     val tvBusy: Boolean = false,
+    val llmModel: String = "",
+    val availableLlmModels: List<String> = emptyList(),
 )
 
 private data class Timeline(
@@ -109,6 +111,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var nodeName = "android-phone"
     private var characterId = "skinnskattaren"
     private var voiceId = "piper-nst"
+    private var llmModel = ""
     private var shouldReconnect = false
     private var ready = false
     private var utteranceId: String? = null
@@ -126,6 +129,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         password: String = "",
         requestedVoiceId: String = "piper-nst",
         requestedCharacterId: String = "skinnskattaren",
+        requestedLlmModel: String = "",
     ) {
         val normalized = serverAddress.trim().trimEnd('/')
         if (normalized.isBlank()) {
@@ -137,6 +141,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         nodeName = requestedNodeName.ifBlank { "android-phone" }
         characterId = requestedCharacterId.ifBlank { "skinnskattaren" }
         voiceId = requestedVoiceId.ifBlank { "piper-nst" }
+        llmModel = requestedLlmModel.trim()
         shouldReconnect = true
         mutableState.value = mutableState.value.copy(serverAddress = normalized, status = VoiceStatus.Connecting, connectionLabel = "Ansluter…", errorMessage = null)
         connectionJob = scope.launch {
@@ -405,7 +410,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     override suspend fun onOpen() {
         mutableState.value = mutableState.value.copy(connectionLabel = "Handshake…", status = VoiceStatus.Connecting)
-        transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId))
+        transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId, llmModel = llmModel))
     }
 
     override suspend fun onText(text: String) {
@@ -458,7 +463,14 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         when (event) {
             is ServerEvent.Ready -> {
                 ready = true
-                mutableState.value = mutableState.value.copy(connectionLabel = "Ansluten", status = VoiceStatus.Idle, canTalk = true, errorMessage = null)
+                mutableState.value = mutableState.value.copy(
+                    connectionLabel = "Ansluten",
+                    status = VoiceStatus.Idle,
+                    canTalk = true,
+                    errorMessage = null,
+                    llmModel = event.llmModel,
+                    availableLlmModels = event.availableLlmModels,
+                )
                 sendPendingLightConfig()
             }
             is ServerEvent.SttPartial -> {

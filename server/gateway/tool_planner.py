@@ -66,6 +66,16 @@ class OllamaToolPlanner:
         self.timeout_seconds = timeout_seconds
         self.transport = transport
 
+    def with_model(self, model: str) -> "OllamaToolPlanner":
+        """Keep tool planning on the same allowlisted model as the voice session."""
+        return OllamaToolPlanner(
+            self.registry,
+            self.base_url,
+            model,
+            self.timeout_seconds,
+            self.transport,
+        )
+
     async def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
         deterministic_light = self._plan_light(transcript, node_name)
         if deterministic_light is not None:
@@ -89,6 +99,7 @@ class OllamaToolPlanner:
             "model": self.model,
             "stream": False,
             "keep_alive": "30m",
+            "think": False,
             "messages": [
                 {
                     "role": "system",

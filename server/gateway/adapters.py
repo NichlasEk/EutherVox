@@ -258,10 +258,15 @@ def _cached_whisper_snapshot(model: str, download_root: str | None) -> str | Non
 
 
 class OllamaTextGenerationEngine:
-    def __init__(self, base_url: str, model: str, timeout_seconds: float = 30.0):
+    def __init__(self, base_url: str, model: str, timeout_seconds: float = 30.0, think: bool = False):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.think = think
+
+    def with_model(self, model: str) -> "OllamaTextGenerationEngine":
+        """Return a per-session engine without mutating the shared default."""
+        return OllamaTextGenerationEngine(self.base_url, model, self.timeout_seconds, self.think)
 
     async def warmup(self) -> None:
         timeout = httpx.Timeout(self.timeout_seconds, connect=5.0)
@@ -290,6 +295,7 @@ class OllamaTextGenerationEngine:
             "model": self.model,
             "stream": True,
             "keep_alive": "30m",
+            "think": self.think,
             "messages": messages,
             "options": {"temperature": 0.65, "num_ctx": 4096, "num_predict": 96},
         }
@@ -391,6 +397,7 @@ def build_engines(config):
             base_url=str(settings.get("base_url", "http://127.0.0.1:11434")),
             model=str(settings["model"]),
             timeout_seconds=float(settings.get("timeout_seconds", 30)),
+            think=bool(settings.get("think", False)),
         )
     else:
         raise ValueError(f"Unsupported LLM provider: {config.llm_provider}")

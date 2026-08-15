@@ -53,6 +53,12 @@ valfri för äldre klienter; då används figurprofilens standardröst. Betaserv
 även vald `voice_id` och `available_voices` i `session.ready`. Alla yttrandemeddelanden
 ska använda samma `utterance_id` som aktiverades med `audio.start`.
 
+`session.start.llm_model` är också valfri. Gatewayen accepterar bara namn i
+`[llm].models`; ett okänt namn avvisas med `LLM_MODEL_NOT_ALLOWED`. Servern
+svarar med aktiv `llm_model` och `available_llm_models` i `session.ready`, så
+klienten kan visa samma serverstyrda lista. Modellvalet gäller bara den aktuella
+sessionen och ändrar inte andra anslutningar.
+
 Fel har formen:
 
 ```json
