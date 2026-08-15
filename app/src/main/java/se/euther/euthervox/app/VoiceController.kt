@@ -320,7 +320,9 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             transport?.sendText(audioEnd(id))
             if (cancelledGesture) transport?.sendText(responseCancel(id))
         }
-        armTimeout(id, 15_000, "Servern svarade inte inom 15 sekunder")
+        val responseTimeoutMs = if (llmModel == "qwen3.8:27b") 45_000L else 15_000L
+        val responseTimeoutSeconds = responseTimeoutMs / 1_000
+        armTimeout(id, responseTimeoutMs, "Servern svarade inte inom $responseTimeoutSeconds sekunder")
     }
 
     fun cancelResponse() {

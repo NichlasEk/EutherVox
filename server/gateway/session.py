@@ -182,9 +182,6 @@ class VoiceSession:
                 self.llm = selector(requested_model)
             elif requested_model != available_models[0]:
                 raise ProtocolError("LLM_MODEL_NOT_SUPPORTED", "Gatewayen kan inte byta språkmodell per session", False)
-            planner_selector = getattr(self.tool_planner, "with_model", None)
-            if planner_selector:
-                self.tool_planner = planner_selector(requested_model)
             self.llm_model = requested_model
         character = self.characters.get(self.character_name)
         requested_voice = str(message.get("voice_id", character.voice_id))
@@ -837,8 +834,11 @@ class VoiceSession:
             raise
         except Exception as error:
             LOG.exception("response_failed session=%s utterance=%s", self.session_id, utterance_id)
+            error_message = str(error).strip() or (
+                "Modellen svarade inte i tid" if isinstance(error, TimeoutError) else type(error).__name__
+            )
             try:
-                await self.send_json({"type": "error", "code": "PIPELINE_FAILED", "message": str(error), "recoverable": True})
+                await self.send_json({"type": "error", "code": "PIPELINE_FAILED", "message": error_message, "recoverable": True})
             except Exception:
                 LOG.info("pipeline_error_not_delivered session=%s utterance=%s", self.session_id, utterance_id)
         finally:

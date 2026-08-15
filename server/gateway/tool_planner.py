@@ -66,16 +66,6 @@ class OllamaToolPlanner:
         self.timeout_seconds = timeout_seconds
         self.transport = transport
 
-    def with_model(self, model: str) -> "OllamaToolPlanner":
-        """Keep tool planning on the same allowlisted model as the voice session."""
-        return OllamaToolPlanner(
-            self.registry,
-            self.base_url,
-            model,
-            self.timeout_seconds,
-            self.transport,
-        )
-
     async def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
         deterministic_light = self._plan_light(transcript, node_name)
         if deterministic_light is not None:
@@ -143,7 +133,7 @@ class OllamaToolPlanner:
             LOG.info("tool_planned name=%s action=%s", function.get("name"), action.name)
             return action
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError, ToolValidationError) as error:
-            LOG.warning("tool_planning_skipped error=%s", error)
+            LOG.warning("tool_planning_skipped error_type=%s error=%s", type(error).__name__, error)
             return None
 
     def _plan_light(self, transcript: str, node_name: str) -> DeviceAction | None:

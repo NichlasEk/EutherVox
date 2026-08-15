@@ -78,6 +78,10 @@ def test_session_selects_only_an_allowlisted_ollama_model():
         def with_model(self, model: str):
             return SelectableLlm(model)
 
+    class FixedPlanner:
+        def __init__(self, model: str):
+            self.model = model
+
     async def scenario():
         session, sent = make_session()
         session.config = replace(
@@ -86,12 +90,14 @@ def test_session_selects_only_an_allowlisted_ollama_model():
             llm_settings={"model": "qwen3:4b-instruct", "models": ["qwen3.8:27b"]},
         )
         session.llm = SelectableLlm("qwen3:4b-instruct")
+        session.tool_planner = FixedPlanner("qwen3:4b-instruct")
         message = json.loads(start_message())
         message["llm_model"] = "qwen3.8:27b"
 
         await session.handle_text(json.dumps(message))
 
         assert session.llm.model == "qwen3.8:27b"
+        assert session.tool_planner.model == "qwen3:4b-instruct"
         assert sent[0]["llm_model"] == "qwen3.8:27b"
         assert sent[0]["available_llm_models"] == ["qwen3:4b-instruct", "qwen3.8:27b"]
 
@@ -105,6 +111,28 @@ def test_session_selects_only_an_allowlisted_ollama_model():
             assert error.code == "LLM_MODEL_NOT_ALLOWED"
         else:
             raise AssertionError("an unlisted model was accepted")
+
+    asyncio.run(scenario())
+
+
+def test_pipeline_timeout_has_a_human_readable_error():
+    class TimeoutLlm:
+        async def generate(self, _transcript, _character):
+            raise TimeoutError
+            yield  # pragma: no cover
+
+    async def scenario():
+        session, sent = make_session()
+        session.llm = TimeoutLlm()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "u-timeout"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "u-timeout"}))
+        await session.response_task
+
+        error = next(item for item in sent if isinstance(item, dict) and item["type"] == "error")
+        assert error["code"] == "PIPELINE_FAILED"
+        assert error["message"] == "Modellen svarade inte i tid"
 
     asyncio.run(scenario())
 
