@@ -35,6 +35,7 @@ class CastService:
         )
         self.resolver_timeout_seconds = float(settings.get("resolver_timeout_seconds", 20.0))
         self.playback_confirmation_seconds = float(settings.get("playback_confirmation_seconds", 8.0))
+        self.default_room = str(settings.get("default_room", "")).casefold().strip()
         self.audio_resolver = YouTubeAudioResolver(self.timeout_seconds)
         self.targets: dict[str, CastTarget] = {}
         for room, raw in dict(settings.get("rooms", {})).items():
@@ -50,6 +51,9 @@ class CastService:
             except (KeyError, TypeError, ValueError):
                 continue
             self.targets[target.room] = target
+        if self.default_room and self.default_room not in self.targets:
+            LOG.warning("cast_default_room_ignored room=%s reason=not_configured", self.default_room)
+            self.default_room = ""
         self._lock = asyncio.Lock()
         self._connections: dict[str, tuple[object, object]] = {}
         self._last_video_ids: dict[str, str] = {}
@@ -60,6 +64,9 @@ class CastService:
     def display_name(self, room: str) -> str:
         target = self.targets.get(room.casefold())
         return target.friendly_name if target else room
+
+    def default_play_room(self) -> str:
+        return self.default_room if self.enabled else ""
 
     def resolve_control_room(self, requested_room: str = "") -> str:
         room = requested_room.casefold().strip()

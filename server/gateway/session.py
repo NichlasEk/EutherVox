@@ -544,6 +544,8 @@ class VoiceSession:
                         self._reset()
                         return
                 output_room = str(action.arguments.get("output_room", ""))
+                if action.name == "media.play" and not output_room and self.cast:
+                    output_room = self.cast.default_play_room()
                 if action.name in {"lights.set", "lights.effect"}:
                     try:
                         if not self.lights:

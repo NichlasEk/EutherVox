@@ -33,6 +33,10 @@ class ActionPlanner:
         r"^\s*(?:(?:okej|ok|hörru|du|snälla|skinnskattaren)\s*[,.:!?]?\s+)+",
         re.IGNORECASE,
     )
+    _RETRY_PREFIX = re.compile(
+        r"^\s*(?:prova|försök|testa)\s+(?:igen\s+)?(?:att\s+)?",
+        re.IGNORECASE,
+    )
     _PLAY = re.compile(
         r"^\s*(?:(?:(?:kan\s+du|skulle\s+du\s+kunna)\s+)?spela(?:\s+upp)?|jag\s+(?:(?:vill|skulle\s+vilja)\s+(?:(?:att\s+du\s+)?spela|ha|höra|lyssna\s+på)|spelar)|kan\s+jag\s+få\s+höra|ge\s+mig|sätt\s+på|dra\s+igång)\s+(.+?)\s*[.!?]*\s*$",
         re.IGNORECASE,
@@ -56,7 +60,17 @@ class ActionPlanner:
         re.IGNORECASE,
     )
     _YOUTUBE_SUFFIX = re.compile(r"\s+(?:på|i)\s+youtube\s+music\s*$", re.IGNORECASE)
-    _OUTPUT_SUFFIX = re.compile(r"\s+(?:i|på|till)\s+(?P<room>köket|kök\s*2)\s*$", re.IGNORECASE)
+    # Whisper occasionally joins a trailing "tack" to the room or hears
+    # köket as köken. Keep those observed variants out of the music query.
+    _OUTPUT_SUFFIX = re.compile(
+        r"\s+(?:(?:här\s+)?(?:i|på|till)\s+"
+        r"(?:(?:nest(?:en)?|högtalaren)\s+(?:här\s+)?(?:i|på)\s+)?|"
+        r"på\s+kökshögtalaren\s*|)"
+        r"(?P<room>kök(?:et(?:ack|ag)?|en)?|kök\s*2)"
+        r"(?:\s*,?\s*tack)?\s*$",
+        re.IGNORECASE,
+    )
+    _SPEAKER_SUFFIX = re.compile(r"\s+på\s+(?:högtalaren|nest(?:en)?)\s*$", re.IGNORECASE)
     _PLAYLIST_AFTER_NOUN = re.compile(
         r"^\s*(?:(?:skulle\s+du\s+kunna|kan\s+du)\s+)?(?:skapa|gör(?:a)?|fixa|sätt(?:a)?\s+ihop)(?:\s+mig)?(?:\s+en)?\s+spell?ist[ae](?:\s+(?:med|för|som|av)\s+)(.+?)\s*[.!?]*\s*$",
         re.IGNORECASE,
@@ -84,6 +98,7 @@ class ActionPlanner:
 
     def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
         command = self._CONVERSATION_PREFIX.sub("", transcript)
+        command = self._RETRY_PREFIX.sub("", command)
         wikipedia = self._plan_wikipedia(command, node_name)
         if wikipedia:
             return wikipedia
@@ -137,13 +152,18 @@ class ActionPlanner:
                 )
         if re.match(r"^\s*spela\s+in\b", command, re.IGNORECASE):
             return None
-        match = self._PLAY.match(command)
+        bare_request = bool(re.search(r"(?:,|\s)\s*tack\s*[.!?]*\s*$", command, re.IGNORECASE))
+        play_command, inferred_room = self._extract_output(command.strip(" .!?"))
+        match = self._PLAY.match(play_command)
+        if not match and bare_request and inferred_room:
+            match = re.match(r"^\s*(.+?)\s*$", play_command)
         if not match:
             return None
         if re.match(r"^\s*in\b", match.group(1), re.IGNORECASE):
             return None
         query = self._YOUTUBE_SUFFIX.sub("", match.group(1)).strip(" .!?")
         query, output_room = self._extract_output(query)
+        output_room = output_room or inferred_room
         query = self._TRACK_NOUN_PREFIX.sub("", query).strip(" .!?")
         if not query:
             return None
@@ -197,8 +217,10 @@ class ActionPlanner:
         )
 
     def _extract_output(self, text: str) -> tuple[str, str]:
+        speaker = self._SPEAKER_SUFFIX.search(text)
+        if speaker:
+            return text[:speaker.start()].strip(" .!?"), "köket"
         match = self._OUTPUT_SUFFIX.search(text)
         if not match:
             return text, ""
-        room = "köket" if match.group("room").casefold().replace(" ", "") in {"köket", "kök2"} else match.group("room").casefold()
-        return text[:match.start()].strip(" .!?"), room
+        return text[:match.start()].strip(" .!?"), "köket"

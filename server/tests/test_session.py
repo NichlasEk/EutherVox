@@ -501,6 +501,14 @@ def test_action_planner_accepts_natural_and_observed_stt_music_requests():
         "Jag skulle vilja ha November Rain i köket": "November Rain",
         "Kan jag få höra låten November Rain i köket?": "November Rain",
         "Ge mig Smells Like Teen Spirit i köket": "Smells Like Teen Spirit",
+        "Spela cyberpunk i köken": "cyberpunk",
+        "Spela cyberpunk i kök...": "cyberpunk",
+        "Spela cyberpunk i köketack": "cyberpunk",
+        "Spela cyberpunk i köketag": "cyberpunk",
+        "Spela ambient på högtalaren": "ambient",
+        "Spela techno på Nest i köket": "techno",
+        "Prova igen att spela cyberpunk i köket": "cyberpunk",
+        "Cyberpunk i köket, tack!": "Cyberpunk",
     }
 
     for transcript, expected_query in examples.items():

@@ -66,6 +66,12 @@ def test_control_without_room_uses_only_configured_target():
     assert service.resolve_control_room("KÖKET") == "köket"
 
 
+def test_configured_default_play_room_is_used_and_validated():
+    assert make_service(default_room="KÖKET").default_play_room() == "köket"
+    assert make_service(default_room="vardagsrummet").default_play_room() == ""
+    assert make_service(enabled=False, default_room="köket").default_play_room() == ""
+
+
 def test_media_controls_use_controller_and_stop_receiver():
     class FakeStatus:
         media_session_id = 42
