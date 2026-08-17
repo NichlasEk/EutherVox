@@ -212,6 +212,18 @@ class YouTubePlaylistService:
                 "refresh_token": token["refresh_token"],
                 "grant_type": "refresh_token",
             })
+            if response.status_code == 400:
+                try:
+                    oauth_payload = response.json()
+                    oauth_error = str(oauth_payload.get("error", "")) if isinstance(oauth_payload, dict) else ""
+                except (TypeError, ValueError):
+                    oauth_error = ""
+                if oauth_error == "invalid_grant":
+                    token_path.unlink(missing_ok=True)
+                    raise RuntimeError(
+                        "YouTube-kopplingen har gått ut eller återkallats. "
+                        "Koppla YouTube-kontot igen i Inställningar."
+                    )
             response.raise_for_status()
             refreshed = response.json()
         token.update(refreshed)

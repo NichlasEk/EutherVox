@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+import httpx
 from websockets.datastructures import Headers
 from websockets.http11 import Request
 
@@ -118,3 +119,52 @@ def test_oauth_tokens_and_state_are_bound_to_each_user(tmp_path: Path, monkeypat
             assert "annan användare" in str(error)
 
     asyncio.run(wrong_user())
+
+
+def test_expired_refresh_token_is_removed_and_requires_reconnection(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("TEST_GOOGLE_CLIENT_ID", "client")
+    monkeypatch.setenv("TEST_GOOGLE_CLIENT_SECRET", "secret")
+    service = YouTubePlaylistService({
+        "enabled": True,
+        "client_id_env": "TEST_GOOGLE_CLIENT_ID",
+        "client_secret_env": "TEST_GOOGLE_CLIENT_SECRET",
+        "redirect_uri": "https://example.test/callback",
+        "token_directory": str(tmp_path / "tokens"),
+    }, tmp_path)
+    service._write_token("nichlas", {
+        "access_token": "expired-access-token",
+        "expires_in": -1,
+        "refresh_token": "expired-refresh-token",
+    })
+
+    class RejectingGoogleClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, url, data):
+            assert url == "https://oauth2.googleapis.com/token"
+            assert data["refresh_token"] == "expired-refresh-token"
+            return httpx.Response(
+                400,
+                json={"error": "invalid_grant", "error_description": "Bad Request"},
+                request=httpx.Request("POST", url),
+            )
+
+    monkeypatch.setattr(
+        "gateway.youtube.httpx.AsyncClient",
+        lambda **_kwargs: RejectingGoogleClient(),
+    )
+
+    async def expired_token():
+        try:
+            await service._access_token("nichlas")
+            assert False, "An expired refresh token should require reconnection"
+        except RuntimeError as error:
+            assert "gått ut eller återkallats" in str(error)
+            assert "Inställningar" in str(error)
+
+    asyncio.run(expired_token())
+    assert not service.authorized("nichlas")
