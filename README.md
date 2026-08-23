@@ -342,6 +342,8 @@ Den exponerar:
 - `tvs_list`: listar namngivna TV-mål utan nätverksadresser.
 - `tvs_discover`: söker TCP 7142 inom det konfigurerade privata `/24`-nätet.
 - `tv_control`: skickar endast allowlistade NEC-kommandon till ett mål i `tvs.toml`.
+- `heat_pumps_list`: listar TOML-namngivna värmepumpar utan tjänsteadress.
+- `heat_pump_status`: läser normaliserad status från den lokala EutherPump-tjänsten.
 
 Skinnskattaren kan använda samma Wikipedia-verktyg direkt i röstflödet. Exempel:
 
@@ -354,6 +356,18 @@ Läs inledningen av Wikipedia-artikeln om järnmalm.
 Sammanfattningen grundas på den hämtade artikelinledningen, läses upp med figurens vanliga röst och visas tillsammans med källänken. Konfigurationen ligger under `[wikipedia]`; verktyget är skrivskyddat och API-adressen kan inte påverkas av modellen.
 
 En extern MCP-klient får endast validerade åtgärdsförslag för musik och spellistor. Det skrivskyddade Wikipedia-verktyget får däremot hämta källtext direkt; faktisk musik- och enhetsstyrning sker fortfarande inne i en autentiserad EutherVox-session. Se [MCP-verktygsdesignen](docs/mcp-tools.md).
+
+## Lokal värmepump
+
+Gatewayens `[eutherpump]`-sektion pekar på EutherPump via en privat IP-adress,
+loopback eller ett `.local`-namn. Varje tillåten pump anges med ID, visningsnamn
+och rum i `[[eutherpump.pumps]]`; modellen kan aldrig ange URL eller ett rått
+pump-ID. Exempelkonfigurationerna visar formatet.
+
+Den första integrationen är avsiktligt skrivskyddad. Frågor som “hur mår
+värmepumpen?” kan läsa online-status, rumstemperatur, börvärde och driftläge via
+gatewayen. På/av och temperaturändringar läggs inte till förrän EutherPump har
+en verifierad fysisk skrivväg med readback.
 
 ## Tester
 

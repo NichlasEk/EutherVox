@@ -7,6 +7,7 @@ from mcp.server import MCPServer
 
 from .cast import CastService
 from .config import load_config
+from .eutherpump import EutherPumpService
 from .tools import EutherVoxToolRegistry
 from .wikipedia import WikipediaService
 
@@ -76,6 +77,25 @@ def build_mcp_server(registry: EutherVoxToolRegistry, wikipedia: WikipediaServic
         return {"status": "completed", "message": message}
 
     @server.tool()
+    def heat_pumps_list() -> list[dict[str, str]]:
+        """Lista allowlistade värmepumpar utan EutherPump-adress eller råa transportfält."""
+        return registry.list_pump_targets()
+
+    @server.tool()
+    async def heat_pump_status(target: str) -> dict[str, object]:
+        """Läs status från en namngiven lokal värmepump utan att ändra den."""
+        action = registry.create_action(
+            "heat_pump_status", {"target": target}, "mcp-client"
+        )
+        if registry.eutherpump is None:
+            raise RuntimeError("EutherPump är inte konfigurerad")
+        state = await registry.eutherpump.state(str(action.arguments["target"]))
+        return {key: state.get(key) for key in (
+            "pump_id", "name", "room", "online", "power", "mode",
+            "target_temperature", "room_temperature", "fan_mode", "swing",
+        )}
+
+    @server.tool()
     def music_play(query: str, output_room: str = "") -> dict:
         """Skapa ett validerat förslag om att spela musik på telefonen eller i ett tillåtet rum."""
         return asdict(registry.create_action("music_play", {"query": query, "output_room": output_room}, "mcp-client"))
@@ -109,10 +129,12 @@ def cli() -> None:
     config = load_config(args.config)
     from .lighting import MagicHomeLightService
     from .television import NecTvService
+    from .eutherpump import EutherPumpService
     registry = EutherVoxToolRegistry(
         CastService(config.cast_settings),
         MagicHomeLightService(config.light_settings, config.config_dir),
         NecTvService(config.television_settings, config.config_dir),
+        EutherPumpService(config.eutherpump_settings),
     )
     wikipedia = WikipediaService(config.wikipedia_settings)
     build_mcp_server(registry, wikipedia).run(transport="stdio")

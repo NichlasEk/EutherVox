@@ -111,6 +111,16 @@ timeout_seconds = 8
 max_attempts = 2
 max_extract_chars = 6000
 
+[eutherpump]
+enabled = false
+base_url = "http://127.0.0.1:8794"
+timeout_seconds = 2
+
+[[eutherpump.pumps]]
+id = "vardagsrum"
+name = "Värmepumpen"
+room = "vardagsrummet"
+
 [conversation]
 history_turns = 10
 max_history_chars = 12000

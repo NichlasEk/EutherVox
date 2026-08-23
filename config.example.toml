@@ -54,6 +54,16 @@ scan_network = "192.168.32.0/24"
 timeout_seconds = 1.5
 scan_concurrency = 32
 
+[eutherpump]
+enabled = false
+base_url = "http://127.0.0.1:8794"
+timeout_seconds = 2
+
+[[eutherpump.pumps]]
+id = "vardagsrum"
+name = "Värmepumpen"
+room = "vardagsrummet"
+
 [wikipedia]
 enabled = false
 api_url = "https://sv.wikipedia.org/w/api.php"

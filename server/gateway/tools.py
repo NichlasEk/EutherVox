@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from .actions import DeviceAction
 from .cast import CastService
+from .eutherpump import EutherPumpService
 from .lighting import EFFECTS, MagicHomeLightService
 from .television import INPUTS, NecTvService
 
@@ -124,12 +125,34 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(
+            name="heat_pump_status",
+            description="Läs aktuell status och temperatur från en konfigurerad lokal värmepump.",
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Pumpnamn eller rum från EutherPump-konfigurationen.",
+                    },
+                },
+                "required": ["target"],
+                "additionalProperties": False,
+            },
+        ),
     )
 
-    def __init__(self, cast: CastService | None = None, lights: MagicHomeLightService | None = None, television: NecTvService | None = None):
+    def __init__(
+        self,
+        cast: CastService | None = None,
+        lights: MagicHomeLightService | None = None,
+        television: NecTvService | None = None,
+        eutherpump: EutherPumpService | None = None,
+    ):
         self.cast = cast
         self.lights = lights
         self.television = television
+        self.eutherpump = eutherpump
 
     @property
     def ollama_tools(self) -> list[dict[str, Any]]:
@@ -152,6 +175,11 @@ class EutherVoxToolRegistry:
         if not self.television or not self.television.enabled:
             return []
         return self.television.list_public()
+
+    def list_pump_targets(self) -> list[dict[str, str]]:
+        if not self.eutherpump or not self.eutherpump.enabled:
+            return []
+        return self.eutherpump.list_public()
 
     def create_action(self, tool_name: str, arguments: dict[str, Any], node_name: str) -> DeviceAction:
         if not isinstance(arguments, dict):
@@ -230,6 +258,22 @@ class EutherVoxToolRegistry:
                 target_node=node_name,
                 arguments={"target": tv.name, "command": command},
                 acknowledgement=f"Jag {description} {tv.name} i {tv.room}.",
+            )
+
+        if tool_name == "heat_pump_status":
+            if not self.eutherpump or not self.eutherpump.enabled:
+                raise ToolValidationError("EutherPump är inte konfigurerad")
+            target = self._clean_text(arguments.get("target"), "target")
+            try:
+                pump = self.eutherpump.resolve(target)
+            except ValueError as error:
+                raise ToolValidationError(str(error)) from error
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="pump.status",
+                target_node=node_name,
+                arguments={"target": pump.name},
+                acknowledgement=f"Jag läser av {pump.name} i {pump.room}.",
             )
 
         query_key = "description" if tool_name == "playlist_create" else "query"

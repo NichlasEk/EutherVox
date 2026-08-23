@@ -1026,6 +1026,56 @@ def test_tv_action_uses_fast_acknowledgement_and_returns_ready():
     asyncio.run(scenario())
 
 
+def test_pump_status_is_read_server_side_and_spoken():
+    class PumpStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Hur varmt är det vid värmepumpen?"
+
+    class FakeToolPlanner:
+        async def plan(self, transcript: str, node_name: str):
+            return DeviceAction(
+                action_id="pump-status",
+                name="pump.status",
+                target_node=node_name,
+                arguments={"target": "Värmepumpen"},
+                acknowledgement="Jag läser av värmepumpen.",
+            )
+
+    class FakePump:
+        calls: list[str] = []
+
+        async def status_text(self, target: str) -> str:
+            self.calls.append(target)
+            return "Värmepumpen i vardagsrummet är på, det är 20 grader i rummet."
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = PumpStt()
+        session.tool_planner = FakeToolPlanner()
+        session.eutherpump = FakePump()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({
+            "type": "audio.start", "utterance_id": "pump-1"
+        }))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({
+            "type": "audio.end", "utterance_id": "pump-1"
+        }))
+        await session.response_task
+
+        assert session.eutherpump.calls == ["Värmepumpen"]
+        controls = [item for item in sent if isinstance(item, dict)]
+        final = next(item for item in controls if item.get("type") == "assistant.text.final")
+        assert "20 grader" in final["text"]
+        assert any(
+            item.get("type") == "action.completed" and item.get("status") == "completed"
+            for item in controls
+        )
+        assert session.phase is Phase.READY
+
+    asyncio.run(scenario())
+
+
 def test_wikipedia_tool_summarizes_source_speaks_and_shows_link():
     class WikipediaStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:

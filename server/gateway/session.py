@@ -25,6 +25,7 @@ from .config import GatewayConfig
 from .playlists import TomlPlaylistStore
 from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
+from .eutherpump import EutherPumpService
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
 from .television import NecTvService
@@ -97,6 +98,7 @@ class VoiceSession:
     wikipedia: WikipediaService | None = None
     lights: MagicHomeLightService | None = None
     television: NecTvService | None = None
+    eutherpump: EutherPumpService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -617,6 +619,56 @@ class VoiceSession:
                         failure = f"Jag kunde inte styra TV:n: {error}"
                         await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": failure})
                         await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "failed", "message": failure})
+                    self._reset()
+                    return
+                if action.name == "pump.status":
+                    try:
+                        if not self.eutherpump:
+                            raise RuntimeError("EutherPump är inte konfigurerad")
+                        await self.send_json({
+                            "type": "action.status",
+                            "action_id": action.action_id,
+                            "status": "running",
+                            "message": "Läser värmepumpen…",
+                        })
+                        spoken = await self.eutherpump.status_text(
+                            str(action.arguments["target"])
+                        )
+                        character = self._character()
+                        await self.send_json({
+                            "type": "assistant.text.delta",
+                            "utterance_id": utterance_id,
+                            "text": spoken,
+                        })
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": spoken,
+                        })
+                        await self._stream_action_speech(
+                            utterance_id, spoken, character, fast=True
+                        )
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "completed",
+                            "message": spoken,
+                        })
+                        self._remember_turn(transcript, spoken)
+                    except Exception as error:
+                        LOG.exception("eutherpump_status_failed session=%s", self.session_id)
+                        failure = f"Jag kunde inte läsa värmepumpen: {error}"
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": failure,
+                        })
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "failed",
+                            "message": failure,
+                        })
                     self._reset()
                     return
                 if action.name == "knowledge.wikipedia":

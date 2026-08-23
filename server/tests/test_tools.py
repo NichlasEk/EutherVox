@@ -5,6 +5,7 @@ import json
 from uuid import UUID
 
 import httpx
+import pytest
 
 from gateway.cast import CastService
 from gateway.mcp_server import build_mcp_server
@@ -12,6 +13,7 @@ from gateway.tool_planner import OllamaToolPlanner
 from gateway.tools import EutherVoxToolRegistry, ToolValidationError
 from gateway.lighting import MagicHomeLightService
 from gateway.television import NecTvService
+from gateway.eutherpump import EutherPumpService
 from pathlib import Path
 
 
@@ -33,7 +35,12 @@ def make_registry(tmp_path: Path | None = None) -> EutherVoxToolRegistry:
     lights.upsert(name="Fönster", room="köket", host="192.168.1.20", mac="AABBCCDDEE20", model="AK001-ZJ200")
     television = NecTvService({"enabled": True, "config_file": "tvs.toml", "scan_network": "192.168.1.0/24"}, root)
     television.upsert(name="Stora TV:n", room="vardagsrummet", host="192.168.1.40")
-    return EutherVoxToolRegistry(cast, lights, television)
+    eutherpump = EutherPumpService({
+        "enabled": True,
+        "base_url": "http://127.0.0.1:8794",
+        "pumps": [{"id": "vardagsrum", "name": "Värmepumpen", "room": "vardagsrummet"}],
+    })
+    return EutherVoxToolRegistry(cast, lights, television, eutherpump)
 
 
 def test_registry_creates_allowlisted_music_and_confirmed_playlist_actions():
@@ -106,6 +113,20 @@ def test_registry_creates_only_allowlisted_toml_targeted_tv_actions(tmp_path: Pa
             pass
 
 
+def test_registry_creates_only_allowlisted_read_only_pump_status_actions(tmp_path: Path):
+    registry = make_registry(tmp_path)
+    action = registry.create_action(
+        "heat_pump_status", {"target": "vardagsrummet"}, "pixel"
+    )
+    assert action.name == "pump.status"
+    assert action.arguments == {"target": "Värmepumpen"}
+    assert "base_url" not in action.arguments
+    with pytest.raises(ToolValidationError):
+        registry.create_action(
+            "heat_pump_status", {"target": "garaget"}, "pixel"
+        )
+
+
 def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
     async def scenario():
         registry = make_registry()
@@ -115,6 +136,7 @@ def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
         assert {tool.name for tool in tools} == {
             "cast_list_targets", "lights_list", "light_set", "light_effect",
             "tvs_list", "tvs_discover", "tv_control", "music_play", "playlist_create", "wikipedia_lookup",
+            "heat_pumps_list", "heat_pump_status",
         }
         target = registry.list_cast_targets()[0]
         assert target == {"room": "köket", "display_name": "Kök 2", "model": "Google Nest Mini"}
@@ -130,6 +152,7 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
         assert payload["think"] is False
         assert {tool["function"]["name"] for tool in payload["tools"]} == {
             "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect", "tv_control",
+            "heat_pump_status",
         }
         return httpx.Response(200, json={
             "message": {

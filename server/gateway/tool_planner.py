@@ -20,7 +20,7 @@ class OllamaToolPlanner:
     """Turns natural language into one validated action through Ollama tool calls."""
 
     _ACTION_HINT = re.compile(
-        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg|tv|teven|skärm|hdmi|vga|bildingång)\b",
+        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg|tv|teven|skärm|hdmi|vga|bildingång|värmepump|pumpen|rumstemperatur|inomhustemperatur)\b",
         re.IGNORECASE,
     )
     _LIGHT_INTENT = re.compile(
@@ -85,6 +85,9 @@ class OllamaToolPlanner:
         televisions = ", ".join(
             f"{item['name']} i {item['room']}" for item in self.registry.list_tv_targets()
         ) or "inga"
+        pumps = ", ".join(
+            f"{item['name']} i {item['room']}" for item in self.registry.list_pump_targets()
+        ) or "inga"
         payload = {
             "model": self.model,
             "stream": False,
@@ -95,7 +98,7 @@ class OllamaToolPlanner:
                     "role": "system",
                     "content": (
                         "Du väljer EutherVox-verktyg. Anropa exakt ett verktyg endast när användaren faktiskt ber "
-                        "om musik, en spellista, ljusstyrning, TV-styrning eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
+                        "om musik, en spellista, ljusstyrning, TV-styrning, värmepumpsstatus eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
                         "Indirekta önskemål som 'jag är sugen på mörk cyberpunk i köket' betyder att musiken ska spelas nu. "
                         "Önskemål om en bestämd låt, till exempel 'jag vill höra November Rain', ska anropa music_play "
                         "och behålla låttitel och eventuell artist exakt i query. "
@@ -107,7 +110,8 @@ class OllamaToolPlanner:
                         "Använd light_set för av/på, statisk färg och intensitet. Översätt användarens färgbeskrivning till #RRGGBB. "
                         "Använd light_effect bara för ett mönster ur verktygets enum och välj normalt speed 40. "
                         "Använd tv_control för ström eller ingång på en konfigurerad NEC-TV. "
-                        f"Konfigurerade Cast-rum: {rooms}. Konfigurerade lampor: {lights}. Konfigurerade TV-apparater: {televisions}. Hitta aldrig på mål. "
+                        "Använd heat_pump_status endast för att läsa status eller temperatur; verktyget kan inte styra pumpen. "
+                        f"Konfigurerade Cast-rum: {rooms}. Konfigurerade lampor: {lights}. Konfigurerade TV-apparater: {televisions}. Konfigurerade värmepumpar: {pumps}. Hitta aldrig på mål. "
                         "Behåll genre och stämning i query eller description."
                     ),
                 },
