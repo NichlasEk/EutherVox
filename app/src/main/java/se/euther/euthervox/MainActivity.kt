@@ -332,6 +332,7 @@ fun EutherVoxApp() {
                     message = state.pumpMessage,
                     busy = state.pumpBusy,
                     onRefresh = controller::refreshPump,
+                    onControl = controller::controlPump,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -459,6 +460,7 @@ private fun PumpPanel(
     message: String?,
     busy: Boolean,
     onRefresh: (String?) -> Unit,
+    onControl: (String, Boolean?, String?, Int?, String?, String?, Int?) -> Unit,
 ) {
     fun temperature(value: Double?) = value?.let {
         if (it % 1.0 == 0.0) "${it.toInt()}°" else "${it}°"
@@ -469,11 +471,13 @@ private fun PumpPanel(
         "cool" -> "Kyla"
         "dry" -> "Avfuktning"
         "fan" -> "Fläkt"
+        "quiet" -> "Tyst"
         else -> value ?: "Okänt"
     }
     val selected = state ?: configured.firstOrNull()?.let {
         ServerEvent.PumpState(it.id, it.name, it.room, false, null, null, null, null, null, null, null, null, true)
     }
+    val controlsEnabled = selected?.let { it.online && !it.readOnly && !busy } == true
 
     Text("Värmepump", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text("Tydlig status och egna knappar – röststyrning är bara ett komplement.", textAlign = TextAlign.Center, color = Forest)
@@ -508,23 +512,98 @@ private fun PumpPanel(
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Text("Smarta snabbknappar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
-            Text("Knapparna är förberedda men låsta tills styrning och återläsning har verifierats mot den riktiga pumpen.", style = MaterialTheme.typography.bodySmall)
+            Text("Varje tryck skickas som en avgränsad ändring och räknas som klart först när pumpen har återläst samma värde.", style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { onControl(selected.name, true, null, null, null, null, null) },
+                    enabled = controlsEnabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("PÅ") }
+                Button(
+                    onClick = { onControl(selected.name, false, null, null, null, null, null) },
+                    enabled = controlsEnabled,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = Copper),
+                ) { Text("AV") }
+            }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf("Auto", "Värme", "Kyla", "Av").forEach { label ->
-                    OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text(label, style = MaterialTheme.typography.bodySmall) }
+                listOf("Auto" to "auto", "Värme" to "heat", "Kyla" to "cool", "Torka" to "dry").forEach { (label, value) ->
+                    OutlinedButton(
+                        onClick = { onControl(selected.name, true, value, null, null, null, null) },
+                        enabled = controlsEnabled,
+                        modifier = Modifier.weight(1f),
+                    ) { Text(label, style = MaterialTheme.typography.bodySmall) }
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("−") }
+                OutlinedButton(
+                    onClick = { onControl(selected.name, null, null, ((selected.targetTemperature ?: 21.0).toInt() - 1).coerceAtLeast(16), null, null, null) },
+                    enabled = controlsEnabled && (selected.targetTemperature ?: 16.0) > 16,
+                    modifier = Modifier.weight(1f),
+                ) { Text("−") }
                 Text(temperature(selected.targetTemperature), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("+") }
+                OutlinedButton(
+                    onClick = { onControl(selected.name, null, null, ((selected.targetTemperature ?: 21.0).toInt() + 1).coerceAtMost(30), null, null, null) },
+                    enabled = controlsEnabled && (selected.targetTemperature ?: 30.0) < 30,
+                    modifier = Modifier.weight(1f),
+                ) { Text("+") }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                listOf("Borta 16°", "Natt 19°", "Komfort 21°").forEach { label ->
-                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text(label, style = MaterialTheme.typography.bodySmall) }
+                listOf("Borta 16°" to 16, "Natt 19°" to 19, "Komfort 21°" to 21).forEach { (label, value) ->
+                    Button(
+                        onClick = { onControl(selected.name, true, "heat", value, "auto", null, null) },
+                        enabled = controlsEnabled,
+                        modifier = Modifier.weight(1f),
+                    ) { Text(label, style = MaterialTheme.typography.bodySmall) }
                 }
             }
-            Text("Säkerhetslås: inga styrkommandon skickas i denna version.", color = Copper, fontWeight = FontWeight.Bold)
+            Text("Fläkt", fontWeight = FontWeight.Bold, color = Forest)
+            listOf(listOf("Auto" to "auto", "Tyst" to "quiet", "1" to "1", "2" to "2"), listOf("3" to "3", "4" to "4", "5" to "5")).forEach { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    row.forEach { (label, value) ->
+                        OutlinedButton(
+                            onClick = { onControl(selected.name, null, null, null, value, null, null) },
+                            enabled = controlsEnabled,
+                            modifier = Modifier.weight(1f),
+                        ) { Text(label) }
+                    }
+                    repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
+                }
+            }
+            Text("Effektgräns", fontWeight = FontWeight.Bold, color = Forest)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf(50, 75, 100).forEach { value ->
+                    OutlinedButton(
+                        onClick = { onControl(selected.name, null, null, null, null, null, value) },
+                        enabled = controlsEnabled,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("$value %") }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                OutlinedButton(
+                    onClick = { onControl(selected.name, null, null, null, null, "vertical", null) },
+                    enabled = controlsEnabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Pendla") }
+                OutlinedButton(
+                    onClick = { onControl(selected.name, null, null, null, null, "not_used", null) },
+                    enabled = controlsEnabled,
+                    modifier = Modifier.weight(1f),
+                ) { Text("Stoppa spjäll") }
+            }
+            if (!controlsEnabled) {
+                Text(
+                    when {
+                        busy -> "Väntar på pumpens bekräftelse…"
+                        selected.readOnly -> "Styrning är låst på pumpservern."
+                        !selected.online -> "Styrning kräver att adaptern är online."
+                        else -> "Styrning är tillfälligt låst."
+                    },
+                    color = Copper,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
         }
     }
 }

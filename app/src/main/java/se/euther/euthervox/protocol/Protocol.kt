@@ -76,6 +76,25 @@ fun pumpStatus(target: String) = JsonObject().apply {
     addProperty("target", target)
 }.toString()
 
+fun pumpCommand(
+    target: String,
+    power: Boolean? = null,
+    mode: String? = null,
+    targetTemperature: Int? = null,
+    fanMode: String? = null,
+    swing: String? = null,
+    powerSelectionPercent: Int? = null,
+) = JsonObject().apply {
+    addProperty("type", "pump.command")
+    addProperty("target", target)
+    power?.let { addProperty("power", it) }
+    mode?.let { addProperty("mode", it) }
+    targetTemperature?.let { addProperty("target_temperature", it) }
+    fanMode?.let { addProperty("fan_mode", it) }
+    swing?.let { addProperty("swing", it) }
+    powerSelectionPercent?.let { addProperty("power_selection_percent", it) }
+}.toString()
+
 private fun message(type: String, utteranceId: String) = JsonObject().apply {
     addProperty("type", type)
     addProperty("utterance_id", utteranceId)
@@ -139,6 +158,7 @@ sealed interface ServerEvent {
     data class TvCommandResult(val status: String, val message: String) : ServerEvent
     data class PumpsConfig(val pumps: List<ConfiguredPump>) : ServerEvent
     data class PumpStatusResult(val pump: PumpState) : ServerEvent
+    data class PumpCommandResult(val pump: PumpState, val message: String) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -220,24 +240,28 @@ fun parseServerEvent(raw: String): ServerEvent {
                 )
             } },
         )
-        "pump.status.result" -> json["pump"].asJsonObject.let { pump ->
-            ServerEvent.PumpStatusResult(ServerEvent.PumpState(
-                id = pump["id"].asString,
-                name = pump["name"].asString,
-                room = pump["room"].asString,
-                online = pump["online"]?.asBoolean ?: false,
-                power = pump["power"]?.takeUnless { it.isJsonNull }?.asBoolean,
-                mode = pump["mode"]?.takeUnless { it.isJsonNull }?.asString,
-                targetTemperature = pump["target_temperature"]?.takeUnless { it.isJsonNull }?.asDouble,
-                roomTemperature = pump["room_temperature"]?.takeUnless { it.isJsonNull }?.asDouble,
-                outdoorTemperature = pump["outdoor_temperature"]?.takeUnless { it.isJsonNull }?.asDouble,
-                fanMode = pump["fan_mode"]?.takeUnless { it.isJsonNull }?.asString,
-                powerSelectionPercent = pump["power_selection_percent"]?.takeUnless { it.isJsonNull }?.asInt,
-                updatedAt = pump["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
-                readOnly = pump["read_only"]?.asBoolean ?: true,
-            ))
-        }
+        "pump.status.result" -> ServerEvent.PumpStatusResult(parsePumpState(json["pump"].asJsonObject))
+        "pump.command.result" -> ServerEvent.PumpCommandResult(
+            parsePumpState(json["pump"].asJsonObject),
+            json["message"]?.asString ?: "Pumpen bekräftade ändringen.",
+        )
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)
     }
 }
+
+private fun parsePumpState(pump: JsonObject) = ServerEvent.PumpState(
+    id = pump["id"].asString,
+    name = pump["name"].asString,
+    room = pump["room"].asString,
+    online = pump["online"]?.asBoolean ?: false,
+    power = pump["power"]?.takeUnless { it.isJsonNull }?.asBoolean,
+    mode = pump["mode"]?.takeUnless { it.isJsonNull }?.asString,
+    targetTemperature = pump["target_temperature"]?.takeUnless { it.isJsonNull }?.asDouble,
+    roomTemperature = pump["room_temperature"]?.takeUnless { it.isJsonNull }?.asDouble,
+    outdoorTemperature = pump["outdoor_temperature"]?.takeUnless { it.isJsonNull }?.asDouble,
+    fanMode = pump["fan_mode"]?.takeUnless { it.isJsonNull }?.asString,
+    powerSelectionPercent = pump["power_selection_percent"]?.takeUnless { it.isJsonNull }?.asInt,
+    updatedAt = pump["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
+    readOnly = pump["read_only"]?.asBoolean ?: true,
+)

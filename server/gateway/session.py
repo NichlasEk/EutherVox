@@ -144,6 +144,8 @@ class VoiceSession:
                 await self._tv_command(message)
             elif message_type == "pump.status":
                 await self._pump_status(message)
+            elif message_type == "pump.command":
+                await self._pump_command(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -315,6 +317,26 @@ class VoiceSession:
         await self.send_json({
             "type": "pumps.config",
             "pumps": self.eutherpump.list_public() if self.eutherpump else [],
+        })
+
+    async def _pump_command(self, message: dict) -> None:
+        self._require_pump_access()
+        allowed = {
+            "power", "mode", "target_temperature", "fan_mode", "swing",
+            "power_selection_percent",
+        }
+        changes = {key: value for key, value in message.items() if key in allowed}
+        if not changes:
+            raise ProtocolError("PUMP_COMMAND_INVALID", "Minst en pumpinställning krävs")
+        try:
+            target = self.eutherpump.resolve(str(message["target"]))
+            state = await self.eutherpump.control(target.name, changes)
+        except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("PUMP_COMMAND_FAILED", str(error)) from error
+        await self.send_json({
+            "type": "pump.command.result",
+            "pump": {**target.public(), **state},
+            "message": "Pumpen bekräftade ändringen.",
         })
 
     def _require_pump_access(self) -> None:

@@ -77,3 +77,20 @@ def test_rejects_state_for_a_different_pump_identity() -> None:
             await service.state("Värmepumpen")
 
     asyncio.run(scenario())
+
+
+def test_control_sends_only_requested_changes_and_requires_matching_readback() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert json.loads(request.content) == {"power": True, "target_temperature": 21}
+        return httpx.Response(200, json={
+            "status": "completed",
+            "state": {"pump_id": "vardagsrum", "online": True, "power": True, "target_temperature": 21},
+        })
+
+    async def scenario() -> None:
+        service = EutherPumpService(settings(), transport=httpx.MockTransport(handler))
+        state = await service.control("Värmepumpen", {"power": True, "target_temperature": 21})
+        assert state["target_temperature"] == 21
+
+    asyncio.run(scenario())

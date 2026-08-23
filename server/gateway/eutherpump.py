@@ -75,6 +75,36 @@ class EutherPumpService:
             raise RuntimeError("EutherPump svarade med fel pumpidentitet")
         return payload
 
+    async def control(self, selector: str, changes: dict[str, object]) -> dict[str, object]:
+        if not self.enabled:
+            raise RuntimeError("EutherPump är inte aktiverad")
+        target = self.resolve(selector)
+        timeout = httpx.Timeout(max(self.timeout, 15.0), connect=min(1.0, self.timeout))
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                trust_env=False,
+                transport=self.transport,
+            ) as client:
+                response = await client.patch(
+                    f"{self.base_url}/v1/pumps/{quote(target.pump_id, safe='')}/state",
+                    json=changes,
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as error:
+            detail = ""
+            if isinstance(error, httpx.HTTPStatusError):
+                try:
+                    detail = str(error.response.json().get("detail", ""))
+                except (ValueError, AttributeError):
+                    pass
+            raise RuntimeError(detail or "EutherPump kunde inte genomföra kommandot") from error
+        payload = response.json()
+        state = payload.get("state") if isinstance(payload, dict) else None
+        if not isinstance(state, dict) or state.get("pump_id") != target.pump_id:
+            raise RuntimeError("EutherPump svarade med fel pumpidentitet")
+        return state
+
     async def status_text(self, selector: str) -> str:
         target = self.resolve(selector)
         state = await self.state(target.name)

@@ -110,4 +110,18 @@ class ProtocolTest {
         assertEquals(24.0, event.pump.targetTemperature!!, 0.0)
         assertTrue(event.pump.readOnly)
     }
+
+    @Test fun serializesCombinedPumpCommandAndParsesConfirmedState() {
+        val command = JsonParser.parseString(
+            pumpCommand("Värmepumpen", power = true, mode = "heat", targetTemperature = 21, fanMode = "auto")
+        ).asJsonObject
+        assertEquals("pump.command", command["type"].asString)
+        assertEquals(21, command["target_temperature"].asInt)
+
+        val event = parseServerEvent(
+            """{"type":"pump.command.result","message":"Pumpen bekräftade ändringen.","pump":{"id":"pump-1","name":"Värmepumpen","room":"vardagsrummet","online":true,"power":true,"mode":"heat","target_temperature":21,"room_temperature":23,"outdoor_temperature":20,"fan_mode":"auto","power_selection_percent":100,"updated_at":"2026-08-23T12:34:56+00:00","read_only":false}}"""
+        ) as ServerEvent.PumpCommandResult
+        assertEquals("heat", event.pump.mode)
+        assertEquals(false, event.pump.readOnly)
+    }
 }

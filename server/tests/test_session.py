@@ -375,18 +375,32 @@ def test_authenticated_session_exposes_and_reads_configured_pump():
                 "target_temperature": 24, "room_temperature": 23, "read_only": True,
             }
 
+        async def control(self, selector: str, changes: dict):
+            assert selector == "Värmepumpen"
+            assert changes == {"mode": "heat", "target_temperature": 21}
+            return {
+                "pump_id": "pump-1", "online": True, "power": True, "mode": "heat",
+                "target_temperature": 21, "room_temperature": 23, "read_only": False,
+            }
+
     async def scenario():
         session, sent = make_session()
         session.authenticated_user = "nichlas"
         session.eutherpump = FakePump()
         await session.handle_text(start_message())
         await session.handle_text(json.dumps({"type": "pump.status", "target": "Värmepumpen"}))
+        await session.handle_text(json.dumps({
+            "type": "pump.command", "target": "Värmepumpen",
+            "mode": "heat", "target_temperature": 21,
+        }))
 
         config = next(item for item in sent if item.get("type") == "pumps.config")
         result = next(item for item in sent if item.get("type") == "pump.status.result")
+        command = next(item for item in sent if item.get("type") == "pump.command.result")
         assert config["pumps"][0]["room"] == "vardagsrummet"
         assert result["pump"]["room_temperature"] == 23
         assert result["pump"]["name"] == "Värmepumpen"
+        assert command["pump"]["target_temperature"] == 21
 
     asyncio.run(scenario())
 

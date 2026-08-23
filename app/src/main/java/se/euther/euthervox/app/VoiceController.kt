@@ -29,6 +29,7 @@ import se.euther.euthervox.protocol.audioEnd
 import se.euther.euthervox.protocol.audioStart
 import se.euther.euthervox.protocol.parseServerEvent
 import se.euther.euthervox.protocol.pumpStatus
+import se.euther.euthervox.protocol.pumpCommand
 import se.euther.euthervox.protocol.responseCancel
 import se.euther.euthervox.protocol.sessionStart
 import se.euther.euthervox.protocol.lightConfigUpsert
@@ -420,6 +421,28 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    fun controlPump(
+        target: String,
+        power: Boolean? = null,
+        mode: String? = null,
+        targetTemperature: Int? = null,
+        fanMode: String? = null,
+        swing: String? = null,
+        powerSelectionPercent: Int? = null,
+    ) {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(pumpMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(pumpBusy = true, pumpMessage = "Skickar och väntar på pumpens bekräftelse…")
+        scope.launch {
+            val sent = transport?.sendText(pumpCommand(
+                target, power, mode, targetTemperature, fanMode, swing, powerSelectionPercent,
+            )) == true
+            if (!sent) mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = "Kunde inte skicka pumpkommandot.")
+        }
+    }
+
     private fun sendPendingLightConfig() {
         val pending = pendingLightConfig ?: return
         mutableState.value = mutableState.value.copy(lightConfigMessage = "Sparar lampnamnet i serverns TOML…")
@@ -605,6 +628,11 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 pumpState = event.pump,
                 pumpBusy = false,
                 pumpMessage = if (event.pump.online) "Status uppdaterad." else "Offline – visar senaste kända mätning.",
+            )
+            is ServerEvent.PumpCommandResult -> mutableState.value = mutableState.value.copy(
+                pumpState = event.pump,
+                pumpBusy = false,
+                pumpMessage = event.message,
             )
             is ServerEvent.Error -> if (event.code.startsWith("PUMP_")) {
                 mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = event.message)
