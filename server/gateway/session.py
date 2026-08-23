@@ -142,6 +142,8 @@ class VoiceSession:
                 await self._discover_tvs()
             elif message_type == "tv.command":
                 await self._tv_command(message)
+            elif message_type == "pump.status":
+                await self._pump_status(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -207,6 +209,8 @@ class VoiceSession:
             await self._send_light_config()
         if self.authenticated_user and self.television and self.television.enabled:
             await self._send_tv_config()
+        if self.authenticated_user and self.eutherpump and self.eutherpump.enabled:
+            await self._send_pump_config()
         LOG.info(
             "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,
@@ -294,6 +298,32 @@ class VoiceSession:
             raise ProtocolError("TV_AUTH_REQUIRED", "Inloggning krävs för TV-styrning")
         if not self.television or not self.television.enabled:
             raise ProtocolError("TV_DISABLED", "TV-tjänsten är inte aktiverad")
+
+    async def _pump_status(self, message: dict) -> None:
+        self._require_pump_access()
+        try:
+            target = self.eutherpump.resolve(str(message["target"]))
+            state = await self.eutherpump.state(target.name)
+        except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("PUMP_STATUS_FAILED", str(error)) from error
+        await self.send_json({
+            "type": "pump.status.result",
+            "pump": {**target.public(), **state},
+        })
+
+    async def _send_pump_config(self) -> None:
+        await self.send_json({
+            "type": "pumps.config",
+            "pumps": self.eutherpump.list_public() if self.eutherpump else [],
+        })
+
+    def _require_pump_access(self) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("PUMP_AUTH_REQUIRED", "Inloggning krävs för pumpstatus")
+        if not self.eutherpump or not self.eutherpump.enabled:
+            raise ProtocolError("PUMP_DISABLED", "Värmepumpstjänsten är inte aktiverad")
 
     async def _start_audio(self, message: dict) -> None:
         if self.phase is not Phase.READY:

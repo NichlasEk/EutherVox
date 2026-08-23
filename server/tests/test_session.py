@@ -24,6 +24,7 @@ from gateway.session import Phase, ProtocolError, SentenceChunker, VoiceSession
 from gateway.youtube import CreatedPlaylist, PlaylistPreview
 from gateway.wikipedia import WikipediaArticle
 from gateway.lighting import MagicHomeLightService
+from gateway.eutherpump import ConfiguredPump
 
 
 ROOT = Path(__file__).parents[2]
@@ -353,6 +354,40 @@ def test_binary_audio_without_active_utterance_is_rejected():
             assert False, "ProtocolError expected"
         except ProtocolError as error:
             assert error.code == "UNEXPECTED_AUDIO"
+    asyncio.run(scenario())
+
+
+def test_authenticated_session_exposes_and_reads_configured_pump():
+    class FakePump:
+        enabled = True
+
+        def list_public(self):
+            return [{"id": "pump-1", "name": "Värmepumpen", "room": "vardagsrummet"}]
+
+        def resolve(self, selector: str):
+            assert selector == "Värmepumpen"
+            return ConfiguredPump("pump-1", "Värmepumpen", "vardagsrummet")
+
+        async def state(self, selector: str):
+            assert selector == "Värmepumpen"
+            return {
+                "pump_id": "pump-1", "online": True, "power": True, "mode": "auto",
+                "target_temperature": 24, "room_temperature": 23, "read_only": True,
+            }
+
+    async def scenario():
+        session, sent = make_session()
+        session.authenticated_user = "nichlas"
+        session.eutherpump = FakePump()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "pump.status", "target": "Värmepumpen"}))
+
+        config = next(item for item in sent if item.get("type") == "pumps.config")
+        result = next(item for item in sent if item.get("type") == "pump.status.result")
+        assert config["pumps"][0]["room"] == "vardagsrummet"
+        assert result["pump"]["room_temperature"] == 23
+        assert result["pump"]["name"] == "Värmepumpen"
+
     asyncio.run(scenario())
 
 

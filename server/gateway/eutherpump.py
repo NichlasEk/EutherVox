@@ -58,15 +58,18 @@ class EutherPumpService:
             raise RuntimeError("EutherPump är inte aktiverad")
         target = self.resolve(selector)
         timeout = httpx.Timeout(self.timeout, connect=min(1.0, self.timeout))
-        async with httpx.AsyncClient(
-            timeout=timeout,
-            trust_env=False,
-            transport=self.transport,
-        ) as client:
-            response = await client.get(
-                f"{self.base_url}/v1/pumps/{quote(target.pump_id, safe='')}/state"
-            )
-            response.raise_for_status()
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout,
+                trust_env=False,
+                transport=self.transport,
+            ) as client:
+                response = await client.get(
+                    f"{self.base_url}/v1/pumps/{quote(target.pump_id, safe='')}/state"
+                )
+                response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise RuntimeError("EutherPump svarar inte") from error
         payload = response.json()
         if not isinstance(payload, dict) or payload.get("pump_id") != target.pump_id:
             raise RuntimeError("EutherPump svarade med fel pumpidentitet")

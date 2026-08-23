@@ -28,6 +28,7 @@ import se.euther.euthervox.protocol.actionResult
 import se.euther.euthervox.protocol.audioEnd
 import se.euther.euthervox.protocol.audioStart
 import se.euther.euthervox.protocol.parseServerEvent
+import se.euther.euthervox.protocol.pumpStatus
 import se.euther.euthervox.protocol.responseCancel
 import se.euther.euthervox.protocol.sessionStart
 import se.euther.euthervox.protocol.lightConfigUpsert
@@ -71,6 +72,10 @@ data class VoiceUiState(
     val discoveredTvs: List<ServerEvent.DiscoveredTv> = emptyList(),
     val tvMessage: String? = null,
     val tvBusy: Boolean = false,
+    val configuredPumps: List<ServerEvent.ConfiguredPump> = emptyList(),
+    val pumpState: ServerEvent.PumpState? = null,
+    val pumpMessage: String? = null,
+    val pumpBusy: Boolean = false,
     val llmModel: String = "",
     val availableLlmModels: List<String> = emptyList(),
 )
@@ -398,6 +403,23 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    fun refreshPump(target: String? = mutableState.value.configuredPumps.firstOrNull()?.name) {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(pumpMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        if (target.isNullOrBlank()) {
+            mutableState.value = mutableState.value.copy(pumpMessage = "Ingen värmepump är konfigurerad.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(pumpBusy = true, pumpMessage = "Läser pumpstatus…")
+        scope.launch {
+            if (transport?.sendText(pumpStatus(target)) != true) {
+                mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = "Kunde inte fråga pumpservern.")
+            }
+        }
+    }
+
     private fun sendPendingLightConfig() {
         val pending = pendingLightConfig ?: return
         mutableState.value = mutableState.value.copy(lightConfigMessage = "Sparar lampnamnet i serverns TOML…")
@@ -572,7 +594,21 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 tvMessage = if (event.televisions.isEmpty()) "Ingen enhet med NEC-port 7142 hittades." else "Hittade ${event.televisions.size} möjlig NEC-TV.",
             )
             is ServerEvent.TvCommandResult -> mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = event.message)
-            is ServerEvent.Error -> if (event.code.startsWith("TV_")) {
+            is ServerEvent.PumpsConfig -> {
+                mutableState.value = mutableState.value.copy(
+                    configuredPumps = event.pumps,
+                    pumpMessage = if (event.pumps.isEmpty()) "Ingen värmepump är konfigurerad." else "Värmepumpen är kopplad till EutherVox.",
+                )
+                if (event.pumps.isNotEmpty()) refreshPump(event.pumps.first().name)
+            }
+            is ServerEvent.PumpStatusResult -> mutableState.value = mutableState.value.copy(
+                pumpState = event.pump,
+                pumpBusy = false,
+                pumpMessage = if (event.pump.online) "Status uppdaterad." else "Offline – visar senaste kända mätning.",
+            )
+            is ServerEvent.Error -> if (event.code.startsWith("PUMP_")) {
+                mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = event.message)
+            } else if (event.code.startsWith("TV_")) {
                 mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = event.message)
             } else {
                 fail("${event.code}: ${event.message}", event.recoverable)

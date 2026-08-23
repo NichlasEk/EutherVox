@@ -97,4 +97,17 @@ class ProtocolTest {
         assertEquals("vardagsrummet", event.televisions.single().room)
         assertEquals(7142, event.televisions.single().port)
     }
+
+    @Test fun serializesPumpStatusAndParsesNormalizedState() {
+        val request = JsonParser.parseString(pumpStatus("Värmepumpen")).asJsonObject
+        assertEquals("pump.status", request["type"].asString)
+        assertEquals("Värmepumpen", request["target"].asString)
+
+        val event = parseServerEvent(
+            """{"type":"pump.status.result","pump":{"id":"pump-1","name":"Värmepumpen","room":"vardagsrummet","online":true,"power":true,"mode":"auto","target_temperature":24,"room_temperature":23,"outdoor_temperature":20,"fan_mode":"auto","power_selection_percent":100,"updated_at":"2026-08-23T12:34:56+00:00","read_only":true}}"""
+        ) as ServerEvent.PumpStatusResult
+        assertEquals(23.0, event.pump.roomTemperature!!, 0.0)
+        assertEquals(24.0, event.pump.targetTemperature!!, 0.0)
+        assertTrue(event.pump.readOnly)
+    }
 }

@@ -186,6 +186,7 @@ fun EutherVoxApp() {
                 TabChoice("Röst", selectedTab == "voice", Modifier.weight(1f)) { selectedTab = "voice" }
                 TabChoice("Ljus", selectedTab == "lights", Modifier.weight(1f)) { selectedTab = "lights" }
                 TabChoice("TV", selectedTab == "tv", Modifier.weight(1f)) { selectedTab = "tv" }
+                TabChoice("Pump", selectedTab == "pump", Modifier.weight(1f)) { selectedTab = "pump" }
             }
             if (selectedTab == "voice") {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
@@ -314,7 +315,7 @@ fun EutherVoxApp() {
                     onStopScan = lightController::stopScan,
                     onInspect = lightController::inspect,
                 )
-            } else {
+            } else if (selectedTab == "tv") {
                 TvPanel(
                     configured = state.configuredTvs,
                     discovered = state.discoveredTvs,
@@ -323,6 +324,14 @@ fun EutherVoxApp() {
                     onDiscover = controller::discoverTvs,
                     onSave = controller::saveTv,
                     onCommand = controller::controlTv,
+                )
+            } else {
+                PumpPanel(
+                    configured = state.configuredPumps,
+                    state = state.pumpState,
+                    message = state.pumpMessage,
+                    busy = state.pumpBusy,
+                    onRefresh = controller::refreshPump,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -440,6 +449,83 @@ private fun TabChoice(label: String, selected: Boolean, modifier: Modifier = Mod
         Button(onClick = onSelect, modifier = modifier) { Text(label) }
     } else {
         OutlinedButton(onClick = onSelect, modifier = modifier) { Text(label) }
+    }
+}
+
+@Composable
+private fun PumpPanel(
+    configured: List<ServerEvent.ConfiguredPump>,
+    state: ServerEvent.PumpState?,
+    message: String?,
+    busy: Boolean,
+    onRefresh: (String?) -> Unit,
+) {
+    fun temperature(value: Double?) = value?.let {
+        if (it % 1.0 == 0.0) "${it.toInt()}°" else "${it}°"
+    } ?: "—"
+    fun mode(value: String?) = when (value) {
+        "auto" -> "Auto"
+        "heat" -> "Värme"
+        "cool" -> "Kyla"
+        "dry" -> "Avfuktning"
+        "fan" -> "Fläkt"
+        else -> value ?: "Okänt"
+    }
+    val selected = state ?: configured.firstOrNull()?.let {
+        ServerEvent.PumpState(it.id, it.name, it.room, false, null, null, null, null, null, null, null, null, true)
+    }
+
+    Text("Värmepump", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+    Text("Tydlig status och egna knappar – röststyrning är bara ett komplement.", textAlign = TextAlign.Center, color = Forest)
+    if (selected == null) {
+        Text(message ?: "Ingen pump tillgänglig. Anslut till servern under Röst.", textAlign = TextAlign.Center)
+        OutlinedButton(onClick = { onRefresh(null) }, enabled = !busy) { Text("Försök igen") }
+        return
+    }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text(selected.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+                    Text(selected.room, style = MaterialTheme.typography.bodySmall)
+                }
+                Text(if (selected.online) "● ONLINE" else "○ OFFLINE", color = if (selected.online) Forest else Copper, fontWeight = FontWeight.Bold)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("Inne", style = MaterialTheme.typography.bodySmall); Text(temperature(selected.roomTemperature), style = MaterialTheme.typography.headlineMedium, color = Forest) }
+                Column(horizontalAlignment = Alignment.End) { Text("Ute", style = MaterialTheme.typography.bodySmall); Text(temperature(selected.outdoorTemperature), style = MaterialTheme.typography.headlineMedium, color = Forest) }
+            }
+            Text("${if (selected.power == true) "På" else if (selected.power == false) "Av" else "Okänd drift"} · ${mode(selected.mode)} · börvärde ${temperature(selected.targetTemperature)}")
+            Text("Fläkt ${mode(selected.fanMode)}${selected.powerSelectionPercent?.let { " · effektval $it %" } ?: ""}", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = { onRefresh(selected.name) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (busy) "Läser status…" else "Uppdatera status")
+            }
+            message?.let { Text(it, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(), color = Forest) }
+        }
+    }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Text("Smarta snabbknappar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+            Text("Knapparna är förberedda men låsta tills styrning och återläsning har verifierats mot den riktiga pumpen.", style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf("Auto", "Värme", "Kyla", "Av").forEach { label ->
+                    OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text(label, style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("−") }
+                Text(temperature(selected.targetTemperature), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("+") }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                listOf("Borta 16°", "Natt 19°", "Komfort 21°").forEach { label ->
+                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text(label, style = MaterialTheme.typography.bodySmall) }
+                }
+            }
+            Text("Säkerhetslås: inga styrkommandon skickas i denna version.", color = Copper, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
