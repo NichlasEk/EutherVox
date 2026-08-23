@@ -126,3 +126,6 @@ Firmware 4.4.00 sitter kvar i adaptern. Firmware 5.0.00 har bara analyserats
 offline. Ingen firmwareinstallation, omprovisionering eller extern
 enhetsregistrering ska göras utan ett separat, uttryckligt beslut efter att
 återställningsvägen har verifierats.
+
+Det exakta provisioning-, TLS-, MQTT- och direct-method-kontraktet finns i
+[Protokollkontrakt för Toshibas originaladapter](toshiba-original-adapter-protocol.md).
