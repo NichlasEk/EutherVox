@@ -369,6 +369,11 @@ värmepumpen?” kan läsa online-status, rumstemperatur, börvärde och driftl�
 gatewayen. På/av och temperaturändringar läggs inte till förrän EutherPump har
 en verifierad fysisk skrivväg med readback.
 
+Målarkitekturen är helt lokal även vid internetavbrott. Den verifierade
+originaladaptervägen, kvarvarande protokollfrågor och det obligatoriska
+WAN-blockerade acceptanstestet finns i
+[Toshiba-pump helt lokalt via EutherPump](docs/eutherpump-toshiba-local.md).
+
 ## Tester
 
 ```bash
