@@ -42,10 +42,18 @@ reversibel UART-adapter reservvägen. En molnproxy är inte en reservväg.
   `/api/Provision/RegisterACSecure` och `/api/Provision/RegisterAC`.
 - Secure-requesten är JSON och innehåller åtminstone `DeviceType` och `ModelId`.
   `DeviceType` är konstanten `"2"`; `ModelId` formateras som hex.
-- Adaptern förväntar sig ett JSON-svar med strängarna `SasToken`, `HostName`,
-  `DeviceId` och `Connection` under `ResObj`.
+- Adaptern förväntar sig ett JSON-svar med strängarna `SasToken`, `HostName`
+  och `DeviceId` under `ResObj`. Den närliggande strängen `Connection` används
+  som HTTP-header tillsammans med värdet `close`; den är inte ett fjärde
+  provisioningfält.
 - Firmware innehåller Azure IoT-liknande MQTT-ämnen, bland annat
   `$iothub/methods/POST/#` och `$iothub/methods/res/...`.
+- MQTT-anslutningen går till `HostName` på TLS-port 8883 med 60 sekunders
+  keepalive. `DeviceId` används som client ID. Användarnamnet byggs som
+  `HostName/DeviceId/api-version=2016-11-14` och hela `SasToken` används som
+  lösenord.
+- Telemetri publiceras under `devices/DeviceId/messages/events/...`; adaptern
+  prenumererar på Azure-formatets direct-method-ämne.
 - Firmware innehåller en gemensam provisioning-identitet, inte en unik
   privat nyckel per observerad adapter. Nyckelmaterialet ska aldrig läggas i
   repot eller loggas.
@@ -63,7 +71,7 @@ Följande är en hypotes tills den har bekräftats med ett isolerat fysiskt prov
 2. Dess certifikatkälla pekas på en lokal EutherPump-CA.
 3. Dess provisioningvärd pekas på EutherPump.
 4. EutherPump svarar med lokal brokeradress, lokalt enhets-ID, en syntaktiskt
-   giltig långlivad SAS-sträng och rätt `Connection`-värde.
+   giltig långlivad SAS-sträng och de tre förväntade `ResObj`-fälten.
 5. Adaptern ansluter med TLS till en lokal MQTT-broker som accepterar dess
    Azure-formade klientdialog.
 6. EutherPump översätter direct methods och state-events till sitt rena lokala
@@ -71,9 +79,8 @@ Följande är en hypotes tills den har bekräftats med ett isolerat fysiskt prov
 
 Detta är inte traditionell TLS-knäckning. Vi försöker använda adapterns egen
 provisioneringsmekanism för att välja en lokalt ägd CA och tjänst. Det som ännu
-är okänt är exakt TLS-klientbeteende, MQTT-användarnamn/lösenord, SAS-parsning,
-`Connection`-fältets semantik och vilka Azure IoT-flöden adaptern kräver efter
-anslutning.
+är okänt är exakt TLS-certifikatbeteende, hur strikt SAS-strängen parsas och
+vilka delar av direct-method-dialogen adaptern kräver efter anslutning.
 
 ## Genomförandeordning
 
