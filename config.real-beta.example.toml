@@ -125,12 +125,12 @@ timeout_seconds = 1.5
 scan_concurrency = 32
 
 [eutherpump]
-enabled = false
-base_url = "http://127.0.0.1:8794"
+enabled = true
+base_url = "http://192.168.32.186:18082"
 timeout_seconds = 2
 
 [[eutherpump.pumps]]
-id = "vardagsrum"
+id = "08a4cfb2-0da9-4699-9f40-2d988ec3c709"
 name = "Värmepumpen"
 room = "vardagsrummet"
 
