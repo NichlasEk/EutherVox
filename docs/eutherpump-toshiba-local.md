@@ -54,6 +54,11 @@ reversibel UART-adapter reservvägen. En molnproxy är inte en reservväg.
   lösenord.
 - Telemetri publiceras under `devices/DeviceId/messages/events/...`; adaptern
   prenumererar på Azure-formatets direct-method-ämne.
+- Den analyserade anslutningsvägen delar inte upp eller verifierar SAS-tokenens
+  `sr`, `sig` eller `se`. Provisioningkoden kräver att strängen är icke-tom och
+  MQTT-koden skickar den sedan oförändrad som lösenord. Detta ska bekräftas i
+  det isolerade adapterprovet, men en Azure-signerad token ser inte ut att
+  behövas när även brokern är lokal.
 - Firmware innehåller en gemensam provisioning-identitet, inte en unik
   privat nyckel per observerad adapter. Nyckelmaterialet ska aldrig läggas i
   repot eller loggas.
@@ -70,8 +75,8 @@ Följande är en hypotes tills den har bekräftats med ett isolerat fysiskt prov
 1. Originaladaptern sätts tillfälligt i sitt installations-/AP-läge.
 2. Dess certifikatkälla pekas på en lokal EutherPump-CA.
 3. Dess provisioningvärd pekas på EutherPump.
-4. EutherPump svarar med lokal brokeradress, lokalt enhets-ID, en syntaktiskt
-   giltig långlivad SAS-sträng och de tre förväntade `ResObj`-fälten.
+4. EutherPump svarar med lokal brokeradress, lokalt enhets-ID, ett icke-tomt
+   lokalt lösenord i `SasToken` och de tre förväntade `ResObj`-fälten.
 5. Adaptern ansluter med TLS till en lokal MQTT-broker som accepterar dess
    Azure-formade klientdialog.
 6. EutherPump översätter direct methods och state-events till sitt rena lokala
@@ -79,8 +84,8 @@ Följande är en hypotes tills den har bekräftats med ett isolerat fysiskt prov
 
 Detta är inte traditionell TLS-knäckning. Vi försöker använda adapterns egen
 provisioneringsmekanism för att välja en lokalt ägd CA och tjänst. Det som ännu
-är okänt är exakt TLS-certifikatbeteende, hur strikt SAS-strängen parsas och
-vilka delar av direct-method-dialogen adaptern kräver efter anslutning.
+är okänt är exakt TLS-certifikatbeteende och vilka delar av direct-method-
+dialogen adaptern kräver efter anslutning.
 
 ## Genomförandeordning
 
