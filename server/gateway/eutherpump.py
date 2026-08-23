@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import ipaddress
 from urllib.parse import quote, urlsplit
@@ -30,6 +31,7 @@ class EutherPumpService:
         self.base_url = str(settings.get("base_url", "http://127.0.0.1:8794")).rstrip("/")
         self.timeout = float(settings.get("timeout_seconds", 2.0))
         self.transport = transport
+        self._control_locks: dict[str, asyncio.Lock] = {}
         self._validate_base_url()
         self.targets = tuple(self._target(item) for item in settings.get("pumps", []))
         identities = {(item.name.casefold(), item.room.casefold()) for item in self.targets}
@@ -104,6 +106,53 @@ class EutherPumpService:
         if not isinstance(state, dict) or state.get("pump_id") != target.pump_id:
             raise RuntimeError("EutherPump svarade med fel pumpidentitet")
         return state
+
+    async def control_voice(
+        self, selector: str, requested: dict[str, object]
+    ) -> dict[str, object]:
+        """Resolve relative voice changes atomically, then require server readback."""
+        target = self.resolve(selector)
+        allowed = {
+            "power", "mode", "target_temperature", "temperature_delta",
+            "fan_mode", "fan_delta",
+        }
+        unexpected = set(requested) - allowed
+        if unexpected:
+            raise ValueError(f"Otillåtna röstinställningar: {', '.join(sorted(unexpected))}")
+        lock = self._control_locks.setdefault(target.pump_id, asyncio.Lock())
+        async with lock:
+            changes = dict(requested)
+            temperature_delta = changes.pop("temperature_delta", None)
+            fan_delta = changes.pop("fan_delta", None)
+            if temperature_delta is not None or fan_delta is not None:
+                current = await self.state(target.name)
+                if current.get("online") is not True:
+                    raise RuntimeError("Värmepumpen är offline")
+                if temperature_delta is not None:
+                    value = current.get("target_temperature")
+                    if isinstance(value, bool) or not isinstance(value, (int, float)):
+                        raise RuntimeError("Värmepumpen saknar aktuellt börvärde")
+                    changes["target_temperature"] = max(
+                        16, min(30, round(float(value) + int(temperature_delta)))
+                    )
+                if fan_delta is not None:
+                    changes["fan_mode"] = self._relative_fan_mode(
+                        current.get("fan_mode"), int(fan_delta)
+                    )
+            return await self.control(target.name, changes)
+
+    @staticmethod
+    def _relative_fan_mode(current: object, delta: int) -> str:
+        if delta not in {-1, 1}:
+            raise ValueError("Relativ fläktändring måste vara -1 eller 1")
+        levels = ("quiet", "1", "2", "3", "4", "5")
+        if current == "auto":
+            return "3" if delta > 0 else "quiet"
+        normalized = str(current)
+        if normalized not in levels:
+            raise RuntimeError("Värmepumpen saknar känd fläkthastighet")
+        index = max(0, min(len(levels) - 1, levels.index(normalized) + delta))
+        return levels[index]
 
     async def status_text(self, selector: str) -> str:
         target = self.resolve(selector)

@@ -557,8 +557,17 @@ class VoiceSession:
                 )
                 self.pending_wikipedia_mode = None
             else:
-                action = self.action_planner.plan(transcript, self.node_name)
-            action_source = "builtin" if action is not None else "conversation"
+                deterministic_plan = (
+                    getattr(self.tool_planner, "plan_deterministic", None)
+                    if self.tool_planner is not None else None
+                )
+                action = (
+                    deterministic_plan(transcript, self.node_name)
+                    if callable(deterministic_plan) else None
+                )
+                if action is None:
+                    action = self.action_planner.plan(transcript, self.node_name)
+            action_source = "deterministic" if action is not None else "conversation"
             if action is None and self.tool_planner is not None:
                 action = await self.tool_planner.plan(transcript, self.node_name)
                 if action is not None:
@@ -710,6 +719,67 @@ class VoiceSession:
                     except Exception as error:
                         LOG.exception("eutherpump_status_failed session=%s", self.session_id)
                         failure = f"Jag kunde inte läsa värmepumpen: {error}"
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": failure,
+                        })
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "failed",
+                            "message": failure,
+                        })
+                    self._reset()
+                    return
+                if action.name == "pump.control":
+                    try:
+                        if not self.authenticated_user:
+                            raise RuntimeError("Logga in med EutherID för att styra värmepumpen")
+                        if not self.eutherpump:
+                            raise RuntimeError("EutherPump är inte konfigurerad")
+                        await self.send_json({
+                            "type": "action.status",
+                            "action_id": action.action_id,
+                            "status": "running",
+                            "message": "Styr värmepumpen…",
+                        })
+                        target = self.eutherpump.resolve(str(action.arguments["target"]))
+                        changes = {
+                            key: value for key, value in action.arguments.items()
+                            if key != "target"
+                        }
+                        state = await self.eutherpump.control_voice(target.name, changes)
+                        spoken = action.acknowledgement
+                        character = self._character()
+                        await self.send_json({
+                            "type": "pump.command.result",
+                            "pump": {**target.public(), **state},
+                            "message": spoken,
+                        })
+                        await self.send_json({
+                            "type": "assistant.text.delta",
+                            "utterance_id": utterance_id,
+                            "text": spoken,
+                        })
+                        await self.send_json({
+                            "type": "assistant.text.final",
+                            "utterance_id": utterance_id,
+                            "text": spoken,
+                        })
+                        await self._stream_action_speech(
+                            utterance_id, spoken, character, fast=True
+                        )
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "completed",
+                            "message": spoken,
+                        })
+                        self._remember_turn(transcript, spoken)
+                    except Exception as error:
+                        LOG.exception("eutherpump_control_failed session=%s", self.session_id)
+                        failure = f"Jag kunde inte styra värmepumpen: {error}"
                         await self.send_json({
                             "type": "assistant.text.final",
                             "utterance_id": utterance_id,

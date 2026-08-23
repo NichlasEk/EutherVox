@@ -20,7 +20,7 @@ class OllamaToolPlanner:
     """Turns natural language into one validated action through Ollama tool calls."""
 
     _ACTION_HINT = re.compile(
-        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg|tv|teven|skärm|hdmi|vga|bildingång|värmepump|pumpen|rumstemperatur|inomhustemperatur)\b",
+        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg|tv|teven|skärm|hdmi|vga|bildingång|värmepump|pumpen|rumstemperatur|inomhustemperatur|temperatur|värme|kyla|kylning|fläkt|luften|fryser|svettas)\b",
         re.IGNORECASE,
     )
     _LIGHT_INTENT = re.compile(
@@ -34,6 +34,17 @@ class OllamaToolPlanner:
     )
     _TV_REFERENCE = re.compile(
         r"\b(?:tv(?::n)?|teven|teve(?:n)?|skärm(?:en)?|nec[\s-]?(?:tv|teve(?:n)?)|necteven|nekteven|hdmi|vga|a\s*/?\s*v)\b",
+        re.IGNORECASE,
+    )
+    _PUMP_REFERENCE = re.compile(
+        r"\b(?:värmepump(?:en)?|pumpen|luftvärmepump(?:en)?|temperatur(?:en)?|"
+        r"rumstemperatur(?:en)?|inomhustemperatur(?:en)?|värme(?:n)?|kyla(?:n)?|"
+        r"kylning(?:en)?|fläkt(?:en)?|luften|fryser|svettas)\b",
+        re.IGNORECASE,
+    )
+    _PUMP_CONTROL_INTENT = re.compile(
+        r"\b(?:ställ|sätt|slå|starta|stäng|stoppa|höj|sänk|öka|minska|mer|mindre|"
+        r"fixa|ordna|fryser|svettas)\w*\b",
         re.IGNORECASE,
     )
     _COLORS = (
@@ -51,6 +62,15 @@ class OllamaToolPlanner:
         "tio": 10, "tjugo": 20, "trettio": 30, "fyrtio": 40, "femtio": 50,
         "sextio": 60, "sjuttio": 70, "åttio": 80, "nittio": 90, "hundra": 100,
     }
+    _TEMPERATURE_WORDS = {
+        "sexton": 16, "sjutton": 17, "arton": 18, "nitton": 19,
+        "tjugo": 20, "tjugoett": 21, "tjugo ett": 21,
+        "tjugotvå": 22, "tjugo två": 22, "tjugotre": 23, "tjugo tre": 23,
+        "tjugofyra": 24, "tjugo fyra": 24, "tjugofem": 25, "tjugo fem": 25,
+        "tjugosex": 26, "tjugo sex": 26, "tjugosju": 27, "tjugo sju": 27,
+        "tjugoåtta": 28, "tjugo åtta": 28, "tjugonio": 29, "tjugo nio": 29,
+        "trettio": 30,
+    }
 
     def __init__(
         self,
@@ -67,14 +87,9 @@ class OllamaToolPlanner:
         self.transport = transport
 
     async def plan(self, transcript: str, node_name: str) -> DeviceAction | None:
-        deterministic_light = self._plan_light(transcript, node_name)
-        if deterministic_light is not None:
-            LOG.info("tool_decision path=deterministic domain=lights action=%s target=%s", deterministic_light.name, deterministic_light.arguments.get("target", "none"))
-            return deterministic_light
-        deterministic_tv = self._plan_tv(transcript, node_name)
-        if deterministic_tv is not None:
-            LOG.info("tool_decision path=deterministic domain=television action=%s target=%s", deterministic_tv.name, deterministic_tv.arguments["target"])
-            return deterministic_tv
+        deterministic = self.plan_deterministic(transcript, node_name)
+        if deterministic is not None:
+            return deterministic
         if not self._ACTION_HINT.search(transcript):
             LOG.info("tool_decision path=conversation reason=no_action_hint")
             return None
@@ -98,7 +113,7 @@ class OllamaToolPlanner:
                     "role": "system",
                     "content": (
                         "Du väljer EutherVox-verktyg. Anropa exakt ett verktyg endast när användaren faktiskt ber "
-                        "om musik, en spellista, ljusstyrning, TV-styrning, värmepumpsstatus eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
+                        "om musik, en spellista, ljusstyrning, TV-styrning, värmepumpsstatus, värmepumpsstyrning eller faktabaserad uppslagsinformation. Vanlig konversation får inget verktygsanrop. "
                         "Indirekta önskemål som 'jag är sugen på mörk cyberpunk i köket' betyder att musiken ska spelas nu. "
                         "Önskemål om en bestämd låt, till exempel 'jag vill höra November Rain', ska anropa music_play "
                         "och behålla låttitel och eventuell artist exakt i query. "
@@ -110,7 +125,10 @@ class OllamaToolPlanner:
                         "Använd light_set för av/på, statisk färg och intensitet. Översätt användarens färgbeskrivning till #RRGGBB. "
                         "Använd light_effect bara för ett mönster ur verktygets enum och välj normalt speed 40. "
                         "Använd tv_control för ström eller ingång på en konfigurerad NEC-TV. "
-                        "Använd heat_pump_status endast för att läsa status eller temperatur; verktyget kan inte styra pumpen. "
+                        "Använd heat_pump_status för att läsa status eller temperatur. Använd heat_pump_control för att "
+                        "slå på eller av pumpen, välja värme/kyla, sätta temperatur eller ändra fläkten. "
+                        "'Jag fryser' betyder temperature_delta 1, 'jag svettas' betyder -1 och 'mer/mindre fläkt' "
+                        "betyder fan_delta 1/-1. Ange aldrig både exakt och relativ ändring för samma egenskap. "
                         f"Konfigurerade Cast-rum: {rooms}. Konfigurerade lampor: {lights}. Konfigurerade TV-apparater: {televisions}. Konfigurerade värmepumpar: {pumps}. Hitta aldrig på mål. "
                         "Behåll genre och stämning i query eller description."
                     ),
@@ -139,6 +157,116 @@ class OllamaToolPlanner:
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, TypeError, ToolValidationError) as error:
             LOG.warning("tool_planning_skipped error_type=%s error=%s", type(error).__name__, error)
             return None
+
+    def plan_deterministic(self, transcript: str, node_name: str) -> DeviceAction | None:
+        pump = self._plan_pump(transcript, node_name)
+        if pump is not None:
+            LOG.info(
+                "tool_decision path=deterministic domain=pump action=%s target=%s",
+                pump.name, pump.arguments.get("target", "none"),
+            )
+            return pump
+        light = self._plan_light(transcript, node_name)
+        if light is not None:
+            LOG.info(
+                "tool_decision path=deterministic domain=lights action=%s target=%s",
+                light.name, light.arguments.get("target", "none"),
+            )
+            return light
+        television = self._plan_tv(transcript, node_name)
+        if television is not None:
+            LOG.info(
+                "tool_decision path=deterministic domain=television action=%s target=%s",
+                television.name, television.arguments.get("target", "none"),
+            )
+            return television
+        return None
+
+    def _plan_pump(self, transcript: str, node_name: str) -> DeviceAction | None:
+        targets = self.registry.list_pump_targets()
+        lowered = transcript.casefold()
+        if (
+            not targets
+            or not self._PUMP_REFERENCE.search(lowered)
+            or not self._PUMP_CONTROL_INTENT.search(lowered)
+        ):
+            return None
+        compact = self._compact(transcript)
+        labels: list[tuple[str, str]] = []
+        for item in targets:
+            labels.extend([
+                (str(item["name"]), str(item["name"])),
+                (str(item["room"]), str(item["name"])),
+            ])
+        matches = [canonical for label, canonical in labels if self._compact(label) in compact]
+        target = matches[0] if matches else (str(targets[0]["name"]) if len(targets) == 1 else "")
+        if not target:
+            rooms = ", ".join(str(item["room"]) for item in targets[:3])
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="assistant.clarify",
+                target_node=node_name,
+                arguments={"domain": "pump"},
+                acknowledgement=f"Vilken värmepump menar du? Jag har pumpar i {rooms}.",
+            )
+
+        arguments: dict[str, object] = {"target": target}
+        if re.search(r"\b(?:stäng|slå|sätt|stoppa)\w*\s+av\b", lowered):
+            arguments["power"] = False
+        elif re.search(r"\b(?:sätt|slå|starta)\w*\s+på\b", lowered):
+            arguments["power"] = True
+        if re.search(r"\b(?:värme(?:n|läge)?|värma)\b", lowered):
+            arguments.update(power=True, mode="heat")
+        elif re.search(r"\b(?:kyla|kylning|kylläge|svalka)\b", lowered):
+            arguments.update(power=True, mode="cool")
+
+        exact_temperature = self._temperature(lowered)
+        if exact_temperature is not None:
+            arguments["target_temperature"] = exact_temperature
+        elif re.search(r"\b(?:fryser|höj|öka)\w*\b", lowered) and "fläkt" not in lowered:
+            arguments["temperature_delta"] = self._temperature_delta(lowered, 1)
+        elif re.search(r"\b(?:svettas|sänk|minska)\w*\b", lowered) and "fläkt" not in lowered:
+            arguments["temperature_delta"] = self._temperature_delta(lowered, -1)
+
+        if re.search(r"\bfläkt(?:en)?\b", lowered):
+            if re.search(r"\b(?:auto|automatisk(?:t)?)\b", lowered):
+                arguments["fan_mode"] = "auto"
+            elif re.search(r"\b(?:tyst|tystare|quiet)\b", lowered):
+                arguments["fan_mode"] = "quiet"
+            else:
+                level = re.search(r"\b(?:läge|nivå|på)\s*([1-5])\b", lowered)
+                if level:
+                    arguments["fan_mode"] = level.group(1)
+                elif re.search(r"\b(?:mer|höj|öka|snabbare|max)\w*\b", lowered):
+                    arguments["fan_delta"] = 1
+                elif re.search(r"\b(?:mindre|sänk|minska|långsammare)\w*\b", lowered):
+                    arguments["fan_delta"] = -1
+        elif re.search(r"\b(?:fixa|ordna)\w*\s+luften\b", lowered):
+            arguments["fan_delta"] = 1
+
+        if len(arguments) == 1:
+            return None
+        return self.registry.create_action("heat_pump_control", arguments, node_name)
+
+    @classmethod
+    def _temperature(cls, text: str) -> int | None:
+        numeric = re.search(r"\b(1[6-9]|2\d|30)\s*(?:°\s*c|grader)?\b", text)
+        if numeric:
+            return int(numeric.group(1))
+        for word, value in sorted(cls._TEMPERATURE_WORDS.items(), key=lambda item: -len(item[0])):
+            if re.search(rf"\b{re.escape(word)}(?:\s+grader)?\b", text):
+                return value
+        return None
+
+    @staticmethod
+    def _temperature_delta(text: str, direction: int) -> int:
+        match = re.search(r"\bmed\s+([1-3]|en|ett|två|tre)\s+grader?\b", text)
+        if not match:
+            return direction
+        amount = {"en": 1, "ett": 1, "två": 2, "tre": 3}.get(
+            match.group(1), int(match.group(1)) if match.group(1).isdigit() else 1
+        )
+        return direction * amount
 
     def _plan_light(self, transcript: str, node_name: str) -> DeviceAction | None:
         targets = self.registry.list_light_targets()

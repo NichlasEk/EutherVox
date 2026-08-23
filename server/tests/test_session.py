@@ -1125,6 +1125,73 @@ def test_pump_status_is_read_server_side_and_spoken():
     asyncio.run(scenario())
 
 
+def test_pump_voice_control_requires_login_executes_server_side_and_updates_ui():
+    class PumpStt:
+        async def transcribe(self, pcm: bytes, sample_rate: int) -> str:
+            return "Jag fryser"
+
+    class FakeToolPlanner:
+        def plan_deterministic(self, transcript: str, node_name: str):
+            assert transcript == "Jag fryser"
+            return DeviceAction(
+                action_id="pump-control",
+                name="pump.control",
+                target_node=node_name,
+                arguments={"target": "Värmepumpen", "temperature_delta": 1},
+                acknowledgement="Jag höjer temperaturen med 1 grad.",
+            )
+
+    class Target:
+        name = "Värmepumpen"
+
+        @staticmethod
+        def public() -> dict[str, str]:
+            return {"id": "pump-1", "name": "Värmepumpen", "room": "vardagsrummet"}
+
+    class FakePump:
+        enabled = True
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        @staticmethod
+        def list_public() -> list[dict[str, str]]:
+            return [{"id": "pump-1", "name": "Värmepumpen", "room": "vardagsrummet"}]
+
+        def resolve(self, target: str) -> Target:
+            assert target == "Värmepumpen"
+            return Target()
+
+        async def control_voice(self, target: str, changes: dict[str, object]):
+            self.calls.append((target, changes))
+            return {
+                "pump_id": "pump-1", "online": True, "power": True,
+                "mode": "heat", "target_temperature": 23,
+            }
+
+    async def scenario():
+        session, sent = make_session()
+        session.stt = PumpStt()
+        session.tool_planner = FakeToolPlanner()
+        session.eutherpump = FakePump()
+        session.authenticated_user = "nichlas"
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "audio.start", "utterance_id": "pump-voice"}))
+        await session.handle_binary(bytes(640))
+        await session.handle_text(json.dumps({"type": "audio.end", "utterance_id": "pump-voice"}))
+        await session.response_task
+
+        assert session.eutherpump.calls == [("Värmepumpen", {"temperature_delta": 1})]
+        controls = [item for item in sent if isinstance(item, dict)]
+        result = next(item for item in controls if item.get("type") == "pump.command.result")
+        assert result["pump"]["target_temperature"] == 23
+        assert any(
+            item.get("type") == "action.completed" and item.get("status") == "completed"
+            for item in controls
+        )
+        assert session.phase is Phase.READY
+
+    asyncio.run(scenario())
+
+
 def test_wikipedia_tool_summarizes_source_speaks_and_shows_link():
     class WikipediaStt:
         async def transcribe(self, pcm: bytes, sample_rate: int) -> str:

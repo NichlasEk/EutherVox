@@ -140,6 +140,49 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(
+            name="heat_pump_control",
+            description=(
+                "Styr en konfigurerad lokal värmepump: ström, värme/kyla, "
+                "exakt eller relativ temperatur samt fläkthastighet."
+            ),
+            input_schema={
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Pumpnamn eller rum från EutherPump-konfigurationen.",
+                    },
+                    "power": {"type": "boolean"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["auto", "cool", "heat", "dry", "fan"],
+                    },
+                    "target_temperature": {
+                        "type": "integer",
+                        "minimum": 16,
+                        "maximum": 30,
+                    },
+                    "temperature_delta": {
+                        "type": "integer",
+                        "minimum": -3,
+                        "maximum": 3,
+                        "description": "Relativ ändring i hela grader; aldrig 0.",
+                    },
+                    "fan_mode": {
+                        "type": "string",
+                        "enum": ["auto", "quiet", "1", "2", "3", "4", "5"],
+                    },
+                    "fan_delta": {
+                        "type": "integer",
+                        "enum": [-1, 1],
+                        "description": "-1 för mindre och 1 för mer fläkt.",
+                    },
+                },
+                "required": ["target"],
+                "additionalProperties": False,
+            },
+        ),
     )
 
     def __init__(
@@ -260,7 +303,7 @@ class EutherVoxToolRegistry:
                 acknowledgement=f"Jag {description} {tv.name} i {tv.room}.",
             )
 
-        if tool_name == "heat_pump_status":
+        if tool_name in {"heat_pump_status", "heat_pump_control"}:
             if not self.eutherpump or not self.eutherpump.enabled:
                 raise ToolValidationError("EutherPump är inte konfigurerad")
             target = self._clean_text(arguments.get("target"), "target")
@@ -268,12 +311,54 @@ class EutherVoxToolRegistry:
                 pump = self.eutherpump.resolve(target)
             except ValueError as error:
                 raise ToolValidationError(str(error)) from error
+            if tool_name == "heat_pump_status":
+                return DeviceAction(
+                    action_id=str(uuid4()),
+                    name="pump.status",
+                    target_node=node_name,
+                    arguments={"target": pump.name},
+                    acknowledgement=f"Jag läser av {pump.name} i {pump.room}.",
+                )
+            result: dict[str, object] = {"target": pump.name}
+            if "power" in arguments:
+                if not isinstance(arguments["power"], bool):
+                    raise ToolValidationError("power måste vara sant eller falskt")
+                result["power"] = arguments["power"]
+            if "mode" in arguments:
+                mode = str(arguments["mode"])
+                if mode not in {"auto", "cool", "heat", "dry", "fan"}:
+                    raise ToolValidationError("Otillåtet pumpläge")
+                result["mode"] = mode
+            for field in ("target_temperature", "temperature_delta", "fan_delta"):
+                if field not in arguments:
+                    continue
+                value = arguments[field]
+                if isinstance(value, bool) or not isinstance(value, int):
+                    raise ToolValidationError(f"{field} måste vara ett heltal")
+                if field == "target_temperature" and not 16 <= value <= 30:
+                    raise ToolValidationError("Temperaturen måste vara 16–30 grader")
+                if field == "temperature_delta" and (value == 0 or not -3 <= value <= 3):
+                    raise ToolValidationError("Relativ temperaturändring måste vara 1–3 grader")
+                if field == "fan_delta" and value not in {-1, 1}:
+                    raise ToolValidationError("Relativ fläktändring måste vara -1 eller 1")
+                result[field] = value
+            if "fan_mode" in arguments:
+                fan_mode = str(arguments["fan_mode"])
+                if fan_mode not in {"auto", "quiet", "1", "2", "3", "4", "5"}:
+                    raise ToolValidationError("Otillåten fläkthastighet")
+                result["fan_mode"] = fan_mode
+            if "target_temperature" in result and "temperature_delta" in result:
+                raise ToolValidationError("Ange exakt eller relativ temperatur, inte båda")
+            if "fan_mode" in result and "fan_delta" in result:
+                raise ToolValidationError("Ange exakt eller relativ fläkt, inte båda")
+            if len(result) == 1:
+                raise ToolValidationError("Ange en pumpinställning")
             return DeviceAction(
                 action_id=str(uuid4()),
-                name="pump.status",
+                name="pump.control",
                 target_node=node_name,
-                arguments={"target": pump.name},
-                acknowledgement=f"Jag läser av {pump.name} i {pump.room}.",
+                arguments=result,
+                acknowledgement=self._pump_acknowledgement(pump.name, pump.room, result),
             )
 
         query_key = "description" if tool_name == "playlist_create" else "query"
@@ -320,6 +405,32 @@ class EutherVoxToolRegistry:
             ),
             requires_confirmation=True,
         )
+
+    @staticmethod
+    def _pump_acknowledgement(
+        name: str, room: str, arguments: dict[str, object]
+    ) -> str:
+        if arguments.get("power") is False:
+            return f"Jag stänger av {name} i {room}."
+        mode = arguments.get("mode")
+        if mode == "heat":
+            return f"Jag slår på värmen med {name} i {room}."
+        if mode == "cool":
+            return f"Jag slår på kylan med {name} i {room}."
+        if arguments.get("power") is True and len(arguments) == 2:
+            return f"Jag slår på {name} i {room}."
+        if "target_temperature" in arguments:
+            return f"Jag ställer {name} på {arguments['target_temperature']} grader."
+        if "temperature_delta" in arguments:
+            verb = "höjer" if int(arguments["temperature_delta"]) > 0 else "sänker"
+            return f"Jag {verb} temperaturen med {abs(int(arguments['temperature_delta']))} grad."
+        if "fan_mode" in arguments:
+            mode_text = "tyst" if arguments["fan_mode"] == "quiet" else str(arguments["fan_mode"])
+            return f"Jag ställer fläkten på {mode_text}."
+        if "fan_delta" in arguments:
+            direction = "mer" if int(arguments["fan_delta"]) > 0 else "mindre"
+            return f"Jag ordnar {direction} fläkt."
+        return f"Jag justerar {name} i {room}."
 
     @staticmethod
     def _clean_text(value: object, field: str) -> str:

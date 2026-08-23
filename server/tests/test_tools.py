@@ -127,6 +127,29 @@ def test_registry_creates_only_allowlisted_read_only_pump_status_actions(tmp_pat
         )
 
 
+def test_registry_validates_allowlisted_pump_control_actions(tmp_path: Path):
+    registry = make_registry(tmp_path)
+    action = registry.create_action(
+        "heat_pump_control",
+        {"target": "vardagsrummet", "power": True, "mode": "heat", "target_temperature": 23},
+        "pixel",
+    )
+    assert action.name == "pump.control"
+    assert action.arguments == {
+        "target": "Värmepumpen", "power": True, "mode": "heat", "target_temperature": 23,
+    }
+    assert "base_url" not in action.arguments
+    for arguments in (
+        {"target": "Värmepumpen", "target_temperature": 31},
+        {"target": "Värmepumpen", "temperature_delta": 0},
+        {"target": "Värmepumpen", "target_temperature": 22, "temperature_delta": 1},
+        {"target": "Värmepumpen", "fan_mode": "turbo"},
+        {"target": "Värmepumpen", "host": "192.168.32.186"},
+    ):
+        with pytest.raises(ToolValidationError):
+            registry.create_action("heat_pump_control", arguments, "pixel")
+
+
 def test_mcp_server_exposes_only_safe_tools_and_hides_cast_network_details():
     async def scenario():
         registry = make_registry()
@@ -152,7 +175,7 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
         assert payload["think"] is False
         assert {tool["function"]["name"] for tool in payload["tools"]} == {
             "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect", "tv_control",
-            "heat_pump_status",
+            "heat_pump_status", "heat_pump_control",
         }
         return httpx.Response(200, json={
             "message": {
@@ -181,6 +204,28 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
         assert action.arguments["output_room"] == "köket"
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("transcript", "expected"), [
+    ("Höj temperaturen till 24 grader", {"target_temperature": 24}),
+    ("Sänk temperaturen med två grader", {"temperature_delta": -2}),
+    ("Jag fryser", {"temperature_delta": 1}),
+    ("Jag svettas", {"temperature_delta": -1}),
+    ("Slå på värmen", {"power": True, "mode": "heat"}),
+    ("Slå på kyla", {"power": True, "mode": "cool"}),
+    ("Sätt på pumpen", {"power": True}),
+    ("Stäng av värmepumpen", {"power": False}),
+    ("Mer fläkt", {"fan_delta": 1}),
+    ("Mindre fläkt", {"fan_delta": -1}),
+    ("Ställ fläkten på 4", {"fan_mode": "4"}),
+    ("Kan du fixa luften?", {"fan_delta": 1}),
+])
+def test_deterministic_pump_phrases(transcript: str, expected: dict[str, object]):
+    planner = OllamaToolPlanner(make_registry(), "http://ollama.test", "qwen-test")
+    action = planner.plan_deterministic(transcript, "pixel")
+    assert action is not None
+    assert action.name == "pump.control"
+    assert action.arguments == {"target": "Värmepumpen", **expected}
 
 
 def test_ollama_tool_planner_skips_non_actionable_conversation_without_request():

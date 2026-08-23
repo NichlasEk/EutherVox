@@ -94,3 +94,44 @@ def test_control_sends_only_requested_changes_and_requires_matching_readback() -
         assert state["target_temperature"] == 21
 
     asyncio.run(scenario())
+
+
+def test_voice_control_resolves_relative_temperature_and_fan_under_lock() -> None:
+    requests: list[tuple[str, dict[str, object] | None]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content) if request.content else None
+        requests.append((request.method, payload))
+        if request.method == "GET":
+            return httpx.Response(200, json={
+                "pump_id": "vardagsrum", "online": True,
+                "target_temperature": 22, "fan_mode": "2",
+            })
+        assert payload == {"target_temperature": 24, "fan_mode": "3"}
+        return httpx.Response(200, json={
+            "status": "completed",
+            "state": {
+                "pump_id": "vardagsrum", "online": True,
+                "target_temperature": 24, "fan_mode": "3",
+            },
+        })
+
+    async def scenario() -> None:
+        service = EutherPumpService(settings(), transport=httpx.MockTransport(handler))
+        state = await service.control_voice(
+            "Värmepumpen", {"temperature_delta": 2, "fan_delta": 1}
+        )
+        assert state["target_temperature"] == 24
+        assert requests == [
+            ("GET", None),
+            ("PATCH", {"target_temperature": 24, "fan_mode": "3"}),
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_relative_fan_handles_auto_and_limits() -> None:
+    assert EutherPumpService._relative_fan_mode("auto", 1) == "3"
+    assert EutherPumpService._relative_fan_mode("auto", -1) == "quiet"
+    assert EutherPumpService._relative_fan_mode("5", 1) == "5"
+    assert EutherPumpService._relative_fan_mode("quiet", -1) == "quiet"
