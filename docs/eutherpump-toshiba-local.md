@@ -129,3 +129,5 @@ enhetsregistrering ska göras utan ett separat, uttryckligt beslut efter att
 
 Det exakta provisioning-, TLS-, MQTT- och direct-method-kontraktet finns i
 [Protokollkontrakt för Toshibas originaladapter](toshiba-original-adapter-protocol.md).
+Fortsättningsläget för en ny EutherPump-arbetsyta finns i
+[handoffen för originaladapterimplementationen](eutherpump-original-adapter-handoff.md).
