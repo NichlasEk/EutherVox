@@ -155,6 +155,10 @@ class VoiceSession:
                 await self._washer_status()
             elif message_type == "washer.command":
                 await self._washer_command(message)
+            elif message_type == "vacuum.status":
+                await self._vacuum_status()
+            elif message_type == "vacuum.command":
+                await self._vacuum_command(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -227,6 +231,11 @@ class VoiceSession:
         if self.authenticated_user and self.eutherwash and self.eutherwash.enabled:
             await self.send_json({
                 "type": "washer.config",
+                "available": True,
+                "controls_available": bool(getattr(self.eutherwash, "control_enabled", False)),
+            })
+            await self.send_json({
+                "type": "vacuum.config",
                 "available": True,
                 "controls_available": bool(getattr(self.eutherwash, "control_enabled", False)),
             })
@@ -450,6 +459,42 @@ class VoiceSession:
             "command": command,
             "status": status,
             "message": f"Tvättmaskinen bekräftade att den {labels[command]}.",
+        })
+
+    async def _vacuum_status(self) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("VACUUM_AUTH_REQUIRED", "Inloggning krävs för dammsugarstatus")
+        if not self.eutherwash or not self.eutherwash.enabled:
+            raise ProtocolError("VACUUM_DISABLED", "Dammsugartjänsten är inte aktiverad")
+        try:
+            status = await self.eutherwash.vacuum_status()
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("VACUUM_STATUS_FAILED", str(error)) from error
+        await self.send_json({"type": "vacuum.status.result", "status": status})
+
+    async def _vacuum_command(self, message: dict) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("VACUUM_AUTH_REQUIRED", "Inloggning krävs för kartläggning")
+        if not self.eutherwash or not self.eutherwash.enabled or not self.eutherwash.control_enabled:
+            raise ProtocolError("VACUUM_CONTROL_DISABLED", "Dammsugarstyrning är inte aktiverad")
+        command = str(message.get("command", ""))
+        if command != "start-fast-mapping":
+            raise ProtocolError("VACUUM_COMMAND_INVALID", "Okänt dammsugarkommando")
+        if message.get("confirmed") is not True:
+            raise ProtocolError("VACUUM_CONFIRMATION_REQUIRED", "Kartläggning måste bekräftas")
+        try:
+            status = await self.eutherwash.vacuum_command(command, confirmed=True)
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("VACUUM_COMMAND_FAILED", str(error)) from error
+        await self.send_json({
+            "type": "vacuum.command.result",
+            "command": command,
+            "status": status,
+            "message": "Robotdammsugaren accepterade snabb kartläggning.",
         })
 
     async def _start_audio(self, message: dict) -> None:
@@ -864,6 +909,37 @@ class VoiceSession:
                     except Exception as error:
                         LOG.exception("eutherwash_status_failed session=%s", self.session_id)
                         failure = f"Jag kunde inte läsa tvättmaskinen: {error}"
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": failure})
+                        await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "failed", "message": failure})
+                    self._reset()
+                    return
+                if action.name == "vacuum.status":
+                    try:
+                        if not self.authenticated_user:
+                            raise RuntimeError("Logga in med EutherID för att läsa dammsugarrapporten")
+                        if not self.eutherwash:
+                            raise RuntimeError("EutherWash är inte konfigurerad")
+                        await self.send_json({
+                            "type": "action.status",
+                            "action_id": action.action_id,
+                            "status": "running",
+                            "message": "Läser robotdammsugaren…",
+                        })
+                        spoken = await self.eutherwash.vacuum_status_text()
+                        character = self._character()
+                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken})
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
+                        await self._stream_action_speech(utterance_id, spoken, character)
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "completed",
+                            "message": spoken,
+                        })
+                        self._remember_turn(transcript, spoken)
+                    except Exception as error:
+                        LOG.exception("euthervacuum_status_failed session=%s", self.session_id)
+                        failure = f"Jag kunde inte läsa robotdammsugaren: {error}"
                         await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": failure})
                         await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "failed", "message": failure})
                     self._reset()

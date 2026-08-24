@@ -49,7 +49,10 @@ def configure_device_hotwords(
         for target in eutherpump.list_public():
             phrases.extend((target["name"], target["room"]))
     if eutherwash is not None and eutherwash.enabled:
-        phrases.extend(("EutherWash", "tvättmaskinen", "tvättrapport", "tvätten är klar"))
+        phrases.extend((
+            "EutherWash", "tvättmaskinen", "tvättrapport", "tvätten är klar",
+            "robotdammsugaren", "dammsugarrapport", "sidoborsten", "filtret",
+        ))
     count = int(add_hotwords(phrases))
     LOG.info("stt_hotwords_configured phrases=%d", count)
     return count

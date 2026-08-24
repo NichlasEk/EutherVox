@@ -20,7 +20,7 @@ class OllamaToolPlanner:
     """Turns natural language into one validated action through Ollama tool calls."""
 
     _ACTION_HINT = re.compile(
-        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg|tv|teven|skärm|hdmi|vga|bildingång|värmepump|pumpen|rumstemperatur|inomhustemperatur|temperatur|värme|kyla|kylning|fläkt|luften|fryser|svettas)\b",
+        r"\b(spela|lyssna|höra|musik|låt|låtar|artist|album|spell?ista|lista|mix|stämning|sugen|önskar|vill\s+ha|ge\s+mig|köket|kök\s*2|högtalare|sätt\s+på|dra\s+igång|wikipedia|wiki|slå\s+upp|läs(?:a)?\s+(?:upp\s+)?(?:om|artikeln)|sammanfatta|vem\s+(?:är|var)|vad\s+är|berätta\s+om|tänd|släck|lampa|lampor|ljus|belysning|ljusstyrka|procent|färg|röd|grön|blå|gul|lila|orange|rosa|turkos|vit|blinka|blinkande|strobe|regnbåg|tv|teven|skärm|hdmi|vga|bildingång|värmepump|pumpen|dammsugare|robotdammsugare|roboten|rumstemperatur|inomhustemperatur|temperatur|värme|kyla|kylning|fläkt|luften|fryser|svettas)\b",
         re.IGNORECASE,
     )
     _LIGHT_INTENT = re.compile(
@@ -48,6 +48,10 @@ class OllamaToolPlanner:
     )
     _WASHER_REFERENCE = re.compile(
         r"\b(?:tvättmaskin(?:en)?|tvätt(?:en|rapport)?|maskinen)\b",
+        re.IGNORECASE,
+    )
+    _VACUUM_REFERENCE = re.compile(
+        r"\b(?:robotdammsug(?:are|aren)|dammsug(?:are|aren)|städrobot(?:en)?|roboten)\b",
         re.IGNORECASE,
     )
     _PUMP_CONTROL_INTENT = re.compile(
@@ -197,9 +201,14 @@ class OllamaToolPlanner:
     def _plan_report(self, transcript: str, node_name: str) -> DeviceAction | None:
         lowered = transcript.casefold()
         if not self._REPORT_INTENT.search(lowered) and not re.search(
-            r"\b(?:tvätt|värmepumps?)rapport\b", lowered
+            r"\b(?:tvätt|värmepumps?|dammsugar|robotdammsugar)rapport\b", lowered
         ):
             return None
+        if self._VACUUM_REFERENCE.search(lowered):
+            try:
+                return self.registry.create_action("vacuum_status", {}, node_name)
+            except ToolValidationError:
+                return None
         if self._WASHER_REFERENCE.search(lowered):
             try:
                 return self.registry.create_action("washer_status", {}, node_name)

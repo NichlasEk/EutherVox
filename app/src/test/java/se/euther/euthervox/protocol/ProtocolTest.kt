@@ -160,4 +160,18 @@ class ProtocolTest {
         assertEquals("running", event.washer.state)
         assertEquals(true, event.washer.remoteControlEnabled)
     }
+
+    @Test fun serializesConfirmedFastMappingAndParsesVacuumWarnings() {
+        val request = JsonParser.parseString(vacuumCommand("start-fast-mapping", confirmed = true)).asJsonObject
+        assertEquals("vacuum.command", request["type"].asString)
+        assertTrue(request["confirmed"].asBoolean)
+
+        val event = parseServerEvent(
+            """{"type":"vacuum.command.result","command":"start-fast-mapping","message":"Robotdammsugaren accepterade snabb kartläggning.","status":{"available":true,"online":true,"state":"idle","battery_percent":97,"fault_code":0,"cleaning_time_minutes":0,"cleaning_area_m2":0.0,"main_brush_percent":36,"main_brush_hours_left":108,"side_brush_percent":4,"side_brush_hours_left":8,"filter_percent":0,"filter_hours_left":0,"map_available":true,"do_not_disturb_enabled":true,"auto_empty_enabled":true,"maintenance_required":true,"system_messages":["Filtret behöver rengöras eller bytas."],"raw_device_status":2,"raw_operating_mode":14,"raw_task_status":0,"raw_relocation_status":0,"updated_at":"2026-08-24T18:01:00Z"}}"""
+        ) as ServerEvent.VacuumCommandResult
+        assertEquals("start-fast-mapping", event.command)
+        assertEquals(97, event.vacuum.batteryPercent)
+        assertEquals(0, event.vacuum.filterPercent)
+        assertEquals(1, event.vacuum.systemMessages.size)
+    }
 }

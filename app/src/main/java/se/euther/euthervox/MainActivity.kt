@@ -347,6 +347,12 @@ fun EutherVoxApp() {
                     controlsAvailable = state.washerControlsAvailable,
                     onRefresh = controller::refreshWasher,
                     onCommand = controller::controlWasher,
+                    vacuum = state.vacuumState,
+                    vacuumMessage = state.vacuumMessage,
+                    vacuumBusy = state.vacuumBusy,
+                    vacuumControlsAvailable = state.vacuumControlsAvailable,
+                    onVacuumRefresh = controller::refreshVacuum,
+                    onVacuumCommand = controller::controlVacuum,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -476,8 +482,15 @@ private fun WasherPanel(
     controlsAvailable: Boolean,
     onRefresh: () -> Unit,
     onCommand: (String, Boolean) -> Unit,
+    vacuum: ServerEvent.VacuumState?,
+    vacuumMessage: String?,
+    vacuumBusy: Boolean,
+    vacuumControlsAvailable: Boolean,
+    onVacuumRefresh: () -> Unit,
+    onVacuumCommand: (String, Boolean) -> Unit,
 ) {
     var pendingConfirmation by remember { mutableStateOf<String?>(null) }
+    var pendingVacuumMapping by remember { mutableStateOf(false) }
     fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
     fun stateLabel(value: String) = when (value) {
         "idle" -> "Redo"
@@ -572,6 +585,78 @@ private fun WasherPanel(
             }
             Text("Statistiken byggs upp automatiskt när servern observerar riktiga tvättcykler.", style = MaterialTheme.typography.bodySmall)
         }
+    }
+    Text("Robotdammsugare", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                val vacuumState = when (vacuum?.state) {
+                    "idle" -> "Redo"
+                    "cleaning" -> "Städar"
+                    "paused" -> "Pausad"
+                    "returning" -> "På väg hem"
+                    "charging" -> "Laddar"
+                    "error" -> "Fel"
+                    "offline" -> "Offline"
+                    else -> "Okänd"
+                }
+                Text(vacuumState, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(vacuum?.batteryPercent?.let { "$it %" } ?: "—", color = Forest, fontWeight = FontWeight.Bold)
+            }
+            Text(
+                listOfNotNull(
+                    vacuum?.cleaningAreaM2?.let { "%.1f m²".format(it) },
+                    vacuum?.cleaningTimeMinutes?.let { "$it min" },
+                    vacuum?.mapAvailable?.let { if (it) "Karta sparad" else "Ingen karta" },
+                    vacuum?.autoEmptyEnabled?.let { if (it) "Autotömning på" else "Autotömning av" },
+                ).joinToString(" · ").ifBlank { "Ingen liveinformation ännu" },
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (vacuum?.systemMessages?.isNotEmpty() == true) {
+                vacuum.systemMessages.forEach { warning ->
+                    Text("⚠ $warning", color = Copper, fontWeight = FontWeight.Bold)
+                }
+            } else if (vacuum?.online == true) {
+                Text("Inga aktiva systemvarningar.", color = Forest)
+            }
+            Text(
+                "Filter ${vacuum?.filterPercent?.let { "$it %" } ?: "—"} · " +
+                    "sidoborste ${vacuum?.sideBrushPercent?.let { "$it %" } ?: "—"} · " +
+                    "huvudborste ${vacuum?.mainBrushPercent?.let { "$it %" } ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "Råstatus ${vacuum?.rawDeviceStatus ?: "—"}/${vacuum?.rawOperatingMode ?: "—"} · " +
+                    "uppgift ${vacuum?.rawTaskStatus ?: "—"} · lokalisering ${vacuum?.rawRelocationStatus ?: "—"}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Button(onClick = onVacuumRefresh, enabled = !vacuumBusy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (vacuumBusy) "Uppdaterar…" else "Uppdatera dammsugaren")
+            }
+            if (vacuumControlsAvailable) {
+                OutlinedButton(
+                    onClick = { pendingVacuumMapping = true },
+                    enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "charging"),
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text("Skapa ny snabbkarta") }
+                Text("Startar en ny kartläggningsrunda. Den gamla kartan raderas inte automatiskt.", style = MaterialTheme.typography.bodySmall)
+            }
+            vacuumMessage?.let { Text(it, color = Forest, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+        }
+    }
+    if (pendingVacuumMapping) {
+        AlertDialog(
+            onDismissRequest = { pendingVacuumMapping = false },
+            title = { Text("Starta ny kartläggning?") },
+            text = { Text("Öppna dörrarna, plocka undan hinder och ta bort moppen. Roboten kör ut från dockan och bygger en ny karta. Den befintliga kartan raderas inte automatiskt.") },
+            confirmButton = {
+                Button(onClick = {
+                    pendingVacuumMapping = false
+                    onVacuumCommand("start-fast-mapping", true)
+                }) { Text("Ja, börja kartlägga") }
+            },
+            dismissButton = { TextButton(onClick = { pendingVacuumMapping = false }) { Text("Avbryt") } },
+        )
     }
 }
 

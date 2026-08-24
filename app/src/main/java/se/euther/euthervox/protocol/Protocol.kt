@@ -78,6 +78,14 @@ fun pumpStatus(target: String) = JsonObject().apply {
 
 fun washerStatus() = JsonObject().apply { addProperty("type", "washer.status") }.toString()
 
+fun vacuumStatus() = JsonObject().apply { addProperty("type", "vacuum.status") }.toString()
+
+fun vacuumCommand(command: String, confirmed: Boolean = false) = JsonObject().apply {
+    addProperty("type", "vacuum.command")
+    addProperty("command", command)
+    addProperty("confirmed", confirmed)
+}.toString()
+
 fun washerCommand(command: String, confirmed: Boolean = false) = JsonObject().apply {
     addProperty("type", "washer.command")
     addProperty("command", command)
@@ -160,6 +168,31 @@ sealed interface ServerEvent {
         val energyUsedKwh7d: Double?,
         val lastCompletedAt: String?,
     )
+    data class VacuumState(
+        val available: Boolean,
+        val online: Boolean,
+        val state: String,
+        val batteryPercent: Int?,
+        val faultCode: Int?,
+        val cleaningTimeMinutes: Int?,
+        val cleaningAreaM2: Double?,
+        val mainBrushPercent: Int?,
+        val mainBrushHoursLeft: Int?,
+        val sideBrushPercent: Int?,
+        val sideBrushHoursLeft: Int?,
+        val filterPercent: Int?,
+        val filterHoursLeft: Int?,
+        val mapAvailable: Boolean?,
+        val doNotDisturbEnabled: Boolean?,
+        val autoEmptyEnabled: Boolean?,
+        val maintenanceRequired: Boolean,
+        val systemMessages: List<String>,
+        val rawDeviceStatus: Int?,
+        val rawOperatingMode: Int?,
+        val rawTaskStatus: Int?,
+        val rawRelocationStatus: Int?,
+        val updatedAt: String?,
+    )
     data class Ready(
         val sessionId: String,
         val llmModel: String = "",
@@ -196,6 +229,9 @@ sealed interface ServerEvent {
     data class WasherConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
     data class WasherStatusResult(val washer: WasherState, val statistics: WasherStatistics) : ServerEvent
     data class WasherCommandResult(val command: String, val washer: WasherState, val message: String) : ServerEvent
+    data class VacuumConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
+    data class VacuumStatusResult(val vacuum: VacuumState) : ServerEvent
+    data class VacuumCommandResult(val command: String, val vacuum: VacuumState, val message: String) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -337,6 +373,49 @@ fun parseServerEvent(raw: String): ServerEvent {
                 updatedAt = washer["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
             ) },
             message = json["message"]?.asString ?: "Tvättmaskinen bekräftade ändringen.",
+        )
+        "vacuum.config" -> ServerEvent.VacuumConfig(
+            json["available"]?.asBoolean ?: false,
+            json["controls_available"]?.asBoolean ?: false,
+        )
+        "vacuum.status.result" -> ServerEvent.VacuumStatusResult(
+            json["status"].asJsonObject.let { vacuum -> ServerEvent.VacuumState(
+                available = vacuum["available"]?.asBoolean ?: false,
+                online = vacuum["online"]?.asBoolean ?: false,
+                state = vacuum["state"]?.asString ?: "unknown",
+                batteryPercent = vacuum["battery_percent"]?.takeUnless { it.isJsonNull }?.asInt,
+                faultCode = vacuum["fault_code"]?.takeUnless { it.isJsonNull }?.asInt,
+                cleaningTimeMinutes = vacuum["cleaning_time_minutes"]?.takeUnless { it.isJsonNull }?.asInt,
+                cleaningAreaM2 = vacuum["cleaning_area_m2"]?.takeUnless { it.isJsonNull }?.asDouble,
+                mainBrushPercent = vacuum["main_brush_percent"]?.takeUnless { it.isJsonNull }?.asInt,
+                mainBrushHoursLeft = vacuum["main_brush_hours_left"]?.takeUnless { it.isJsonNull }?.asInt,
+                sideBrushPercent = vacuum["side_brush_percent"]?.takeUnless { it.isJsonNull }?.asInt,
+                sideBrushHoursLeft = vacuum["side_brush_hours_left"]?.takeUnless { it.isJsonNull }?.asInt,
+                filterPercent = vacuum["filter_percent"]?.takeUnless { it.isJsonNull }?.asInt,
+                filterHoursLeft = vacuum["filter_hours_left"]?.takeUnless { it.isJsonNull }?.asInt,
+                mapAvailable = vacuum["map_available"]?.takeUnless { it.isJsonNull }?.asBoolean,
+                doNotDisturbEnabled = vacuum["do_not_disturb_enabled"]?.takeUnless { it.isJsonNull }?.asBoolean,
+                autoEmptyEnabled = vacuum["auto_empty_enabled"]?.takeUnless { it.isJsonNull }?.asBoolean,
+                maintenanceRequired = vacuum["maintenance_required"]?.asBoolean ?: false,
+                systemMessages = vacuum["system_messages"]?.asJsonArray?.mapNotNull { item ->
+                    item.takeIf { it.isJsonPrimitive }?.asString
+                }.orEmpty(),
+                rawDeviceStatus = vacuum["raw_device_status"]?.takeUnless { it.isJsonNull }?.asInt,
+                rawOperatingMode = vacuum["raw_operating_mode"]?.takeUnless { it.isJsonNull }?.asInt,
+                rawTaskStatus = vacuum["raw_task_status"]?.takeUnless { it.isJsonNull }?.asInt,
+                rawRelocationStatus = vacuum["raw_relocation_status"]?.takeUnless { it.isJsonNull }?.asInt,
+                updatedAt = vacuum["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
+            ) },
+        )
+        "vacuum.command.result" -> ServerEvent.VacuumCommandResult(
+            command = json["command"]?.asString.orEmpty(),
+            vacuum = parseServerEvent(
+                JsonObject().apply {
+                    addProperty("type", "vacuum.status.result")
+                    add("status", json["status"])
+                }.toString()
+            ).let { (it as ServerEvent.VacuumStatusResult).vacuum },
+            message = json["message"]?.asString ?: "Robotdammsugaren accepterade kommandot.",
         )
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)

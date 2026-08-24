@@ -182,7 +182,7 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
         assert {tool["function"]["name"] for tool in payload["tools"]} == {
             "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect", "tv_control",
             "heat_pump_status", "heat_pump_control",
-            "washer_status",
+            "washer_status", "vacuum_status",
         }
         return httpx.Response(200, json={
             "message": {

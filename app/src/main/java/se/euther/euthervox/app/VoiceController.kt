@@ -31,6 +31,8 @@ import se.euther.euthervox.protocol.parseServerEvent
 import se.euther.euthervox.protocol.pumpStatus
 import se.euther.euthervox.protocol.pumpCommand
 import se.euther.euthervox.protocol.washerStatus
+import se.euther.euthervox.protocol.vacuumStatus
+import se.euther.euthervox.protocol.vacuumCommand
 import se.euther.euthervox.protocol.washerCommand
 import se.euther.euthervox.protocol.responseCancel
 import se.euther.euthervox.protocol.sessionStart
@@ -84,6 +86,10 @@ data class VoiceUiState(
     val washerMessage: String? = null,
     val washerBusy: Boolean = false,
     val washerControlsAvailable: Boolean = false,
+    val vacuumState: ServerEvent.VacuumState? = null,
+    val vacuumMessage: String? = null,
+    val vacuumBusy: Boolean = false,
+    val vacuumControlsAvailable: Boolean = false,
     val llmModel: String = "",
     val availableLlmModels: List<String> = emptyList(),
 )
@@ -463,6 +469,32 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    fun refreshVacuum() {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(vacuumMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(vacuumBusy = true, vacuumMessage = "Läser dammsugarstatus…")
+        scope.launch {
+            if (transport?.sendText(vacuumStatus()) != true) {
+                mutableState.value = mutableState.value.copy(vacuumBusy = false, vacuumMessage = "Kunde inte fråga dammsugartjänsten.")
+            }
+        }
+    }
+
+    fun controlVacuum(command: String, confirmed: Boolean = false) {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(vacuumMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(vacuumBusy = true, vacuumMessage = "Skickar det bekräftade kartkommandot…")
+        scope.launch {
+            if (transport?.sendText(vacuumCommand(command, confirmed)) != true) {
+                mutableState.value = mutableState.value.copy(vacuumBusy = false, vacuumMessage = "Kunde inte skicka kartkommandot.")
+            }
+        }
+    }
+
     fun controlWasher(command: String, confirmed: Boolean = false) {
         if (!ready) {
             mutableState.value = mutableState.value.copy(washerMessage = "Anslut till servern under Röst först.")
@@ -708,10 +740,29 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 washerBusy = false,
                 washerMessage = event.message,
             )
+            is ServerEvent.VacuumConfig -> {
+                mutableState.value = mutableState.value.copy(
+                    vacuumMessage = if (event.available) "Robotdammsugaren är kopplad till EutherVox." else "Dammsugartjänsten är inte tillgänglig.",
+                    vacuumControlsAvailable = event.controlsAvailable,
+                )
+                if (event.available) refreshVacuum()
+            }
+            is ServerEvent.VacuumStatusResult -> mutableState.value = mutableState.value.copy(
+                vacuumState = event.vacuum,
+                vacuumBusy = false,
+                vacuumMessage = if (event.vacuum.online) "Dammsugarstatus uppdaterad." else "Robotdammsugaren är offline.",
+            )
+            is ServerEvent.VacuumCommandResult -> mutableState.value = mutableState.value.copy(
+                vacuumState = event.vacuum,
+                vacuumBusy = false,
+                vacuumMessage = event.message,
+            )
             is ServerEvent.Error -> if (event.code.startsWith("PUMP_")) {
                 mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = event.message)
             } else if (event.code.startsWith("WASHER_")) {
                 mutableState.value = mutableState.value.copy(washerBusy = false, washerMessage = event.message)
+            } else if (event.code.startsWith("VACUUM_")) {
+                mutableState.value = mutableState.value.copy(vacuumBusy = false, vacuumMessage = event.message)
             } else if (event.code.startsWith("TV_")) {
                 mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = event.message)
             } else {

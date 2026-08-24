@@ -137,6 +137,7 @@ room = "vardagsrummet"
 enabled = true
 base_url = "http://192.168.32.186:8801"
 alias = "tvattmaskinen"
+vacuum_alias = "dammsugaren"
 timeout_seconds = 2
 control_enabled = true
 control_timeout_seconds = 20

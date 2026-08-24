@@ -193,6 +193,15 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(
+            name="vacuum_status",
+            description="Läs status, karta, underhåll och systemmeddelanden från husets robotdammsugare.",
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
     )
 
     def __init__(
@@ -256,6 +265,17 @@ class EutherVoxToolRegistry:
                 target_node=node_name,
                 arguments={},
                 acknowledgement="Jag läser tvättrapporten.",
+            )
+
+        if tool_name == "vacuum_status":
+            if not self.eutherwash or not self.eutherwash.enabled:
+                raise ToolValidationError("EutherWash är inte konfigurerad")
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="vacuum.status",
+                target_node=node_name,
+                arguments={},
+                acknowledgement="Jag läser dammsugarrapporten.",
             )
 
         if tool_name in {"light_set", "light_effect"}:

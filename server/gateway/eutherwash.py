@@ -25,11 +25,25 @@ class EutherWashService:
         "cycles_started_7d", "cycles_completed_7d", "running_minutes_7d",
         "energy_used_kwh_7d", "last_completed_at", "generated_at",
     }
+    _VACUUM_KEYS = {
+        "available", "online", "state", "battery_percent", "fault_code",
+        "cleaning_time_minutes", "cleaning_area_m2", "fan_mode", "water_flow",
+        "mop_attached", "main_brush_percent", "main_brush_hours_left",
+        "side_brush_percent", "side_brush_hours_left", "filter_percent",
+        "filter_hours_left", "total_cleaning_minutes", "total_cleaning_count",
+        "total_cleaning_area_m2", "map_available", "multiple_maps_enabled",
+        "do_not_disturb_enabled", "voice_language", "volume_percent",
+        "auto_empty_enabled", "dust_station_status", "maintenance_required",
+        "system_messages", "raw_device_status", "raw_operating_mode",
+        "raw_charging_state", "raw_task_status", "raw_relocation_status",
+        "updated_at",
+    }
 
     def __init__(self, settings: dict, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.enabled = bool(settings.get("enabled", False))
         self.base_url = str(settings.get("base_url", "http://127.0.0.1:8801")).rstrip("/")
         self.alias = str(settings.get("alias", "tvattmaskinen"))
+        self.vacuum_alias = str(settings.get("vacuum_alias", "dammsugaren"))
         self.timeout = float(settings.get("timeout_seconds", 2.0))
         self.control_enabled = bool(settings.get("control_enabled", False))
         self.control_timeout = float(settings.get("control_timeout_seconds", 20.0))
@@ -97,6 +111,77 @@ class EutherWashService:
                 f"De senaste sju dagarna har den gjort {completed} färdiga tvättar och gått i {hours:g} timmar."
             )
         return " ".join(parts)
+
+    async def vacuum_status(self) -> dict[str, object]:
+        if not self.enabled:
+            raise RuntimeError("EutherWash är inte aktiverad")
+        encoded = quote(self.vacuum_alias, safe="")
+        status = await self._get(f"/v1/vacuums/{encoded}/status")
+        if not isinstance(status, dict):
+            raise RuntimeError("EutherWash svarade med ogiltig dammsugardata")
+        return {key: status.get(key) for key in self._VACUUM_KEYS}
+
+    async def vacuum_status_text(self) -> str:
+        status = await self.vacuum_status()
+        if not status.get("available") or not status.get("online"):
+            return "Robotdammsugaren går inte att nå just nu."
+        state = {
+            "idle": "är redo",
+            "cleaning": "städar",
+            "paused": "är pausad",
+            "returning": "är på väg till laddaren",
+            "charging": "laddar",
+            "error": "har ett fel",
+        }.get(str(status.get("state")), "svarar men har ett oklart läge")
+        parts = [f"Robotdammsugaren {state}."]
+        battery = status.get("battery_percent")
+        if isinstance(battery, int):
+            parts.append(f"Batteriet är på {battery} procent.")
+        messages = status.get("system_messages")
+        if isinstance(messages, list):
+            parts.extend(str(message) for message in messages[:4] if isinstance(message, str))
+        if status.get("map_available") is True:
+            parts.append("En huskarta finns sparad lokalt i roboten.")
+        return " ".join(parts)
+
+    async def vacuum_command(self, command: str, *, confirmed: bool = False) -> dict[str, object]:
+        if not self.enabled or not self.control_enabled or not self._control_token:
+            raise RuntimeError("Dammsugarstyrning är inte aktiverad")
+        if command != "start-fast-mapping":
+            raise ValueError("Okänt dammsugarkommando")
+        if not confirmed:
+            raise ValueError("Ommappning kräver uttrycklig bekräftelse")
+        encoded = quote(self.vacuum_alias, safe="")
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(self.control_timeout, connect=min(1.0, self.control_timeout)),
+                trust_env=False,
+                transport=self.transport,
+            ) as client:
+                response = await client.post(
+                    f"{self.base_url}/v1/vacuums/{encoded}/commands/{command}",
+                    headers={"Authorization": f"Bearer {self._control_token}"},
+                    json={"confirmed": True},
+                )
+                if response.status_code == 409:
+                    detail = response.json().get("detail", "command_rejected")
+                    messages = {
+                        "vacuum_busy": "Robotdammsugaren måste vara stilla innan kartläggningen startar.",
+                        "battery_too_low": "Robotdammsugaren behöver minst 15 procent batteri.",
+                        "remove_mop_before_mapping": "Ta bort moppen innan snabb kartläggning.",
+                        "command_rejected": "Robotdammsugaren avvisade kartläggningen.",
+                    }
+                    raise RuntimeError(messages.get(str(detail), "Robotdammsugaren avvisade kartläggningen."))
+                response.raise_for_status()
+                payload = response.json()
+        except RuntimeError:
+            raise
+        except (httpx.HTTPError, ValueError) as error:
+            raise RuntimeError("EutherWash svarar inte på kartkommandot") from error
+        status = payload.get("status") if isinstance(payload, dict) else None
+        if not isinstance(status, dict) or payload.get("accepted") is not True:
+            raise RuntimeError("EutherWash bekräftade inte kartläggningen")
+        return {key: status.get(key) for key in self._VACUUM_KEYS}
 
     @staticmethod
     def _spoken_program(value: object) -> str:
@@ -172,6 +257,8 @@ class EutherWashService:
             raise ValueError("EutherWash måste finnas på det lokala nätet")
         if not self._ALIAS.fullmatch(self.alias):
             raise ValueError("EutherWash alias är ogiltigt")
+        if not self._ALIAS.fullmatch(self.vacuum_alias):
+            raise ValueError("EutherWash vacuum_alias är ogiltigt")
         if not 0 < self.timeout <= 10:
             raise ValueError("EutherWash timeout måste vara mellan 0 och 10 sekunder")
         if not 0 < self.control_timeout <= 25:
