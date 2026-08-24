@@ -115,7 +115,6 @@ planner_timeout_seconds = 8
 enabled = true
 config_file = "state/lights.toml"
 timeout_seconds = 2
-
 [television]
 enabled = true
 config_file = "state/tvs.toml"
@@ -139,6 +138,9 @@ enabled = true
 base_url = "http://192.168.32.186:8801"
 alias = "tvattmaskinen"
 timeout_seconds = 2
+control_enabled = true
+control_timeout_seconds = 20
+control_token_file = "/home/nichlas/.config/euthervox/eutherwash-control-token"
 
 [wikipedia]
 enabled = true

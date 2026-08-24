@@ -408,6 +408,7 @@ def test_authenticated_session_exposes_and_reads_configured_pump():
 def test_authenticated_session_exposes_read_only_washer_report():
     class FakeWasher:
         enabled = True
+        control_enabled = False
 
         async def report(self):
             return {
@@ -425,6 +426,35 @@ def test_authenticated_session_exposes_read_only_washer_report():
         result = next(item for item in sent if item.get("type") == "washer.status.result")
         assert result["status"]["program"] == "Eco 40–60"
         assert result["statistics"]["cycles_completed_7d"] == 2
+
+    asyncio.run(scenario())
+
+
+def test_authenticated_session_controls_washer_with_start_confirmation():
+    class FakeWasher:
+        enabled = True
+        control_enabled = True
+
+        async def report(self):
+            return {"status": {"online": True, "state": "idle"}, "statistics": {}}
+
+        async def command(self, command, *, confirmed=False):
+            assert command == "start"
+            assert confirmed is True
+            return {"online": True, "state": "running", "remote_control_enabled": True}
+
+    async def scenario():
+        session, sent = make_session()
+        session.authenticated_user = "nichlas"
+        session.eutherwash = FakeWasher()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({
+            "type": "washer.command", "command": "start", "confirmed": True,
+        }))
+        config = next(item for item in sent if item.get("type") == "washer.config")
+        result = next(item for item in sent if item.get("type") == "washer.command.result")
+        assert config["controls_available"] is True
+        assert result["status"]["state"] == "running"
 
     asyncio.run(scenario())
 

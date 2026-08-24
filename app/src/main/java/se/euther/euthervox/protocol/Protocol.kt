@@ -78,6 +78,12 @@ fun pumpStatus(target: String) = JsonObject().apply {
 
 fun washerStatus() = JsonObject().apply { addProperty("type", "washer.status") }.toString()
 
+fun washerCommand(command: String, confirmed: Boolean = false) = JsonObject().apply {
+    addProperty("type", "washer.command")
+    addProperty("command", command)
+    addProperty("confirmed", confirmed)
+}.toString()
+
 fun pumpCommand(
     target: String,
     power: Boolean? = null,
@@ -140,6 +146,7 @@ sealed interface ServerEvent {
         val waterTemperatureC: Int?,
         val spinRpm: Int?,
         val rinseCycles: Int?,
+        val remoteControlEnabled: Boolean?,
         val instantaneousPowerW: Double?,
         val cumulativeEnergyKwh: Double?,
         val updatedAt: String?,
@@ -185,8 +192,9 @@ sealed interface ServerEvent {
     data class PumpsConfig(val pumps: List<ConfiguredPump>) : ServerEvent
     data class PumpStatusResult(val pump: PumpState) : ServerEvent
     data class PumpCommandResult(val pump: PumpState, val message: String) : ServerEvent
-    data class WasherConfig(val available: Boolean) : ServerEvent
+    data class WasherConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
     data class WasherStatusResult(val washer: WasherState, val statistics: WasherStatistics) : ServerEvent
+    data class WasherCommandResult(val command: String, val washer: WasherState, val message: String) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -273,7 +281,10 @@ fun parseServerEvent(raw: String): ServerEvent {
             parsePumpState(json["pump"].asJsonObject),
             json["message"]?.asString ?: "Pumpen bekräftade ändringen.",
         )
-        "washer.config" -> ServerEvent.WasherConfig(json["available"]?.asBoolean ?: false)
+        "washer.config" -> ServerEvent.WasherConfig(
+            json["available"]?.asBoolean ?: false,
+            json["controls_available"]?.asBoolean ?: false,
+        )
         "washer.status.result" -> ServerEvent.WasherStatusResult(
             washer = json["status"].asJsonObject.let { washer -> ServerEvent.WasherState(
                 available = washer["available"]?.asBoolean ?: false,
@@ -286,6 +297,7 @@ fun parseServerEvent(raw: String): ServerEvent {
                 waterTemperatureC = washer["water_temperature_c"]?.takeUnless { it.isJsonNull }?.asInt,
                 spinRpm = washer["spin_rpm"]?.takeUnless { it.isJsonNull }?.asInt,
                 rinseCycles = washer["rinse_cycles"]?.takeUnless { it.isJsonNull }?.asInt,
+                remoteControlEnabled = washer["remote_control_enabled"]?.takeUnless { it.isJsonNull }?.asBoolean,
                 instantaneousPowerW = washer["instantaneous_power_w"]?.takeUnless { it.isJsonNull }?.asDouble,
                 cumulativeEnergyKwh = washer["cumulative_energy_kwh"]?.takeUnless { it.isJsonNull }?.asDouble,
                 updatedAt = washer["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
@@ -299,6 +311,26 @@ fun parseServerEvent(raw: String): ServerEvent {
                 energyUsedKwh7d = stats["energy_used_kwh_7d"]?.takeUnless { it.isJsonNull }?.asDouble,
                 lastCompletedAt = stats["last_completed_at"]?.takeUnless { it.isJsonNull }?.asString,
             ) },
+        )
+        "washer.command.result" -> ServerEvent.WasherCommandResult(
+            command = json["command"]?.asString.orEmpty(),
+            washer = json["status"].asJsonObject.let { washer -> ServerEvent.WasherState(
+                available = washer["available"]?.asBoolean ?: false,
+                online = washer["online"]?.asBoolean ?: false,
+                state = washer["state"]?.asString ?: "unknown",
+                phase = washer["phase"]?.takeUnless { it.isJsonNull }?.asString,
+                progressPercent = washer["progress_percent"]?.takeUnless { it.isJsonNull }?.asInt,
+                remainingSeconds = washer["remaining_seconds"]?.takeUnless { it.isJsonNull }?.asInt,
+                program = washer["program"]?.takeUnless { it.isJsonNull }?.asString,
+                waterTemperatureC = washer["water_temperature_c"]?.takeUnless { it.isJsonNull }?.asInt,
+                spinRpm = washer["spin_rpm"]?.takeUnless { it.isJsonNull }?.asInt,
+                rinseCycles = washer["rinse_cycles"]?.takeUnless { it.isJsonNull }?.asInt,
+                remoteControlEnabled = washer["remote_control_enabled"]?.takeUnless { it.isJsonNull }?.asBoolean,
+                instantaneousPowerW = washer["instantaneous_power_w"]?.takeUnless { it.isJsonNull }?.asDouble,
+                cumulativeEnergyKwh = washer["cumulative_energy_kwh"]?.takeUnless { it.isJsonNull }?.asDouble,
+                updatedAt = washer["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
+            ) },
+            message = json["message"]?.asString ?: "Tvättmaskinen bekräftade ändringen.",
         )
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)

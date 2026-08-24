@@ -136,4 +136,17 @@ class ProtocolTest {
         assertEquals(827.1, event.washer.cumulativeEnergyKwh!!, 0.0)
         assertEquals(1, event.statistics.cyclesCompleted7d)
     }
+
+    @Test fun serializesConfirmedWasherCommandAndParsesApplianceReadback() {
+        val request = JsonParser.parseString(washerCommand("start", confirmed = true)).asJsonObject
+        assertEquals("washer.command", request["type"].asString)
+        assertEquals("start", request["command"].asString)
+        assertTrue(request["confirmed"].asBoolean)
+
+        val event = parseServerEvent(
+            """{"type":"washer.command.result","command":"start","message":"Tvättmaskinen bekräftade att den startade.","status":{"available":true,"online":true,"state":"running","phase":"wash","progress_percent":1,"remaining_seconds":3600,"program":"Eco 40–60","water_temperature_c":40,"spin_rpm":1400,"rinse_cycles":2,"remote_control_enabled":true,"instantaneous_power_w":400,"cumulative_energy_kwh":827.2,"updated_at":"2026-08-24T10:00:00Z"}}"""
+        ) as ServerEvent.WasherCommandResult
+        assertEquals("running", event.washer.state)
+        assertEquals(true, event.washer.remoteControlEnabled)
+    }
 }

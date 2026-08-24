@@ -150,6 +150,8 @@ class VoiceSession:
                 await self._pump_command(message)
             elif message_type == "washer.status":
                 await self._washer_status()
+            elif message_type == "washer.command":
+                await self._washer_command(message)
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -218,7 +220,11 @@ class VoiceSession:
         if self.authenticated_user and self.eutherpump and self.eutherpump.enabled:
             await self._send_pump_config()
         if self.authenticated_user and self.eutherwash and self.eutherwash.enabled:
-            await self.send_json({"type": "washer.config", "available": True})
+            await self.send_json({
+                "type": "washer.config",
+                "available": True,
+                "controls_available": bool(getattr(self.eutherwash, "control_enabled", False)),
+            })
         LOG.info(
             "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,
@@ -365,6 +371,31 @@ class VoiceSession:
         except (ValueError, RuntimeError, OSError) as error:
             raise ProtocolError("WASHER_STATUS_FAILED", str(error)) from error
         await self.send_json({"type": "washer.status.result", **report})
+
+    async def _washer_command(self, message: dict) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("WASHER_AUTH_REQUIRED", "Inloggning krävs för tvättstyrning")
+        if not self.eutherwash or not self.eutherwash.enabled or not self.eutherwash.control_enabled:
+            raise ProtocolError("WASHER_CONTROL_DISABLED", "Tvättstyrning är inte aktiverad")
+        command = str(message.get("command", ""))
+        confirmed = message.get("confirmed") is True
+        if command not in {"start", "pause", "resume", "stop"}:
+            raise ProtocolError("WASHER_COMMAND_INVALID", "Okänt tvättkommando")
+        if command in {"start", "stop"} and not confirmed:
+            raise ProtocolError("WASHER_CONFIRMATION_REQUIRED", "Start och stopp måste bekräftas")
+        try:
+            status = await self.eutherwash.command(command, confirmed=confirmed)
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("WASHER_COMMAND_FAILED", str(error)) from error
+        labels = {"start": "startade", "pause": "pausade", "resume": "fortsatte", "stop": "stoppade"}
+        await self.send_json({
+            "type": "washer.command.result",
+            "command": command,
+            "status": status,
+            "message": f"Tvättmaskinen bekräftade att den {labels[command]}.",
+        })
 
     async def _start_audio(self, message: dict) -> None:
         if self.phase is not Phase.READY:

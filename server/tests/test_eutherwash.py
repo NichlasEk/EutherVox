@@ -3,6 +3,7 @@ import json
 
 import httpx
 import pytest
+from pathlib import Path
 
 from gateway.eutherwash import EutherWashService
 
@@ -31,3 +32,40 @@ def test_reads_only_fixed_routes_and_drops_unknown_fields():
     assert report["status"]["state"] == "idle"
     assert "device_uuid" not in report["status"]
     assert "raw" not in report["statistics"]
+
+
+def test_control_uses_fixed_command_token_and_confirmation(tmp_path: Path):
+    token_file = tmp_path / "control-token"
+    token_file.write_text("synthetic-control-token-at-least-32-characters", encoding="utf-8")
+    token_file.chmod(0o600)
+    requests = []
+
+    def handler(request: httpx.Request):
+        requests.append(request)
+        return httpx.Response(200, json={
+            "command": "start",
+            "confirmed": True,
+            "status": {"available": True, "online": True, "state": "running", "remote_control_enabled": True},
+        })
+
+    service = EutherWashService(settings(
+        control_enabled=True,
+        control_token_file=str(token_file),
+    ), transport=httpx.MockTransport(handler))
+    status = asyncio.run(service.command("start", confirmed=True))
+
+    assert requests[0].url.path == "/v1/washers/tvattmaskinen/commands/start"
+    assert requests[0].headers["authorization"] == "Bearer synthetic-control-token-at-least-32-characters"
+    assert status["state"] == "running"
+
+
+def test_control_rejects_unconfirmed_start_before_network(tmp_path: Path):
+    token_file = tmp_path / "control-token"
+    token_file.write_text("synthetic-control-token-at-least-32-characters", encoding="utf-8")
+    token_file.chmod(0o600)
+    service = EutherWashService(settings(
+        control_enabled=True,
+        control_token_file=str(token_file),
+    ), transport=httpx.MockTransport(lambda _request: pytest.fail("must not call network")))
+    with pytest.raises(ValueError, match="bekräftelse"):
+        asyncio.run(service.command("start"))

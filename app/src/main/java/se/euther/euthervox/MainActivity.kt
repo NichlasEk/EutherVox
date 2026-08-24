@@ -344,7 +344,9 @@ fun EutherVoxApp() {
                     statistics = state.washerStatistics,
                     message = state.washerMessage,
                     busy = state.washerBusy,
+                    controlsAvailable = state.washerControlsAvailable,
                     onRefresh = controller::refreshWasher,
+                    onCommand = controller::controlWasher,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -471,18 +473,22 @@ private fun WasherPanel(
     statistics: ServerEvent.WasherStatistics?,
     message: String?,
     busy: Boolean,
+    controlsAvailable: Boolean,
     onRefresh: () -> Unit,
+    onCommand: (String, Boolean) -> Unit,
 ) {
+    var pendingConfirmation by remember { mutableStateOf<String?>(null) }
     fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
     fun stateLabel(value: String) = when (value) {
         "idle" -> "Redo"
         "running" -> "Tvättar"
+        "paused" -> "Pausad"
         "finished" -> "Klar"
         "offline" -> "Offline"
         else -> "Okänd"
     }
     Text("Tvättmaskin", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
-    Text("Skrivskyddad överblick – EutherVox kan inte starta eller ändra ett program.", textAlign = TextAlign.Center, color = Forest)
+    Text("Status och fyra avgränsade kontroller. Programmet väljs alltid på maskinen.", textAlign = TextAlign.Center, color = Forest)
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -500,9 +506,58 @@ private fun WasherPanel(
                 state?.rinseCycles?.let { "$it sköljningar" },
             ).joinToString(" · ").ifBlank { "Programinställningar saknas" })
             Text("Effekt nu: ${number(state?.instantaneousPowerW, " W")} · Total mätare: ${number(state?.cumulativeEnergyKwh, " kWh")}", style = MaterialTheme.typography.bodySmall)
+            if (controlsAvailable) {
+                val remoteReady = state?.remoteControlEnabled == true
+                if (!remoteReady) {
+                    Text("Smart Control är av – slå på det vid tvättmaskinen för att låsa upp kontrollerna.", color = Copper, fontWeight = FontWeight.Bold)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { pendingConfirmation = "start" },
+                        enabled = !busy && remoteReady && state?.state == "idle",
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Starta") }
+                    OutlinedButton(
+                        onClick = { onCommand("pause", false) },
+                        enabled = !busy && remoteReady && state?.state == "running",
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Pausa") }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onCommand("resume", false) },
+                        enabled = !busy && remoteReady && state?.state == "paused",
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Fortsätt") }
+                    OutlinedButton(
+                        onClick = { pendingConfirmation = "stop" },
+                        enabled = !busy && remoteReady && state?.state in setOf("running", "paused"),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Stoppa") }
+                }
+            }
             Button(onClick = onRefresh, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Uppdaterar…" else "Uppdatera") }
             message?.let { Text(it, color = Forest, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
         }
+    }
+    pendingConfirmation?.let { command ->
+        AlertDialog(
+            onDismissRequest = { pendingConfirmation = null },
+            title = { Text(if (command == "start") "Starta tvätten?" else "Stoppa tvätten?") },
+            text = { Text(
+                if (command == "start")
+                    "Bekräfta att maskinen är rätt laddad, att tvättmedel finns och att personen hemma vet att den kan starta."
+                else
+                    "Ett stopp kan lämna tvätten blöt och programmet ofärdigt. Vill du verkligen stoppa?"
+            ) },
+            confirmButton = {
+                Button(onClick = {
+                    pendingConfirmation = null
+                    onCommand(command, true)
+                }) { Text("Ja, ${if (command == "start") "starta" else "stoppa"}") }
+            },
+            dismissButton = { TextButton(onClick = { pendingConfirmation = null }) { Text("Avbryt") } },
+        )
     }
     Text("Senaste 7 dagarna", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
