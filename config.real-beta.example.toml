@@ -134,6 +134,12 @@ id = "08a4cfb2-0da9-4699-9f40-2d988ec3c709"
 name = "Värmepumpen"
 room = "vardagsrummet"
 
+[eutherwash]
+enabled = true
+base_url = "http://192.168.32.186:8801"
+alias = "tvattmaskinen"
+timeout_seconds = 2
+
 [wikipedia]
 enabled = true
 api_url = "https://sv.wikipedia.org/w/api.php"

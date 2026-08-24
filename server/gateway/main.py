@@ -24,6 +24,7 @@ from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
 from .television import NecTvService
 from .eutherpump import EutherPumpService
+from .eutherwash import EutherWashService
 
 
 LOG = logging.getLogger("euthervox.gateway")
@@ -50,7 +51,7 @@ def configure_device_hotwords(
     return count
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -71,6 +72,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         lights=lights,
         television=television,
         eutherpump=eutherpump,
+        eutherwash=eutherwash,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -153,6 +155,7 @@ async def run(config: GatewayConfig) -> None:
     lights = MagicHomeLightService(config.light_settings, config.config_dir)
     television = NecTvService(config.television_settings, config.config_dir)
     eutherpump = EutherPumpService(config.eutherpump_settings)
+    eutherwash = EutherWashService(config.eutherwash_settings)
     configure_device_hotwords(engines[0], lights, television, eutherpump)
     tool_registry = EutherVoxToolRegistry(cast, lights, television, eutherpump)
     tool_planner = None
@@ -177,7 +180,7 @@ async def run(config: GatewayConfig) -> None:
     )
     oauth_http = OAuthHttpHandler(youtube)
     async with serve(
-        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump),
+        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash),
         config.host,
         config.port,
         max_size=2**20,

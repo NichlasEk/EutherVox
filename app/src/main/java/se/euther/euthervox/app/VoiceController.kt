@@ -30,6 +30,7 @@ import se.euther.euthervox.protocol.audioStart
 import se.euther.euthervox.protocol.parseServerEvent
 import se.euther.euthervox.protocol.pumpStatus
 import se.euther.euthervox.protocol.pumpCommand
+import se.euther.euthervox.protocol.washerStatus
 import se.euther.euthervox.protocol.responseCancel
 import se.euther.euthervox.protocol.sessionStart
 import se.euther.euthervox.protocol.lightConfigUpsert
@@ -77,6 +78,10 @@ data class VoiceUiState(
     val pumpState: ServerEvent.PumpState? = null,
     val pumpMessage: String? = null,
     val pumpBusy: Boolean = false,
+    val washerState: ServerEvent.WasherState? = null,
+    val washerStatistics: ServerEvent.WasherStatistics? = null,
+    val washerMessage: String? = null,
+    val washerBusy: Boolean = false,
     val llmModel: String = "",
     val availableLlmModels: List<String> = emptyList(),
 )
@@ -443,6 +448,19 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    fun refreshWasher() {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(washerMessage = "Anslut till servern under Röst först.")
+            return
+        }
+        mutableState.value = mutableState.value.copy(washerBusy = true, washerMessage = "Läser tvättstatus…")
+        scope.launch {
+            if (transport?.sendText(washerStatus()) != true) {
+                mutableState.value = mutableState.value.copy(washerBusy = false, washerMessage = "Kunde inte fråga tvättmaskinstjänsten.")
+            }
+        }
+    }
+
     private fun sendPendingLightConfig() {
         val pending = pendingLightConfig ?: return
         mutableState.value = mutableState.value.copy(lightConfigMessage = "Sparar lampnamnet i serverns TOML…")
@@ -634,8 +652,22 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 pumpBusy = false,
                 pumpMessage = event.message,
             )
+            is ServerEvent.WasherConfig -> {
+                mutableState.value = mutableState.value.copy(
+                    washerMessage = if (event.available) "Tvättmaskinen är kopplad till EutherVox." else "Tvättmaskinstjänsten är inte tillgänglig.",
+                )
+                if (event.available) refreshWasher()
+            }
+            is ServerEvent.WasherStatusResult -> mutableState.value = mutableState.value.copy(
+                washerState = event.washer,
+                washerStatistics = event.statistics,
+                washerBusy = false,
+                washerMessage = if (event.washer.online) "Status och statistik uppdaterade." else "Tvättmaskinen är offline.",
+            )
             is ServerEvent.Error -> if (event.code.startsWith("PUMP_")) {
                 mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = event.message)
+            } else if (event.code.startsWith("WASHER_")) {
+                mutableState.value = mutableState.value.copy(washerBusy = false, washerMessage = event.message)
             } else if (event.code.startsWith("TV_")) {
                 mutableState.value = mutableState.value.copy(tvBusy = false, tvMessage = event.message)
             } else {

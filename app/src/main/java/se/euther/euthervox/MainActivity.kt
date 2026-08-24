@@ -186,7 +186,11 @@ fun EutherVoxApp() {
                 TabChoice("Röst", selectedTab == "voice", Modifier.weight(1f)) { selectedTab = "voice" }
                 TabChoice("Ljus", selectedTab == "lights", Modifier.weight(1f)) { selectedTab = "lights" }
                 TabChoice("TV", selectedTab == "tv", Modifier.weight(1f)) { selectedTab = "tv" }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TabChoice("Pump", selectedTab == "pump", Modifier.weight(1f)) { selectedTab = "pump" }
+                TabChoice("Tvätt", selectedTab == "washer", Modifier.weight(1f)) { selectedTab = "washer" }
+                Spacer(Modifier.weight(1f))
             }
             if (selectedTab == "voice") {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
@@ -325,7 +329,7 @@ fun EutherVoxApp() {
                     onSave = controller::saveTv,
                     onCommand = controller::controlTv,
                 )
-            } else {
+            } else if (selectedTab == "pump") {
                 PumpPanel(
                     configured = state.configuredPumps,
                     state = state.pumpState,
@@ -333,6 +337,14 @@ fun EutherVoxApp() {
                     busy = state.pumpBusy,
                     onRefresh = controller::refreshPump,
                     onControl = controller::controlPump,
+                )
+            } else {
+                WasherPanel(
+                    state = state.washerState,
+                    statistics = state.washerStatistics,
+                    message = state.washerMessage,
+                    busy = state.washerBusy,
+                    onRefresh = controller::refreshWasher,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -450,6 +462,61 @@ private fun TabChoice(label: String, selected: Boolean, modifier: Modifier = Mod
         Button(onClick = onSelect, modifier = modifier) { Text(label) }
     } else {
         OutlinedButton(onClick = onSelect, modifier = modifier) { Text(label) }
+    }
+}
+
+@Composable
+private fun WasherPanel(
+    state: ServerEvent.WasherState?,
+    statistics: ServerEvent.WasherStatistics?,
+    message: String?,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+) {
+    fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
+    fun stateLabel(value: String) = when (value) {
+        "idle" -> "Redo"
+        "running" -> "Tvättar"
+        "finished" -> "Klar"
+        "offline" -> "Offline"
+        else -> "Okänd"
+    }
+    Text("Tvättmaskin", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+    Text("Skrivskyddad överblick – EutherVox kan inte starta eller ändra ett program.", textAlign = TextAlign.Center, color = Forest)
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(state?.let { stateLabel(it.state) } ?: "Ingen status", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+                Text(if (state?.online == true) "● ONLINE" else "○ OFFLINE", color = if (state?.online == true) Forest else Copper, fontWeight = FontWeight.Bold)
+            }
+            Text(state?.program ?: "Program saknas", style = MaterialTheme.typography.titleMedium)
+            state?.progressPercent?.let {
+                LinearProgressIndicator(progress = { it / 100f }, modifier = Modifier.fillMaxWidth())
+                Text("$it %${state.remainingSeconds?.let { seconds -> " · ${seconds / 60} min kvar" } ?: ""}")
+            }
+            Text(listOfNotNull(
+                state?.waterTemperatureC?.let { "$it °C" },
+                state?.spinRpm?.let { "$it varv/min" },
+                state?.rinseCycles?.let { "$it sköljningar" },
+            ).joinToString(" · ").ifBlank { "Programinställningar saknas" })
+            Text("Effekt nu: ${number(state?.instantaneousPowerW, " W")} · Total mätare: ${number(state?.cumulativeEnergyKwh, " kWh")}", style = MaterialTheme.typography.bodySmall)
+            Button(onClick = onRefresh, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Uppdaterar…" else "Uppdatera") }
+            message?.let { Text(it, color = Forest, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+        }
+    }
+    Text("Senaste 7 dagarna", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("Klarmarkerade", style = MaterialTheme.typography.bodySmall); Text("${statistics?.cyclesCompleted7d ?: 0}", style = MaterialTheme.typography.headlineSmall, color = Forest) }
+                Column(horizontalAlignment = Alignment.End) { Text("Drifttid", style = MaterialTheme.typography.bodySmall); Text("${statistics?.runningMinutes7d ?: 0} min", style = MaterialTheme.typography.headlineSmall, color = Forest) }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column { Text("Energi", style = MaterialTheme.typography.bodySmall); Text(number(statistics?.energyUsedKwh7d, " kWh"), style = MaterialTheme.typography.titleLarge, color = Forest) }
+                Column(horizontalAlignment = Alignment.End) { Text("Tillgänglighet 24 h", style = MaterialTheme.typography.bodySmall); Text(number(statistics?.availabilityPercent24h, " %"), style = MaterialTheme.typography.titleLarge, color = Forest) }
+            }
+            Text("Statistiken byggs upp automatiskt när servern observerar riktiga tvättcykler.", style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 

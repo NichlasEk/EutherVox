@@ -124,4 +124,16 @@ class ProtocolTest {
         assertEquals("heat", event.pump.mode)
         assertEquals(false, event.pump.readOnly)
     }
+
+    @Test fun serializesWasherRefreshAndParsesSanitizedReport() {
+        val request = JsonParser.parseString(washerStatus()).asJsonObject
+        assertEquals("washer.status", request["type"].asString)
+
+        val event = parseServerEvent(
+            """{"type":"washer.status.result","status":{"available":true,"online":true,"state":"idle","phase":null,"progress_percent":null,"remaining_seconds":null,"program":"Eco 40–60","water_temperature_c":40,"spin_rpm":1400,"rinse_cycles":2,"instantaneous_power_w":null,"cumulative_energy_kwh":827.1,"updated_at":"2026-08-24T10:00:00Z"},"statistics":{"samples_24h":10,"availability_percent_24h":100.0,"cycles_started_7d":1,"cycles_completed_7d":1,"running_minutes_7d":45,"energy_used_kwh_7d":0.4,"last_completed_at":"2026-08-24T09:00:00Z"}}"""
+        ) as ServerEvent.WasherStatusResult
+        assertEquals("Eco 40–60", event.washer.program)
+        assertEquals(827.1, event.washer.cumulativeEnergyKwh!!, 0.0)
+        assertEquals(1, event.statistics.cyclesCompleted7d)
+    }
 }

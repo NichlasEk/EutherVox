@@ -39,6 +39,7 @@ class GatewayConfig:
     light_settings: dict
     television_settings: dict
     eutherpump_settings: dict
+    eutherwash_settings: dict
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -63,6 +64,7 @@ def load_config(path: str | Path) -> GatewayConfig:
     light_settings = dict(raw.get("lights", {}))
     television_settings = dict(raw.get("television", {}))
     eutherpump_settings = dict(raw.get("eutherpump", {}))
+    eutherwash_settings = dict(raw.get("eutherwash", {}))
     for settings, key in ((stt_settings, "download_root"), (tts_settings, "model_path")):
         if key in settings:
             value = Path(settings[key])
@@ -106,4 +108,5 @@ def load_config(path: str | Path) -> GatewayConfig:
         light_settings=light_settings,
         television_settings=television_settings,
         eutherpump_settings=eutherpump_settings,
+        eutherwash_settings=eutherwash_settings,
     )

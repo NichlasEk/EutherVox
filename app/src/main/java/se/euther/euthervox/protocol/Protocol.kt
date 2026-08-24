@@ -76,6 +76,8 @@ fun pumpStatus(target: String) = JsonObject().apply {
     addProperty("target", target)
 }.toString()
 
+fun washerStatus() = JsonObject().apply { addProperty("type", "washer.status") }.toString()
+
 fun pumpCommand(
     target: String,
     power: Boolean? = null,
@@ -127,6 +129,30 @@ sealed interface ServerEvent {
         val updatedAt: String?,
         val readOnly: Boolean,
     )
+    data class WasherState(
+        val available: Boolean,
+        val online: Boolean,
+        val state: String,
+        val phase: String?,
+        val progressPercent: Int?,
+        val remainingSeconds: Int?,
+        val program: String?,
+        val waterTemperatureC: Int?,
+        val spinRpm: Int?,
+        val rinseCycles: Int?,
+        val instantaneousPowerW: Double?,
+        val cumulativeEnergyKwh: Double?,
+        val updatedAt: String?,
+    )
+    data class WasherStatistics(
+        val samples24h: Int,
+        val availabilityPercent24h: Double?,
+        val cyclesStarted7d: Int,
+        val cyclesCompleted7d: Int,
+        val runningMinutes7d: Int,
+        val energyUsedKwh7d: Double?,
+        val lastCompletedAt: String?,
+    )
     data class Ready(
         val sessionId: String,
         val llmModel: String = "",
@@ -159,6 +185,8 @@ sealed interface ServerEvent {
     data class PumpsConfig(val pumps: List<ConfiguredPump>) : ServerEvent
     data class PumpStatusResult(val pump: PumpState) : ServerEvent
     data class PumpCommandResult(val pump: PumpState, val message: String) : ServerEvent
+    data class WasherConfig(val available: Boolean) : ServerEvent
+    data class WasherStatusResult(val washer: WasherState, val statistics: WasherStatistics) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
 }
@@ -244,6 +272,33 @@ fun parseServerEvent(raw: String): ServerEvent {
         "pump.command.result" -> ServerEvent.PumpCommandResult(
             parsePumpState(json["pump"].asJsonObject),
             json["message"]?.asString ?: "Pumpen bekräftade ändringen.",
+        )
+        "washer.config" -> ServerEvent.WasherConfig(json["available"]?.asBoolean ?: false)
+        "washer.status.result" -> ServerEvent.WasherStatusResult(
+            washer = json["status"].asJsonObject.let { washer -> ServerEvent.WasherState(
+                available = washer["available"]?.asBoolean ?: false,
+                online = washer["online"]?.asBoolean ?: false,
+                state = washer["state"]?.asString ?: "unknown",
+                phase = washer["phase"]?.takeUnless { it.isJsonNull }?.asString,
+                progressPercent = washer["progress_percent"]?.takeUnless { it.isJsonNull }?.asInt,
+                remainingSeconds = washer["remaining_seconds"]?.takeUnless { it.isJsonNull }?.asInt,
+                program = washer["program"]?.takeUnless { it.isJsonNull }?.asString,
+                waterTemperatureC = washer["water_temperature_c"]?.takeUnless { it.isJsonNull }?.asInt,
+                spinRpm = washer["spin_rpm"]?.takeUnless { it.isJsonNull }?.asInt,
+                rinseCycles = washer["rinse_cycles"]?.takeUnless { it.isJsonNull }?.asInt,
+                instantaneousPowerW = washer["instantaneous_power_w"]?.takeUnless { it.isJsonNull }?.asDouble,
+                cumulativeEnergyKwh = washer["cumulative_energy_kwh"]?.takeUnless { it.isJsonNull }?.asDouble,
+                updatedAt = washer["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
+            ) },
+            statistics = json["statistics"].asJsonObject.let { stats -> ServerEvent.WasherStatistics(
+                samples24h = stats["samples_24h"]?.asInt ?: 0,
+                availabilityPercent24h = stats["availability_percent_24h"]?.takeUnless { it.isJsonNull }?.asDouble,
+                cyclesStarted7d = stats["cycles_started_7d"]?.asInt ?: 0,
+                cyclesCompleted7d = stats["cycles_completed_7d"]?.asInt ?: 0,
+                runningMinutes7d = stats["running_minutes_7d"]?.asInt ?: 0,
+                energyUsedKwh7d = stats["energy_used_kwh_7d"]?.takeUnless { it.isJsonNull }?.asDouble,
+                lastCompletedAt = stats["last_completed_at"]?.takeUnless { it.isJsonNull }?.asString,
+            ) },
         )
         "error" -> ServerEvent.Error(json["code"].asString, json["message"].asString, json["recoverable"]?.asBoolean ?: false)
         else -> ServerEvent.Unknown(type)

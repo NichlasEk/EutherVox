@@ -405,6 +405,30 @@ def test_authenticated_session_exposes_and_reads_configured_pump():
     asyncio.run(scenario())
 
 
+def test_authenticated_session_exposes_read_only_washer_report():
+    class FakeWasher:
+        enabled = True
+
+        async def report(self):
+            return {
+                "status": {"online": True, "state": "idle", "program": "Eco 40–60"},
+                "statistics": {"cycles_completed_7d": 2, "running_minutes_7d": 80},
+            }
+
+    async def scenario():
+        session, sent = make_session()
+        session.authenticated_user = "nichlas"
+        session.eutherwash = FakeWasher()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "washer.status"}))
+        assert next(item for item in sent if item.get("type") == "washer.config")["available"] is True
+        result = next(item for item in sent if item.get("type") == "washer.status.result")
+        assert result["status"]["program"] == "Eco 40–60"
+        assert result["statistics"]["cycles_completed_7d"] == 2
+
+    asyncio.run(scenario())
+
+
 def test_authenticated_session_saves_named_light_to_toml_and_returns_config(tmp_path: Path):
     async def scenario():
         session, sent = make_session()

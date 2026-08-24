@@ -26,6 +26,7 @@ from .playlists import TomlPlaylistStore
 from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .eutherpump import EutherPumpService
+from .eutherwash import EutherWashService
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
 from .television import NecTvService
@@ -99,6 +100,7 @@ class VoiceSession:
     lights: MagicHomeLightService | None = None
     television: NecTvService | None = None
     eutherpump: EutherPumpService | None = None
+    eutherwash: EutherWashService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -146,6 +148,8 @@ class VoiceSession:
                 await self._pump_status(message)
             elif message_type == "pump.command":
                 await self._pump_command(message)
+            elif message_type == "washer.status":
+                await self._washer_status()
             else:
                 raise ProtocolError("UNKNOWN_MESSAGE", f"Unsupported message type: {message_type}")
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
@@ -213,6 +217,8 @@ class VoiceSession:
             await self._send_tv_config()
         if self.authenticated_user and self.eutherpump and self.eutherpump.enabled:
             await self._send_pump_config()
+        if self.authenticated_user and self.eutherwash and self.eutherwash.enabled:
+            await self.send_json({"type": "washer.config", "available": True})
         LOG.info(
             "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,
@@ -346,6 +352,19 @@ class VoiceSession:
             raise ProtocolError("PUMP_AUTH_REQUIRED", "Inloggning krävs för pumpstatus")
         if not self.eutherpump or not self.eutherpump.enabled:
             raise ProtocolError("PUMP_DISABLED", "Värmepumpstjänsten är inte aktiverad")
+
+    async def _washer_status(self) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("WASHER_AUTH_REQUIRED", "Inloggning krävs för tvättstatus")
+        if not self.eutherwash or not self.eutherwash.enabled:
+            raise ProtocolError("WASHER_DISABLED", "Tvättmaskinstjänsten är inte aktiverad")
+        try:
+            report = await self.eutherwash.report()
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("WASHER_STATUS_FAILED", str(error)) from error
+        await self.send_json({"type": "washer.status.result", **report})
 
     async def _start_audio(self, message: dict) -> None:
         if self.phase is not Phase.READY:
