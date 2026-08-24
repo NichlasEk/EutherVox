@@ -25,6 +25,7 @@ from .lighting import MagicHomeLightService
 from .television import NecTvService
 from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
+from .washer_notifications import WasherCompletionMonitor
 
 
 LOG = logging.getLogger("euthervox.gateway")
@@ -35,6 +36,7 @@ def configure_device_hotwords(
     lights: MagicHomeLightService,
     television: NecTvService,
     eutherpump: EutherPumpService | None = None,
+    eutherwash: EutherWashService | None = None,
 ) -> int:
     """Bias STT toward the names that are actually valid command targets."""
     add_hotwords = getattr(stt, "add_hotwords", None)
@@ -46,12 +48,14 @@ def configure_device_hotwords(
     if eutherpump is not None:
         for target in eutherpump.list_public():
             phrases.extend((target["name"], target["room"]))
+    if eutherwash is not None and eutherwash.enabled:
+        phrases.extend(("EutherWash", "tvättmaskinen", "tvättrapport", "tvätten är klar"))
     count = int(add_hotwords(phrases))
     LOG.info("stt_hotwords_configured phrases=%d", count)
     return count
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -73,6 +77,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         television=television,
         eutherpump=eutherpump,
         eutherwash=eutherwash,
+        washer_notifications=washer_notifications,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -156,8 +161,9 @@ async def run(config: GatewayConfig) -> None:
     television = NecTvService(config.television_settings, config.config_dir)
     eutherpump = EutherPumpService(config.eutherpump_settings)
     eutherwash = EutherWashService(config.eutherwash_settings)
-    configure_device_hotwords(engines[0], lights, television, eutherpump)
-    tool_registry = EutherVoxToolRegistry(cast, lights, television, eutherpump)
+    washer_notifications = WasherCompletionMonitor(eutherwash, config.eutherwash_settings, config.config_dir)
+    configure_device_hotwords(engines[0], lights, television, eutherpump, eutherwash)
+    tool_registry = EutherVoxToolRegistry(cast, lights, television, eutherpump, eutherwash)
     tool_planner = None
     if bool(config.mcp_settings.get("enabled", False)) and config.llm_provider == "ollama":
         tool_planner = OllamaToolPlanner(
@@ -179,15 +185,19 @@ async def run(config: GatewayConfig) -> None:
         engines[2].sample_rate,
     )
     oauth_http = OAuthHttpHandler(youtube)
-    async with serve(
-        lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash),
-        config.host,
-        config.port,
-        max_size=2**20,
-        process_request=oauth_http,
-    ):
-        LOG.info("listening ws://%s:%d", config.host, config.port)
-        await asyncio.get_running_loop().create_future()
+    await washer_notifications.start()
+    try:
+        async with serve(
+            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications),
+            config.host,
+            config.port,
+            max_size=2**20,
+            process_request=oauth_http,
+        ):
+            LOG.info("listening ws://%s:%d", config.host, config.port)
+            await asyncio.get_running_loop().create_future()
+    finally:
+        await washer_notifications.stop()
 
 
 def cli() -> None:

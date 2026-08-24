@@ -169,6 +169,7 @@ sealed interface ServerEvent {
     data class SttFinal(val utteranceId: String, val text: String) : ServerEvent
     data class TextDelta(val utteranceId: String, val text: String) : ServerEvent
     data class TextFinal(val utteranceId: String, val text: String) : ServerEvent
+    data class Notification(val utteranceId: String, val title: String, val text: String) : ServerEvent
     data class TtsStart(val utteranceId: String, val sampleRate: Int, val channels: Int) : ServerEvent
     data class TtsEnd(val utteranceId: String) : ServerEvent
     data class Cancelled(val utteranceId: String) : ServerEvent
@@ -213,6 +214,11 @@ fun parseServerEvent(raw: String): ServerEvent {
         "stt.final" -> ServerEvent.SttFinal(utterance, json["text"].asString)
         "assistant.text.delta" -> ServerEvent.TextDelta(utterance, json["text"].asString)
         "assistant.text.final" -> ServerEvent.TextFinal(utterance, json["text"].asString)
+        "assistant.notification" -> ServerEvent.Notification(
+            utterance,
+            json["title"]?.asString.orEmpty(),
+            json["text"]?.asString.orEmpty(),
+        )
         "tts.start" -> json["audio"].asJsonObject.let {
             ServerEvent.TtsStart(utterance, it["sample_rate"].asInt, it["channels"].asInt)
         }

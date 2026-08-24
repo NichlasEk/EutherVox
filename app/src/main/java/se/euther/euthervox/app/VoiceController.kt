@@ -581,6 +581,23 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 updateLatencies()
             }
             is ServerEvent.TextFinal -> mutableState.value = mutableState.value.copy(responseText = event.text)
+            is ServerEvent.Notification -> {
+                if (utteranceId != null || event.utteranceId.isBlank()) return
+                utteranceId = event.utteranceId
+                serverActionInProgress = false
+                timeline = Timeline()
+                mutableState.value = mutableState.value.copy(
+                    status = VoiceStatus.Processing,
+                    canTalk = false,
+                    microphoneActive = false,
+                    partialTranscript = "",
+                    finalTranscript = "",
+                    responseText = event.text,
+                    actionMessage = event.title,
+                    errorMessage = null,
+                    interruptionListening = false,
+                )
+            }
             is ServerEvent.TtsStart -> {
                 if (event.utteranceId != utteranceId || event.utteranceId == cancelledUtteranceId) return
                 cancelledUtteranceId = null

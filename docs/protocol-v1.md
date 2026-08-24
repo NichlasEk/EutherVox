@@ -10,6 +10,7 @@ CONNECTED --session.start--> READY --audio.start(U)--> RECORDING(U)
     PROCESSING(U) --stt/text + tts.start(U)--> SPEAKING(U)
     SPEAKING(U) --binary PCM* + tts.end(U)--> READY
     PROCESSING(U) --action.request(U)--> READY
+    READY --assistant.notification(N) + tts.start(N)--> SPEAKING(N)
 ```
 
 Det finns ingen identifierare inuti en binär frame i version 1. Kopplingen är tillståndsbaserad och entydig eftersom endast ett yttrande får vara aktivt per anslutning:
@@ -46,12 +47,18 @@ formatet och startar AudioTrack efter cirka 120 ms eller när en kort ström tar
 Meddelandena och fälten följer exemplen i arbetsuppdraget:
 
 - Klient: `session.start`, `audio.start`, `audio.end`, `response.cancel`, `action.confirm`, `action.result`, `light.config.upsert`, `tv.discover`, `tv.config.upsert`, `tv.command`.
-- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `lights.config`, `tvs.discovered`, `tvs.config`, `tv.command.result`, `error`.
+- Server: `session.ready`, `stt.partial`, `stt.final`, `assistant.text.delta`, `assistant.text.final`, `assistant.notification`, `tts.start`, `tts.end`, `action.request`, `action.status`, `action.completed`, `response.cancelled`, `lights.config`, `tvs.discovered`, `tvs.config`, `tv.command.result`, `error`.
 
 `session.start.input_audio` valideras innan `session.ready`. `session.start.voice_id` är
 valfri för äldre klienter; då används figurprofilens standardröst. Betaservern skickar
 även vald `voice_id` och `available_voices` i `session.ready`. Alla yttrandemeddelanden
 ska använda samma `utterance_id` som aktiverades med `audio.start`.
+
+`assistant.notification` är det enda undantaget: servern skapar ett nytt opakt
+`utterance_id` när en autentiserad, ansluten klient ska få ett muntligt
+hushållsmeddelande. Klienten tar då över identifieraren innan efterföljande
+`tts.start`, binära PCM-frames och `tts.end`. I tvättfallet sparas en väntande
+klart-händelse av gatewayen och levereras högst en gång till nästa lediga klient.
 
 `session.start.llm_model` är också valfri. Gatewayen accepterar bara namn i
 `[llm].models`; ett okänt namn avvisas med `LLM_MODEL_NOT_ALLOWED`. Servern

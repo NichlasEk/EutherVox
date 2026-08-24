@@ -14,6 +14,7 @@ from gateway.tools import EutherVoxToolRegistry, ToolValidationError
 from gateway.lighting import MagicHomeLightService
 from gateway.television import NecTvService
 from gateway.eutherpump import EutherPumpService
+from gateway.eutherwash import EutherWashService
 from pathlib import Path
 
 
@@ -40,7 +41,12 @@ def make_registry(tmp_path: Path | None = None) -> EutherVoxToolRegistry:
         "base_url": "http://127.0.0.1:8794",
         "pumps": [{"id": "vardagsrum", "name": "Värmepumpen", "room": "vardagsrummet"}],
     })
-    return EutherVoxToolRegistry(cast, lights, television, eutherpump)
+    eutherwash = EutherWashService({
+        "enabled": True,
+        "base_url": "http://127.0.0.1:8801",
+        "alias": "tvattmaskinen",
+    })
+    return EutherVoxToolRegistry(cast, lights, television, eutherpump, eutherwash)
 
 
 def test_registry_creates_allowlisted_music_and_confirmed_playlist_actions():
@@ -176,6 +182,7 @@ def test_ollama_tool_planner_translates_one_tool_call_to_validated_action():
         assert {tool["function"]["name"] for tool in payload["tools"]} == {
             "music_play", "playlist_create", "wikipedia_lookup", "light_set", "light_effect", "tv_control",
             "heat_pump_status", "heat_pump_control",
+            "washer_status",
         }
         return httpx.Response(200, json={
             "message": {
@@ -226,6 +233,19 @@ def test_deterministic_pump_phrases(transcript: str, expected: dict[str, object]
     assert action is not None
     assert action.name == "pump.control"
     assert action.arguments == {"target": "Värmepumpen", **expected}
+
+
+@pytest.mark.parametrize(("transcript", "expected_name"), [
+    ("Ge mig en tvättrapport", "washer.status"),
+    ("Hur går tvätten?", "washer.status"),
+    ("Vad säger värmepumpen?", "pump.status"),
+    ("Ge mig en värmepumpsrapport", "pump.status"),
+])
+def test_deterministic_spoken_reports(transcript: str, expected_name: str):
+    planner = OllamaToolPlanner(make_registry(), "http://ollama.test", "qwen-test")
+    action = planner.plan_deterministic(transcript, "pixel")
+    assert action is not None
+    assert action.name == expected_name
 
 
 def test_ollama_tool_planner_skips_non_actionable_conversation_without_request():

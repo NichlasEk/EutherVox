@@ -71,6 +71,34 @@ def test_complete_mock_pipeline_streams_control_and_binary_audio():
     asyncio.run(scenario())
 
 
+def test_authenticated_idle_session_accepts_unsolicited_washer_speech():
+    async def scenario():
+        session, sent = make_session()
+        session.authenticated_user = "nichlas"
+        session.washer_notifications = types.SimpleNamespace(
+            voice_id="piper-nst", jingle_path=None, enabled=True,
+            subscribe=lambda _callback: None,
+            unsubscribe=lambda _callback: None,
+        )
+        await session.handle_text(start_message())
+
+        delivered = await session._deliver_washer_notification(
+            "wash-done-1", "Tvätten är klar!"
+        )
+
+        assert delivered is True
+        messages = [item for item in sent if isinstance(item, dict)]
+        notification = next(item for item in messages if item["type"] == "assistant.notification")
+        assert notification["utterance_id"] == "wash-done-1"
+        assert [item["type"] for item in messages[-3:]] == [
+            "assistant.notification", "tts.start", "tts.end",
+        ]
+        assert any(isinstance(item, bytes) for item in sent)
+        assert session.phase is Phase.READY
+
+    asyncio.run(scenario())
+
+
 def test_session_selects_only_an_allowlisted_ollama_model():
     class SelectableLlm:
         def __init__(self, model: str):

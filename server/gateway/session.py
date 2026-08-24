@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import time
+import wave
 from typing import Awaitable, Callable
 from uuid import uuid4
 
@@ -27,6 +28,7 @@ from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
+from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
 from .television import NecTvService
@@ -101,6 +103,7 @@ class VoiceSession:
     television: NecTvService | None = None
     eutherpump: EutherPumpService | None = None
     eutherwash: EutherWashService | None = None
+    washer_notifications: WasherCompletionMonitor | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -164,6 +167,8 @@ class VoiceSession:
         self.received_frames += 1
 
     async def close(self) -> None:
+        if self.washer_notifications:
+            self.washer_notifications.unsubscribe(self._deliver_washer_notification)
         if self.response_task:
             self.response_task.cancel()
             await asyncio.gather(self.response_task, return_exceptions=True)
@@ -225,6 +230,8 @@ class VoiceSession:
                 "available": True,
                 "controls_available": bool(getattr(self.eutherwash, "control_enabled", False)),
             })
+        if self.authenticated_user and self.washer_notifications and self.washer_notifications.enabled:
+            self.washer_notifications.subscribe(self._deliver_washer_notification)
         LOG.info(
             "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,
@@ -243,6 +250,54 @@ class VoiceSession:
         return tuple(dict.fromkeys(
             model for model in (default_model, *(str(item).strip() for item in configured)) if model
         ))
+
+    async def _deliver_washer_notification(self, notification_id: str, text: str) -> bool:
+        if self.phase is not Phase.READY or not self.authenticated_user:
+            return False
+        self.phase = Phase.SPEAKING
+        self.utterance_id = notification_id
+        try:
+            voice = self.washer_notifications.voice_id if self.washer_notifications else self.voice_id
+            resolver = getattr(self.tts, "resolve_voice", None)
+            resolved_voice = resolver(voice) if resolver else voice
+            character = replace(self._character(), voice_id=resolved_voice)
+            await self.send_json({
+                "type": "assistant.notification",
+                "utterance_id": notification_id,
+                "title": "Tvätten är klar",
+                "text": text,
+            })
+            await self._stream_notification_speech(notification_id, text, character)
+            LOG.info("washer_notification_delivered session=%s notification=%s voice=%s", self.session_id, notification_id, resolved_voice)
+            return True
+        except Exception:
+            LOG.exception("washer_notification_failed session=%s", self.session_id)
+            return False
+        finally:
+            self._reset()
+
+    async def _stream_notification_speech(self, utterance_id: str, text: str, character: object) -> None:
+        await self.send_json({
+            "type": "tts.start",
+            "utterance_id": utterance_id,
+            "audio": {"codec": "pcm_s16le", "sample_rate": self.tts.sample_rate, "channels": 1},
+        })
+        try:
+            jingle = self.washer_notifications.jingle_path if self.washer_notifications else None
+            if jingle and jingle.is_file():
+                with wave.open(str(jingle), "rb") as audio:
+                    if (
+                        audio.getnchannels() != 1
+                        or audio.getsampwidth() != 2
+                        or audio.getframerate() != self.tts.sample_rate
+                    ):
+                        raise RuntimeError("Tvättjingeln måste vara mono pcm_s16le med gatewayens samplingsfrekvens")
+                    while frame := audio.readframes(4096):
+                        await self.send_binary(frame)
+            async for frame in self.tts.synthesize(text, character, self.tts.sample_rate):
+                await self.send_binary(frame)
+        finally:
+            await self.send_json({"type": "tts.end", "utterance_id": utterance_id})
 
     async def _upsert_light(self, message: dict) -> None:
         if self.phase is Phase.CONNECTED:
@@ -757,7 +812,7 @@ class VoiceSession:
                             "text": spoken,
                         })
                         await self._stream_action_speech(
-                            utterance_id, spoken, character, fast=True
+                            utterance_id, spoken, character
                         )
                         await self.send_json({
                             "type": "action.completed",
@@ -780,6 +835,37 @@ class VoiceSession:
                             "status": "failed",
                             "message": failure,
                         })
+                    self._reset()
+                    return
+                if action.name == "washer.status":
+                    try:
+                        if not self.authenticated_user:
+                            raise RuntimeError("Logga in med EutherID för att läsa tvättrapporten")
+                        if not self.eutherwash:
+                            raise RuntimeError("EutherWash är inte konfigurerad")
+                        await self.send_json({
+                            "type": "action.status",
+                            "action_id": action.action_id,
+                            "status": "running",
+                            "message": "Läser tvättmaskinen…",
+                        })
+                        spoken = await self.eutherwash.status_text()
+                        character = self._character()
+                        await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken})
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
+                        await self._stream_action_speech(utterance_id, spoken, character)
+                        await self.send_json({
+                            "type": "action.completed",
+                            "action_id": action.action_id,
+                            "status": "completed",
+                            "message": spoken,
+                        })
+                        self._remember_turn(transcript, spoken)
+                    except Exception as error:
+                        LOG.exception("eutherwash_status_failed session=%s", self.session_id)
+                        failure = f"Jag kunde inte läsa tvättmaskinen: {error}"
+                        await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": failure})
+                        await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "failed", "message": failure})
                     self._reset()
                     return
                 if action.name == "pump.control":

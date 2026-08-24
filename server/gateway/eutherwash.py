@@ -42,8 +42,8 @@ class EutherWashService:
     async def report(self) -> dict[str, object]:
         if not self.enabled:
             raise RuntimeError("EutherWash är inte aktiverad")
+        status = await self.status()
         encoded = quote(self.alias, safe="")
-        status = await self._get(f"/v1/washers/{encoded}/status")
         statistics = await self._get(f"/v1/washers/{encoded}/statistics")
         if not isinstance(status, dict) or not isinstance(statistics, dict):
             raise RuntimeError("EutherWash svarade med ogiltiga data")
@@ -51,6 +51,58 @@ class EutherWashService:
             "status": {key: status.get(key) for key in self._STATUS_KEYS},
             "statistics": {key: statistics.get(key) for key in self._STAT_KEYS},
         }
+
+    async def status(self) -> dict[str, object]:
+        if not self.enabled:
+            raise RuntimeError("EutherWash är inte aktiverad")
+        encoded = quote(self.alias, safe="")
+        status = await self._get(f"/v1/washers/{encoded}/status")
+        if not isinstance(status, dict):
+            raise RuntimeError("EutherWash svarade med ogiltiga data")
+        return {key: status.get(key) for key in self._STATUS_KEYS}
+
+    async def status_text(self) -> str:
+        """Render the fixed washer report as concise, speakable Swedish."""
+        report = await self.report()
+        status = report["status"]
+        statistics = report["statistics"]
+        if not status.get("available") or not status.get("online"):
+            return "Tvättmaskinen går inte att nå just nu."
+
+        state = str(status.get("state") or "unknown").casefold()
+        program = self._spoken_program(status.get("program"))
+        if state == "running":
+            parts = [f"Tvätten kör {program}." if program else "Tvätten kör."]
+            progress = status.get("progress_percent")
+            if isinstance(progress, (int, float)):
+                parts.append(f"Den är ungefär {round(progress)} procent klar.")
+            remaining = status.get("remaining_seconds")
+            if isinstance(remaining, (int, float)) and remaining >= 0:
+                minutes = max(1, round(remaining / 60))
+                parts.append(f"Cirka {minutes} minuter återstår.")
+        elif state == "paused":
+            parts = ["Tvätten är pausad."]
+        elif state in {"finished", "complete", "completed"}:
+            parts = ["Tvätten är klar."]
+        elif state in {"idle", "ready", "off"}:
+            parts = ["Tvättmaskinen är ledig och ingen tvätt kör just nu."]
+        else:
+            parts = ["Tvättmaskinen svarar, men dess aktuella läge är oklart."]
+
+        completed = statistics.get("cycles_completed_7d")
+        minutes = statistics.get("running_minutes_7d")
+        if isinstance(completed, int) and isinstance(minutes, int):
+            hours = round(minutes / 60, 1)
+            parts.append(
+                f"De senaste sju dagarna har den gjort {completed} färdiga tvättar och gått i {hours:g} timmar."
+            )
+        return " ".join(parts)
+
+    @staticmethod
+    def _spoken_program(value: object) -> str:
+        if not isinstance(value, str):
+            return ""
+        return " ".join(value.replace("_", " ").replace("-", " ").split()).casefold()
 
     async def command(self, command: str, *, confirmed: bool = False) -> dict[str, object]:
         if not self.enabled or not self.control_enabled or not self._control_token:

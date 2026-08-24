@@ -141,6 +141,11 @@ timeout_seconds = 2
 control_enabled = true
 control_timeout_seconds = 20
 control_token_file = "/home/nichlas/.config/euthervox/eutherwash-control-token"
+notifications_enabled = true
+notification_poll_seconds = 8
+notification_voice = "moss-nano"
+notification_state_file = "state/washer-notification.json"
+notification_jingle_file = "assets/audio/washer-complete.wav"
 
 [wikipedia]
 enabled = true

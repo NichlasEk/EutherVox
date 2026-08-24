@@ -8,6 +8,7 @@ from uuid import uuid4
 from .actions import DeviceAction
 from .cast import CastService
 from .eutherpump import EutherPumpService
+from .eutherwash import EutherWashService
 from .lighting import EFFECTS, MagicHomeLightService
 from .television import INPUTS, NecTvService
 
@@ -183,6 +184,15 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(
+            name="washer_status",
+            description="Läs aktuell status och sjudagarsrapport från husets fasta tvättmaskin.",
+            input_schema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
     )
 
     def __init__(
@@ -191,11 +201,13 @@ class EutherVoxToolRegistry:
         lights: MagicHomeLightService | None = None,
         television: NecTvService | None = None,
         eutherpump: EutherPumpService | None = None,
+        eutherwash: EutherWashService | None = None,
     ):
         self.cast = cast
         self.lights = lights
         self.television = television
         self.eutherpump = eutherpump
+        self.eutherwash = eutherwash
 
     @property
     def ollama_tools(self) -> list[dict[str, Any]]:
@@ -234,6 +246,17 @@ class EutherVoxToolRegistry:
         unexpected = set(arguments) - accepted_keys
         if unexpected:
             raise ToolValidationError(f"Otillåtna argument: {', '.join(sorted(unexpected))}")
+
+        if tool_name == "washer_status":
+            if not self.eutherwash or not self.eutherwash.enabled:
+                raise ToolValidationError("EutherWash är inte konfigurerad")
+            return DeviceAction(
+                action_id=str(uuid4()),
+                name="washer.status",
+                target_node=node_name,
+                arguments={},
+                acknowledgement="Jag läser tvättrapporten.",
+            )
 
         if tool_name in {"light_set", "light_effect"}:
             if not self.lights or not self.lights.enabled:

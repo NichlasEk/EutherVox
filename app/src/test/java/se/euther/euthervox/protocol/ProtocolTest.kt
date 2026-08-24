@@ -34,6 +34,17 @@ class ProtocolTest {
         assertEquals(24_000, (event as ServerEvent.TtsStart).sampleRate)
     }
 
+    @Test fun parsesAssistantNotification() {
+        val event = parseServerEvent(
+            """{"type":"assistant.notification","utterance_id":"wash-1","title":"Tvätten är klar","text":"Dags att hänga tvätten."}"""
+        )
+        assertTrue(event is ServerEvent.Notification)
+        event as ServerEvent.Notification
+        assertEquals("wash-1", event.utteranceId)
+        assertEquals("Tvätten är klar", event.title)
+        assertEquals("Dags att hänga tvätten.", event.text)
+    }
+
     @Test fun parsesRecoverableError() {
         val event = parseServerEvent("""{"type":"error","code":"STT_FAILED","message":"no speech","recoverable":true}""")
         assertEquals(ServerEvent.Error("STT_FAILED", "no speech", true), event)

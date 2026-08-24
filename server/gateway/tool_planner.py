@@ -42,6 +42,14 @@ class OllamaToolPlanner:
         r"kylning(?:en)?|fläkt(?:en)?|luften|fryser|svettas)\b",
         re.IGNORECASE,
     )
+    _REPORT_INTENT = re.compile(
+        r"\b(?:status|rapport|lägesrapport|hur\s+(?:går|mår)|hur\s+långt|hur\s+mycket\s+återstår|när\s+är|vad\s+säger)\b",
+        re.IGNORECASE,
+    )
+    _WASHER_REFERENCE = re.compile(
+        r"\b(?:tvättmaskin(?:en)?|tvätt(?:en|rapport)?|maskinen)\b",
+        re.IGNORECASE,
+    )
     _PUMP_CONTROL_INTENT = re.compile(
         r"\b(?:ställ|sätt|slå|starta|stäng|stoppa|höj|sänk|öka|minska|mer|mindre|"
         r"fixa|ordna|fryser|svettas)\w*\b",
@@ -159,6 +167,10 @@ class OllamaToolPlanner:
             return None
 
     def plan_deterministic(self, transcript: str, node_name: str) -> DeviceAction | None:
+        report = self._plan_report(transcript, node_name)
+        if report is not None:
+            LOG.info("tool_decision path=deterministic domain=report action=%s", report.name)
+            return report
         pump = self._plan_pump(transcript, node_name)
         if pump is not None:
             LOG.info(
@@ -180,6 +192,25 @@ class OllamaToolPlanner:
                 television.name, television.arguments.get("target", "none"),
             )
             return television
+        return None
+
+    def _plan_report(self, transcript: str, node_name: str) -> DeviceAction | None:
+        lowered = transcript.casefold()
+        if not self._REPORT_INTENT.search(lowered) and not re.search(
+            r"\b(?:tvätt|värmepumps?)rapport\b", lowered
+        ):
+            return None
+        if self._WASHER_REFERENCE.search(lowered):
+            try:
+                return self.registry.create_action("washer_status", {}, node_name)
+            except ToolValidationError:
+                return None
+        if self._PUMP_REFERENCE.search(lowered) or re.search(r"\bvärmepumps?rapport\b", lowered):
+            targets = self.registry.list_pump_targets()
+            if len(targets) == 1:
+                return self.registry.create_action(
+                    "heat_pump_status", {"target": str(targets[0]["name"])}, node_name
+                )
         return None
 
     def _plan_pump(self, transcript: str, node_name: str) -> DeviceAction | None:

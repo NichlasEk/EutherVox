@@ -34,6 +34,24 @@ def test_reads_only_fixed_routes_and_drops_unknown_fields():
     assert "raw" not in report["statistics"]
 
 
+def test_renders_running_report_for_speech():
+    def handler(request: httpx.Request):
+        if request.url.path.endswith("/status"):
+            return httpx.Response(200, json={
+                "available": True, "online": True, "state": "running",
+                "program": "cotton_40", "progress_percent": 61,
+                "remaining_seconds": 29 * 60,
+            })
+        return httpx.Response(200, json={"cycles_completed_7d": 4, "running_minutes_7d": 330})
+    service = EutherWashService(settings(), transport=httpx.MockTransport(handler))
+    spoken = asyncio.run(service.status_text())
+    assert "bomull" not in spoken
+    assert "cotton 40" in spoken
+    assert "61 procent" in spoken
+    assert "29 minuter" in spoken
+    assert "4 färdiga tvättar" in spoken
+
+
 def test_control_uses_fixed_command_token_and_confirmation(tmp_path: Path):
     token_file = tmp_path / "control-token"
     token_file.write_text("synthetic-control-token-at-least-32-characters", encoding="utf-8")
