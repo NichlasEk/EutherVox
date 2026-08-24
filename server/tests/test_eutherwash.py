@@ -87,3 +87,53 @@ def test_control_rejects_unconfirmed_start_before_network(tmp_path: Path):
     ), transport=httpx.MockTransport(lambda _request: pytest.fail("must not call network")))
     with pytest.raises(ValueError, match="bekräftelse"):
         asyncio.run(service.command("start"))
+
+
+def test_vacuum_control_uses_only_allowlisted_commands_and_confirmation(tmp_path: Path):
+    token_file = tmp_path / "control-token"
+    token_file.write_text("synthetic-control-token-at-least-32-characters", encoding="utf-8")
+    token_file.chmod(0o600)
+    requests = []
+
+    def handler(request: httpx.Request):
+        requests.append(request)
+        command = request.url.path.rsplit("/", 1)[-1]
+        return httpx.Response(200, json={
+            "command": command,
+            "confirmed": request.content == b'{"confirmed":true}',
+            "accepted": True,
+            "status": {"available": True, "online": True, "state": "idle"},
+        })
+
+    service = EutherWashService(settings(
+        control_enabled=True,
+        control_token_file=str(token_file),
+    ), transport=httpx.MockTransport(handler))
+    for command in ("pause", "stop", "return-to-dock"):
+        asyncio.run(service.vacuum_command(command))
+    asyncio.run(service.vacuum_command("start", confirmed=True))
+    asyncio.run(service.vacuum_command("start-fast-mapping", confirmed=True))
+
+    assert [request.url.path.rsplit("/", 1)[-1] for request in requests] == [
+        "pause", "stop", "return-to-dock", "start", "start-fast-mapping",
+    ]
+    assert [request.content for request in requests] == [
+        b'{"confirmed":false}', b'{"confirmed":false}', b'{"confirmed":false}',
+        b'{"confirmed":true}', b'{"confirmed":true}',
+    ]
+
+
+def test_vacuum_control_rejects_unknown_and_unconfirmed_motion(tmp_path: Path):
+    token_file = tmp_path / "control-token"
+    token_file.write_text("synthetic-control-token-at-least-32-characters", encoding="utf-8")
+    token_file.chmod(0o600)
+    service = EutherWashService(settings(
+        control_enabled=True,
+        control_token_file=str(token_file),
+    ), transport=httpx.MockTransport(lambda _request: pytest.fail("must not call network")))
+
+    with pytest.raises(ValueError, match="Okänt"):
+        asyncio.run(service.vacuum_command("drive-anywhere", confirmed=True))
+    for command in ("start", "start-fast-mapping"):
+        with pytest.raises(ValueError, match="bekräftelse"):
+            asyncio.run(service.vacuum_command(command))

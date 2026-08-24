@@ -478,23 +478,31 @@ class VoiceSession:
         if self.phase is Phase.CONNECTED:
             raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
         if not self.authenticated_user:
-            raise ProtocolError("VACUUM_AUTH_REQUIRED", "Inloggning krävs för kartläggning")
+            raise ProtocolError("VACUUM_AUTH_REQUIRED", "Inloggning krävs för dammsugarstyrning")
         if not self.eutherwash or not self.eutherwash.enabled or not self.eutherwash.control_enabled:
             raise ProtocolError("VACUUM_CONTROL_DISABLED", "Dammsugarstyrning är inte aktiverad")
         command = str(message.get("command", ""))
-        if command != "start-fast-mapping":
+        allowed_commands = {"start", "pause", "stop", "return-to-dock", "start-fast-mapping"}
+        if command not in allowed_commands:
             raise ProtocolError("VACUUM_COMMAND_INVALID", "Okänt dammsugarkommando")
-        if message.get("confirmed") is not True:
-            raise ProtocolError("VACUUM_CONFIRMATION_REQUIRED", "Kartläggning måste bekräftas")
+        confirmed = message.get("confirmed") is True
+        if command in {"start", "start-fast-mapping"} and not confirmed:
+            raise ProtocolError("VACUUM_CONFIRMATION_REQUIRED", "Kommandot måste bekräftas")
         try:
-            status = await self.eutherwash.vacuum_command(command, confirmed=True)
+            status = await self.eutherwash.vacuum_command(command, confirmed=confirmed)
         except (ValueError, RuntimeError, OSError) as error:
             raise ProtocolError("VACUUM_COMMAND_FAILED", str(error)) from error
         await self.send_json({
             "type": "vacuum.command.result",
             "command": command,
             "status": status,
-            "message": "Robotdammsugaren accepterade snabb kartläggning.",
+            "message": {
+                "start": "Robotdammsugaren startade städningen.",
+                "pause": "Robotdammsugaren pausades.",
+                "stop": "Robotdammsugaren stoppades.",
+                "return-to-dock": "Robotdammsugaren återvänder till laddaren.",
+                "start-fast-mapping": "Robotdammsugaren startade en ny snabbkarta.",
+            }[command],
         })
 
     async def _start_audio(self, message: dict) -> None:

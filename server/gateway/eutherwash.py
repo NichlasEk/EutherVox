@@ -38,6 +38,10 @@ class EutherWashService:
         "raw_charging_state", "raw_task_status", "raw_relocation_status",
         "updated_at",
     }
+    _VACUUM_COMMANDS = {
+        "start", "pause", "stop", "return-to-dock", "start-fast-mapping",
+    }
+    _VACUUM_CONFIRMATION_REQUIRED = {"start", "start-fast-mapping"}
 
     def __init__(self, settings: dict, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.enabled = bool(settings.get("enabled", False))
@@ -147,10 +151,10 @@ class EutherWashService:
     async def vacuum_command(self, command: str, *, confirmed: bool = False) -> dict[str, object]:
         if not self.enabled or not self.control_enabled or not self._control_token:
             raise RuntimeError("Dammsugarstyrning är inte aktiverad")
-        if command != "start-fast-mapping":
+        if command not in self._VACUUM_COMMANDS:
             raise ValueError("Okänt dammsugarkommando")
-        if not confirmed:
-            raise ValueError("Ommappning kräver uttrycklig bekräftelse")
+        if command in self._VACUUM_CONFIRMATION_REQUIRED and not confirmed:
+            raise ValueError("Kommandot kräver uttrycklig bekräftelse")
         encoded = quote(self.vacuum_alias, safe="")
         try:
             async with httpx.AsyncClient(
@@ -161,26 +165,29 @@ class EutherWashService:
                 response = await client.post(
                     f"{self.base_url}/v1/vacuums/{encoded}/commands/{command}",
                     headers={"Authorization": f"Bearer {self._control_token}"},
-                    json={"confirmed": True},
+                    json={"confirmed": confirmed},
                 )
                 if response.status_code == 409:
                     detail = response.json().get("detail", "command_rejected")
                     messages = {
-                        "vacuum_busy": "Robotdammsugaren måste vara stilla innan kartläggningen startar.",
+                        "vacuum_busy": "Robotdammsugaren måste vara stilla innan snabbkartläggningen startar.",
                         "battery_too_low": "Robotdammsugaren behöver minst 15 procent batteri.",
                         "remove_mop_before_mapping": "Ta bort moppen innan snabb kartläggning.",
-                        "command_rejected": "Robotdammsugaren avvisade kartläggningen.",
+                        "multiple_maps_enable_rejected": "Robotdammsugaren kunde inte aktivera flerkartsläget.",
+                        "invalid_state_for_command": "Kommandot kan inte användas i robotens nuvarande läge.",
+                        "already_at_dock": "Robotdammsugaren är redan vid laddaren.",
+                        "command_rejected": "Robotdammsugaren avvisade kommandot.",
                     }
-                    raise RuntimeError(messages.get(str(detail), "Robotdammsugaren avvisade kartläggningen."))
+                    raise RuntimeError(messages.get(str(detail), "Robotdammsugaren avvisade kommandot."))
                 response.raise_for_status()
                 payload = response.json()
         except RuntimeError:
             raise
         except (httpx.HTTPError, ValueError) as error:
-            raise RuntimeError("EutherWash svarar inte på kartkommandot") from error
+            raise RuntimeError("EutherWash svarar inte på dammsugarkommandot") from error
         status = payload.get("status") if isinstance(payload, dict) else None
         if not isinstance(status, dict) or payload.get("accepted") is not True:
-            raise RuntimeError("EutherWash bekräftade inte kartläggningen")
+            raise RuntimeError("EutherWash bekräftade inte dammsugarkommandot")
         return {key: status.get(key) for key in self._VACUUM_KEYS}
 
     @staticmethod

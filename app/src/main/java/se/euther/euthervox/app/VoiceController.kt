@@ -487,10 +487,18 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             mutableState.value = mutableState.value.copy(vacuumMessage = "Anslut till servern under Röst först.")
             return
         }
-        mutableState.value = mutableState.value.copy(vacuumBusy = true, vacuumMessage = "Skickar det bekräftade kartkommandot…")
+        val progress = when (command) {
+            "start" -> "Startar robotdammsugaren…"
+            "pause" -> "Pausar robotdammsugaren…"
+            "stop" -> "Stoppar robotdammsugaren…"
+            "return-to-dock" -> "Skickar robotdammsugaren till laddaren…"
+            "start-fast-mapping" -> "Startar en ny snabbkarta…"
+            else -> "Skickar dammsugarkommandot…"
+        }
+        mutableState.value = mutableState.value.copy(vacuumBusy = true, vacuumMessage = progress)
         scope.launch {
             if (transport?.sendText(vacuumCommand(command, confirmed)) != true) {
-                mutableState.value = mutableState.value.copy(vacuumBusy = false, vacuumMessage = "Kunde inte skicka kartkommandot.")
+                mutableState.value = mutableState.value.copy(vacuumBusy = false, vacuumMessage = "Kunde inte skicka dammsugarkommandot.")
             }
         }
     }

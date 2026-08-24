@@ -490,6 +490,7 @@ private fun WasherPanel(
     onVacuumCommand: (String, Boolean) -> Unit,
 ) {
     var pendingConfirmation by remember { mutableStateOf<String?>(null) }
+    var pendingVacuumStart by remember { mutableStateOf(false) }
     var pendingVacuumMapping by remember { mutableStateOf(false) }
     fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
     fun stateLabel(value: String) = when (value) {
@@ -634,21 +635,64 @@ private fun WasherPanel(
                 Text(if (vacuumBusy) "Uppdaterar…" else "Uppdatera dammsugaren")
             }
             if (vacuumControlsAvailable) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { pendingVacuumStart = true },
+                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "charging", "paused"),
+                        modifier = Modifier.weight(1f),
+                    ) { Text(if (vacuum?.state == "paused") "Fortsätt" else "Starta") }
+                    OutlinedButton(
+                        onClick = { onVacuumCommand("pause", false) },
+                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state == "cleaning",
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Pausa") }
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { onVacuumCommand("stop", false) },
+                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("cleaning", "paused", "returning"),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Stoppa") }
+                    OutlinedButton(
+                        onClick = { onVacuumCommand("return-to-dock", false) },
+                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "cleaning", "paused", "returning"),
+                        modifier = Modifier.weight(1f),
+                    ) { Text("Till laddaren") }
+                }
                 OutlinedButton(
                     onClick = { pendingVacuumMapping = true },
-                    enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "charging"),
+                    enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "charging") && vacuum.mopAttached != true,
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Skapa ny snabbkarta") }
-                Text("Startar en ny kartläggningsrunda. Den gamla kartan raderas inte automatiskt.", style = MaterialTheme.typography.bodySmall)
+                ) { Text(if (vacuum?.mopAttached == true) "Ta bort moppen först" else "Skapa ny snabbkarta") }
+                Text(
+                    if (vacuum?.mapAvailable == true && vacuum.multipleMapsEnabled != true)
+                        "Aktiverar flerkartsläge och skapar en extrakarta. Den gamla kartan behålls."
+                    else "Startar en ny kartläggningsrunda. Befintliga kartor behålls.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
             vacuumMessage?.let { Text(it, color = Forest, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
         }
+    }
+    if (pendingVacuumStart) {
+        AlertDialog(
+            onDismissRequest = { pendingVacuumStart = false },
+            title = { Text(if (vacuum?.state == "paused") "Fortsätta städningen?" else "Starta städningen?") },
+            text = { Text("Robotdammsugaren börjar köra i huset. Kontrollera att golvet är fritt från sådant som kan fastna.") },
+            confirmButton = {
+                Button(onClick = {
+                    pendingVacuumStart = false
+                    onVacuumCommand("start", true)
+                }) { Text(if (vacuum?.state == "paused") "Ja, fortsätt" else "Ja, starta") }
+            },
+            dismissButton = { TextButton(onClick = { pendingVacuumStart = false }) { Text("Avbryt") } },
+        )
     }
     if (pendingVacuumMapping) {
         AlertDialog(
             onDismissRequest = { pendingVacuumMapping = false },
             title = { Text("Starta ny kartläggning?") },
-            text = { Text("Öppna dörrarna, plocka undan hinder och ta bort moppen. Roboten kör ut från dockan och bygger en ny karta. Den befintliga kartan raderas inte automatiskt.") },
+            text = { Text("Öppna dörrarna, plocka undan hinder och ta bort moppen. Vid behov aktiveras flerkartsläget automatiskt, sedan kör roboten ut och bygger en extrakarta. Befintliga kartor behålls.") },
             confirmButton = {
                 Button(onClick = {
                     pendingVacuumMapping = false
