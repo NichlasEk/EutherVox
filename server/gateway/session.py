@@ -157,6 +157,8 @@ class VoiceSession:
                 await self._washer_command(message)
             elif message_type == "vacuum.status":
                 await self._vacuum_status()
+            elif message_type == "vacuum.maps":
+                await self._vacuum_maps()
             elif message_type == "vacuum.command":
                 await self._vacuum_command(message)
             else:
@@ -473,6 +475,19 @@ class VoiceSession:
         except (ValueError, RuntimeError, OSError) as error:
             raise ProtocolError("VACUUM_STATUS_FAILED", str(error)) from error
         await self.send_json({"type": "vacuum.status.result", "status": status})
+
+    async def _vacuum_maps(self) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("VACUUM_AUTH_REQUIRED", "Inloggning krävs för dammsugarkartan")
+        if not self.eutherwash or not self.eutherwash.enabled:
+            raise ProtocolError("VACUUM_DISABLED", "Dammsugartjänsten är inte aktiverad")
+        try:
+            maps = await self.eutherwash.vacuum_maps()
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("VACUUM_MAPS_FAILED", str(error)) from error
+        await self.send_json({"type": "vacuum.maps.result", "maps": maps})
 
     async def _vacuum_command(self, message: dict) -> None:
         if self.phase is Phase.CONNECTED:

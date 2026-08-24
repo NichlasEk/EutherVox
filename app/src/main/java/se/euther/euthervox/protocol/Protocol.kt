@@ -80,6 +80,8 @@ fun washerStatus() = JsonObject().apply { addProperty("type", "washer.status") }
 
 fun vacuumStatus() = JsonObject().apply { addProperty("type", "vacuum.status") }.toString()
 
+fun vacuumMaps() = JsonObject().apply { addProperty("type", "vacuum.maps") }.toString()
+
 fun vacuumCommand(command: String, confirmed: Boolean = false) = JsonObject().apply {
     addProperty("type", "vacuum.command")
     addProperty("command", command)
@@ -195,6 +197,20 @@ sealed interface ServerEvent {
         val rawRelocationStatus: Int?,
         val updatedAt: String?,
     )
+    data class VacuumMapRun(val y: Int, val x: Int, val length: Int, val roomId: Int?, val wall: Boolean)
+    data class VacuumMapRoom(val id: Int, val name: String)
+    data class VacuumMapPoint(val x: Double, val y: Double, val angle: Int?)
+    data class VacuumMap(
+        val name: String,
+        val cellSizeMm: Int,
+        val width: Int,
+        val height: Int,
+        val runs: List<VacuumMapRun>,
+        val rooms: List<VacuumMapRoom>,
+        val robot: VacuumMapPoint?,
+        val charger: VacuumMapPoint?,
+    )
+    data class VacuumMaps(val available: Boolean, val offlineReady: Boolean, val updatedAt: String?, val maps: List<VacuumMap>)
     data class Ready(
         val sessionId: String,
         val llmModel: String = "",
@@ -233,6 +249,7 @@ sealed interface ServerEvent {
     data class WasherCommandResult(val command: String, val washer: WasherState, val message: String) : ServerEvent
     data class VacuumConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
     data class VacuumStatusResult(val vacuum: VacuumState) : ServerEvent
+    data class VacuumMapsResult(val vacuumMaps: VacuumMaps) : ServerEvent
     data class VacuumCommandResult(val command: String, val vacuum: VacuumState, val message: String) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
     data class Unknown(val type: String) : ServerEvent
@@ -411,6 +428,48 @@ fun parseServerEvent(raw: String): ServerEvent {
                 updatedAt = vacuum["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
             ) },
         )
+        "vacuum.maps.result" -> json["maps"].asJsonObject.let { collection ->
+            ServerEvent.VacuumMapsResult(ServerEvent.VacuumMaps(
+                available = collection["available"]?.asBoolean ?: false,
+                offlineReady = collection["offline_ready"]?.asBoolean ?: false,
+                updatedAt = collection["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
+                maps = collection["maps"]?.asJsonArray?.take(3)?.mapNotNull { mapElement ->
+                    mapElement.takeIf { it.isJsonObject }?.asJsonObject?.let { map ->
+                        ServerEvent.VacuumMap(
+                            name = map["name"]?.asString ?: "Karta",
+                            cellSizeMm = map["cell_size_mm"]?.asInt ?: 50,
+                            width = map["width"]?.asInt ?: 0,
+                            height = map["height"]?.asInt ?: 0,
+                            runs = map["runs"]?.asJsonArray?.take(50_000)?.mapNotNull { runElement ->
+                                runElement.takeIf { it.isJsonObject }?.asJsonObject?.let { run ->
+                                    ServerEvent.VacuumMapRun(
+                                        y = run["y"]?.asInt ?: return@let null,
+                                        x = run["x"]?.asInt ?: return@let null,
+                                        length = run["length"]?.asInt ?: return@let null,
+                                        roomId = run["room_id"]?.takeUnless { it.isJsonNull }?.asInt,
+                                        wall = run["kind"]?.asString == "wall",
+                                    )
+                                }
+                            }.orEmpty(),
+                            rooms = map["rooms"]?.asJsonArray?.take(63)?.mapNotNull { roomElement ->
+                                roomElement.takeIf { it.isJsonObject }?.asJsonObject?.let { room ->
+                                    ServerEvent.VacuumMapRoom(
+                                        id = room["id"]?.asInt ?: return@let null,
+                                        name = room["name"]?.asString ?: "Rum",
+                                    )
+                                }
+                            }.orEmpty(),
+                            robot = map["robot"]?.takeIf { it.isJsonObject }?.asJsonObject?.let { point ->
+                                ServerEvent.VacuumMapPoint(point["x"]?.asDouble ?: 0.0, point["y"]?.asDouble ?: 0.0, point["angle"]?.takeUnless { it.isJsonNull }?.asInt)
+                            },
+                            charger = map["charger"]?.takeIf { it.isJsonObject }?.asJsonObject?.let { point ->
+                                ServerEvent.VacuumMapPoint(point["x"]?.asDouble ?: 0.0, point["y"]?.asDouble ?: 0.0, point["angle"]?.takeUnless { it.isJsonNull }?.asInt)
+                            },
+                        )
+                    }
+                }.orEmpty(),
+            ))
+        }
         "vacuum.command.result" -> ServerEvent.VacuumCommandResult(
             command = json["command"]?.asString.orEmpty(),
             vacuum = parseServerEvent(

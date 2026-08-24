@@ -176,4 +176,16 @@ class ProtocolTest {
         assertEquals(true, event.vacuum.multipleMapsEnabled)
         assertEquals(1, event.vacuum.systemMessages.size)
     }
+
+    @Test fun serializesAndParsesSanitizedVacuumMap() {
+        assertEquals("vacuum.maps", JsonParser.parseString(vacuumMaps()).asJsonObject["type"].asString)
+        val event = parseServerEvent(
+            """{"type":"vacuum.maps.result","maps":{"available":true,"offline_ready":true,"updated_at":"2026-08-24T20:00:00Z","maps":[{"index":1,"selected":true,"name":"Hemma","width":20,"height":10,"cell_size_mm":50,"rotation":0,"runs":[{"x":1,"y":2,"length":4,"kind":"floor","room_id":1},{"x":0,"y":0,"length":2,"kind":"wall","room_id":null}],"rooms":[{"id":1,"name":"Kök"}],"robot":{"x":3.5,"y":4.5,"angle":90},"charger":null}]}}"""
+        ) as ServerEvent.VacuumMapsResult
+        assertTrue(event.vacuumMaps.offlineReady)
+        assertEquals("Hemma", event.vacuumMaps.maps.single().name)
+        assertEquals(1, event.vacuumMaps.maps.single().runs.first().roomId)
+        assertTrue(event.vacuumMaps.maps.single().runs.last().wall)
+        assertEquals(3.5, event.vacuumMaps.maps.single().robot!!.x, 0.0)
+    }
 }

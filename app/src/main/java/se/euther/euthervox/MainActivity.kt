@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
@@ -82,6 +83,9 @@ import se.euther.euthervox.lights.MagicHomeWifiController
 import se.euther.euthervox.lights.MagicHomeWifiUiState
 import se.euther.euthervox.lights.MagicHomeProtocol
 import se.euther.euthervox.protocol.ServerEvent
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -190,7 +194,7 @@ fun EutherVoxApp() {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 TabChoice("Pump", selectedTab == "pump", Modifier.weight(1f)) { selectedTab = "pump" }
                 TabChoice("Tvätt", selectedTab == "washer", Modifier.weight(1f)) { selectedTab = "washer" }
-                Spacer(Modifier.weight(1f))
+                TabChoice("Dammsugare", selectedTab == "vacuum", Modifier.weight(1f)) { selectedTab = "vacuum" }
             }
             if (selectedTab == "voice") {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
@@ -338,7 +342,7 @@ fun EutherVoxApp() {
                     onRefresh = controller::refreshPump,
                     onControl = controller::controlPump,
                 )
-            } else {
+            } else if (selectedTab == "washer") {
                 WasherPanel(
                     state = state.washerState,
                     statistics = state.washerStatistics,
@@ -347,12 +351,19 @@ fun EutherVoxApp() {
                     controlsAvailable = state.washerControlsAvailable,
                     onRefresh = controller::refreshWasher,
                     onCommand = controller::controlWasher,
+                )
+            } else {
+                VacuumPanel(
                     vacuum = state.vacuumState,
-                    vacuumMessage = state.vacuumMessage,
-                    vacuumBusy = state.vacuumBusy,
-                    vacuumControlsAvailable = state.vacuumControlsAvailable,
-                    onVacuumRefresh = controller::refreshVacuum,
-                    onVacuumCommand = controller::controlVacuum,
+                    maps = state.vacuumMaps,
+                    message = state.vacuumMessage,
+                    mapMessage = state.vacuumMapsMessage,
+                    busy = state.vacuumBusy,
+                    mapsBusy = state.vacuumMapsBusy,
+                    controlsAvailable = state.vacuumControlsAvailable,
+                    onRefresh = controller::refreshVacuum,
+                    onRefreshMaps = controller::refreshVacuumMaps,
+                    onCommand = controller::controlVacuum,
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -482,16 +493,8 @@ private fun WasherPanel(
     controlsAvailable: Boolean,
     onRefresh: () -> Unit,
     onCommand: (String, Boolean) -> Unit,
-    vacuum: ServerEvent.VacuumState?,
-    vacuumMessage: String?,
-    vacuumBusy: Boolean,
-    vacuumControlsAvailable: Boolean,
-    onVacuumRefresh: () -> Unit,
-    onVacuumCommand: (String, Boolean) -> Unit,
 ) {
     var pendingConfirmation by remember { mutableStateOf<String?>(null) }
-    var pendingVacuumStart by remember { mutableStateOf(false) }
-    var pendingVacuumMapping by remember { mutableStateOf(false) }
     fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
     fun stateLabel(value: String) = when (value) {
         "idle" -> "Redo"
@@ -587,7 +590,25 @@ private fun WasherPanel(
             Text("Statistiken byggs upp automatiskt när servern observerar riktiga tvättcykler.", style = MaterialTheme.typography.bodySmall)
         }
     }
-    Text("Robotdammsugare", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+}
+
+@Composable
+private fun VacuumPanel(
+    vacuum: ServerEvent.VacuumState?,
+    maps: ServerEvent.VacuumMaps?,
+    message: String?,
+    mapMessage: String?,
+    busy: Boolean,
+    mapsBusy: Boolean,
+    controlsAvailable: Boolean,
+    onRefresh: () -> Unit,
+    onRefreshMaps: () -> Unit,
+    onCommand: (String, Boolean) -> Unit,
+) {
+    var pendingVacuumStart by remember { mutableStateOf(false) }
+    var pendingVacuumMapping by remember { mutableStateOf(false) }
+    Text("Robotdammsugare", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+    Text("Status, lokala kartor och kontroller samlade på ett ställe.", textAlign = TextAlign.Center, color = Forest)
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -631,37 +652,37 @@ private fun WasherPanel(
                     "uppgift ${vacuum?.rawTaskStatus ?: "—"} · lokalisering ${vacuum?.rawRelocationStatus ?: "—"}",
                 style = MaterialTheme.typography.bodySmall,
             )
-            Button(onClick = onVacuumRefresh, enabled = !vacuumBusy, modifier = Modifier.fillMaxWidth()) {
-                Text(if (vacuumBusy) "Uppdaterar…" else "Uppdatera dammsugaren")
+            Button(onClick = onRefresh, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (busy) "Uppdaterar…" else "Uppdatera dammsugaren")
             }
-            if (vacuumControlsAvailable) {
+            if (controlsAvailable) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { pendingVacuumStart = true },
-                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "charging", "paused"),
+                        enabled = !busy && vacuum?.online == true && vacuum.state in setOf("idle", "charging", "paused"),
                         modifier = Modifier.weight(1f),
                     ) { Text(if (vacuum?.state == "paused") "Fortsätt" else "Starta") }
                     OutlinedButton(
-                        onClick = { onVacuumCommand("pause", false) },
-                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state == "cleaning",
+                        onClick = { onCommand("pause", false) },
+                        enabled = !busy && vacuum?.online == true && vacuum.state == "cleaning",
                         modifier = Modifier.weight(1f),
                     ) { Text("Pausa") }
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
-                        onClick = { onVacuumCommand("stop", false) },
-                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("cleaning", "paused", "returning"),
+                        onClick = { onCommand("stop", false) },
+                        enabled = !busy && vacuum?.online == true && vacuum.state in setOf("cleaning", "paused", "returning"),
                         modifier = Modifier.weight(1f),
                     ) { Text("Stoppa") }
                     OutlinedButton(
-                        onClick = { onVacuumCommand("return-to-dock", false) },
-                        enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "cleaning", "paused", "returning"),
+                        onClick = { onCommand("return-to-dock", false) },
+                        enabled = !busy && vacuum?.online == true && vacuum.state in setOf("idle", "cleaning", "paused", "returning"),
                         modifier = Modifier.weight(1f),
                     ) { Text("Till laddaren") }
                 }
                 OutlinedButton(
                     onClick = { pendingVacuumMapping = true },
-                    enabled = !vacuumBusy && vacuum?.online == true && vacuum.state in setOf("idle", "charging") && vacuum.mopAttached != true,
+                    enabled = !busy && vacuum?.online == true && vacuum.state in setOf("idle", "charging") && vacuum.mopAttached != true,
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (vacuum?.mopAttached == true) "Ta bort moppen först" else "Skapa ny snabbkarta") }
                 Text(
@@ -671,9 +692,10 @@ private fun WasherPanel(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            vacuumMessage?.let { Text(it, color = Forest, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+            message?.let { Text(it, color = Forest, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
         }
     }
+    VacuumMapCard(maps, mapMessage, mapsBusy, onRefreshMaps)
     if (pendingVacuumStart) {
         AlertDialog(
             onDismissRequest = { pendingVacuumStart = false },
@@ -682,7 +704,7 @@ private fun WasherPanel(
             confirmButton = {
                 Button(onClick = {
                     pendingVacuumStart = false
-                    onVacuumCommand("start", true)
+                    onCommand("start", true)
                 }) { Text(if (vacuum?.state == "paused") "Ja, fortsätt" else "Ja, starta") }
             },
             dismissButton = { TextButton(onClick = { pendingVacuumStart = false }) { Text("Avbryt") } },
@@ -696,11 +718,134 @@ private fun WasherPanel(
             confirmButton = {
                 Button(onClick = {
                     pendingVacuumMapping = false
-                    onVacuumCommand("start-fast-mapping", true)
+                    onCommand("start-fast-mapping", true)
                 }) { Text("Ja, börja kartlägga") }
             },
             dismissButton = { TextButton(onClick = { pendingVacuumMapping = false }) { Text("Avbryt") } },
         )
+    }
+}
+
+@Composable
+private fun VacuumMapCard(
+    collection: ServerEvent.VacuumMaps?,
+    message: String?,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+) {
+    var selectedMap by remember(collection?.maps?.size) { mutableStateOf(0) }
+    var threeDimensional by remember { mutableStateOf(true) }
+    var rotation by remember { mutableStateOf(35f) }
+    val maps = collection?.maps.orEmpty()
+    val map = maps.getOrNull(selectedMap.coerceIn(0, (maps.size - 1).coerceAtLeast(0)))
+    val roomColors = listOf(
+        Color(0xFF88B8A1), Color(0xFFD9A66F), Color(0xFF86A8D6), Color(0xFFC995BD),
+        Color(0xFFE0C56E), Color(0xFF75B8BD), Color(0xFFB0A0D4), Color(0xFFA9BD78),
+    )
+
+    Text("Kartor", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF17221E))) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column {
+                    Text(map?.name ?: "Lokal karta", color = Parchment, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (collection?.offlineReady == true) "Sparad lokalt · redo utan Xiaomi" else "Väntar på lokal arkivering",
+                        color = Color(0xFF9FC7B5), style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                OutlinedButton(onClick = { threeDimensional = !threeDimensional }) { Text(if (threeDimensional) "3D" else "2D") }
+            }
+            if (maps.size > 1) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    maps.forEachIndexed { index, candidate ->
+                        if (index == selectedMap) Button({ selectedMap = index }, Modifier.weight(1f)) { Text(candidate.name) }
+                        else OutlinedButton({ selectedMap = index }, Modifier.weight(1f)) { Text(candidate.name) }
+                    }
+                }
+            }
+            if (map == null || map.runs.isEmpty()) {
+                Box(Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) {
+                    Text(message ?: "Ingen lokalt sparad karta ännu.", color = Parchment, textAlign = TextAlign.Center)
+                }
+            } else {
+                Canvas(
+                    Modifier.fillMaxWidth().height(350.dp).pointerInput(threeDimensional) {
+                        detectDragGestures { change, drag ->
+                            change.consume()
+                            if (threeDimensional) rotation = (rotation + drag.x * 0.45f) % 360f
+                        }
+                    },
+                ) {
+                    val radians = Math.toRadians(if (threeDimensional) rotation.toDouble() else 0.0)
+                    val cosine = cos(radians).toFloat()
+                    val sine = sin(radians).toFloat()
+                    val vertical = if (threeDimensional) 0.54f else 1f
+                    val scale = min(size.width / (map.width.coerceAtLeast(1) * 1.42f), size.height / (map.height.coerceAtLeast(1) * 1.42f))
+                    val centerX = map.width / 2f
+                    val centerY = map.height / 2f
+                    fun project(x: Float, y: Float, lift: Float = 0f): Offset {
+                        val dx = x - centerX
+                        val dy = y - centerY
+                        val rx = dx * cosine - dy * sine
+                        val ry = dx * sine + dy * cosine
+                        return Offset(size.width / 2f + rx * scale, size.height / 2f + ry * scale * vertical - lift)
+                    }
+                    fun polygon(points: List<Offset>, color: Color) {
+                        if (points.isEmpty()) return
+                        drawPath(Path().apply {
+                            moveTo(points[0].x, points[0].y)
+                            points.drop(1).forEach { lineTo(it.x, it.y) }
+                            close()
+                        }, color)
+                    }
+                    map.runs.filterNot { it.wall }.forEach { run ->
+                        val base = roomColors[kotlin.math.abs(run.roomId ?: 0) % roomColors.size]
+                        polygon(listOf(
+                            project(run.x.toFloat(), run.y.toFloat()),
+                            project((run.x + run.length).toFloat(), run.y.toFloat()),
+                            project((run.x + run.length).toFloat(), run.y + 1f),
+                            project(run.x.toFloat(), run.y + 1f),
+                        ), if (threeDimensional) base.copy(alpha = 0.94f) else base)
+                    }
+                    map.runs.filter { it.wall }.forEach { run ->
+                        val bottom = listOf(
+                            project(run.x.toFloat(), run.y.toFloat()),
+                            project((run.x + run.length).toFloat(), run.y.toFloat()),
+                            project((run.x + run.length).toFloat(), run.y + 1f),
+                            project(run.x.toFloat(), run.y + 1f),
+                        )
+                        polygon(bottom, Color(0xFF30483E))
+                        if (threeDimensional) {
+                            val lift = 9f
+                            polygon(listOf(bottom[0], bottom[1], bottom[1].copy(y = bottom[1].y - lift), bottom[0].copy(y = bottom[0].y - lift)), Color(0xFF1A2A23))
+                            polygon(bottom.map { it.copy(y = it.y - lift) }, Color(0xFF6B897B))
+                        }
+                    }
+                    map.charger?.let { point ->
+                        val p = project(point.x.toFloat(), point.y.toFloat(), if (threeDimensional) 7f else 0f)
+                        drawCircle(Color(0xFFF1C75B), radius = 7f, center = p)
+                        drawCircle(Color.White, radius = 3f, center = p)
+                    }
+                    map.robot?.let { point ->
+                        val p = project(point.x.toFloat(), point.y.toFloat(), if (threeDimensional) 9f else 0f)
+                        drawCircle(Color(0xFFEAF4EF), radius = 9f, center = p)
+                        drawCircle(Forest, radius = 3f, center = p)
+                    }
+                }
+                if (threeDimensional) {
+                    Text("Dra i kartan eller finjustera vinkeln", color = Color(0xFF9FC7B5), style = MaterialTheme.typography.bodySmall)
+                    Slider(value = rotation, onValueChange = { rotation = it }, valueRange = 0f..360f)
+                }
+                if (map.rooms.isNotEmpty()) {
+                    Text(map.rooms.joinToString(" · ") { it.name }, color = Parchment, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            Button(onClick = onRefresh, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                Text(if (busy) "Läser karta…" else "Uppdatera karta")
+            }
+            message?.let { Text(it, color = Color(0xFFB9D5C8), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
+        }
     }
 }
 

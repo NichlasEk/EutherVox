@@ -125,6 +125,52 @@ class EutherWashService:
             raise RuntimeError("EutherWash svarade med ogiltig dammsugardata")
         return {key: status.get(key) for key in self._VACUUM_KEYS}
 
+    async def vacuum_maps(self) -> dict[str, object]:
+        """Return only bounded display geometry from the fixed local archive."""
+        if not self.enabled:
+            raise RuntimeError("EutherWash är inte aktiverad")
+        encoded = quote(self.vacuum_alias, safe="")
+        payload = await self._get(f"/v1/vacuums/{encoded}/maps")
+        if not isinstance(payload, dict):
+            raise RuntimeError("EutherWash svarade med ogiltig kartdata")
+        sanitized_maps: list[dict[str, object]] = []
+        raw_maps = payload.get("maps")
+        if not isinstance(raw_maps, list):
+            raw_maps = []
+        for raw_map in raw_maps[:3]:
+            if not isinstance(raw_map, dict):
+                continue
+            runs = []
+            for run in raw_map.get("runs", [])[:50_000] if isinstance(raw_map.get("runs"), list) else []:
+                if isinstance(run, dict):
+                    runs.append({key: run.get(key) for key in ("x", "y", "length", "kind", "room_id")})
+            rooms = []
+            for room in raw_map.get("rooms", [])[:63] if isinstance(raw_map.get("rooms"), list) else []:
+                if isinstance(room, dict):
+                    rooms.append({key: room.get(key) for key in ("id", "name")})
+            def point(name: str) -> dict[str, object] | None:
+                value = raw_map.get(name)
+                return {key: value.get(key) for key in ("x", "y", "angle")} if isinstance(value, dict) else None
+            sanitized_maps.append({
+                "index": raw_map.get("index"),
+                "selected": raw_map.get("selected"),
+                "name": raw_map.get("name"),
+                "width": raw_map.get("width"),
+                "height": raw_map.get("height"),
+                "cell_size_mm": raw_map.get("cell_size_mm"),
+                "rotation": raw_map.get("rotation"),
+                "runs": runs,
+                "rooms": rooms,
+                "robot": point("robot"),
+                "charger": point("charger"),
+            })
+        return {
+            "available": payload.get("available") is True,
+            "offline_ready": payload.get("offline_ready") is True,
+            "updated_at": payload.get("updated_at"),
+            "maps": sanitized_maps,
+        }
+
     async def vacuum_status_text(self) -> str:
         status = await self.vacuum_status()
         if not status.get("available") or not status.get("online"):

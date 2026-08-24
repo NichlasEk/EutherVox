@@ -487,6 +487,27 @@ def test_authenticated_session_controls_washer_with_start_confirmation():
     asyncio.run(scenario())
 
 
+def test_authenticated_session_reads_local_vacuum_maps():
+    class FakeWash:
+        enabled = True
+        control_enabled = True
+
+        async def vacuum_maps(self):
+            return {"available": True, "offline_ready": True, "maps": [{"name": "Hemma", "runs": []}]}
+
+    async def scenario():
+        session, sent = make_session()
+        session.authenticated_user = "nichlas"
+        session.eutherwash = FakeWash()
+        await session.handle_text(start_message())
+        await session.handle_text(json.dumps({"type": "vacuum.maps"}))
+        result = next(item for item in sent if item.get("type") == "vacuum.maps.result")
+        assert result["maps"]["offline_ready"] is True
+        assert result["maps"]["maps"][0]["name"] == "Hemma"
+
+    asyncio.run(scenario())
+
+
 def test_authenticated_session_saves_named_light_to_toml_and_returns_config(tmp_path: Path):
     async def scenario():
         session, sent = make_session()

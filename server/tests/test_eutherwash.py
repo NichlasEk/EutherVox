@@ -137,3 +137,27 @@ def test_vacuum_control_rejects_unknown_and_unconfirmed_motion(tmp_path: Path):
     for command in ("start", "start-fast-mapping"):
         with pytest.raises(ValueError, match="bekräftelse"):
             asyncio.run(service.vacuum_command(command))
+
+
+def test_vacuum_maps_uses_fixed_route_and_drops_cloud_metadata():
+    paths = []
+    def handler(request: httpx.Request):
+        paths.append(request.url.path)
+        return httpx.Response(200, json={
+            "available": True, "offline_ready": True, "updated_at": "2026-08-24T20:00:00Z",
+            "object_name": "forbidden-cloud-object",
+            "maps": [{
+                "index": 1, "selected": True, "name": "Hemma", "width": 20, "height": 10,
+                "cell_size_mm": 50, "rotation": 0,
+                "runs": [{"x": 1, "y": 2, "length": 4, "kind": "floor", "room_id": 1, "raw": "forbidden"}],
+                "rooms": [{"id": 1, "name": "Kök", "secret": "forbidden"}],
+                "robot": {"x": 3.5, "y": 4.5, "angle": 90, "device_id": "forbidden"},
+                "charger": None, "md5": "forbidden",
+            }],
+        })
+    service = EutherWashService(settings(), transport=httpx.MockTransport(handler))
+    maps = asyncio.run(service.vacuum_maps())
+    assert paths == ["/v1/vacuums/dammsugaren/maps"]
+    assert maps["maps"][0]["rooms"] == [{"id": 1, "name": "Kök"}]
+    assert maps["maps"][0]["robot"] == {"x": 3.5, "y": 4.5, "angle": 90}
+    assert "object_name" not in maps and "md5" not in maps["maps"][0]
