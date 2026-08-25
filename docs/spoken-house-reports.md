@@ -48,3 +48,16 @@ Text, händelse-id och vald röst köas därefter separat för varje känt
 `node_name`. En upptagen eller frånkopplad enhet behåller sin egen beständiga
 FIFO utan att stoppa uppläsning på andra enheter. Den fasta svenska texten är
 reserv om den lokala språkmodellen inte svarar.
+
+## Androids bakgrundsnod
+
+Android-appen kan hålla sin EutherVox-nod ansluten utan att skärmen har fokus.
+Aktivera **Håll EutherVox ansluten i bakgrunden** under Anslutning. Appen startar
+då en synlig foreground service med en lågprioriterad statusnotis och en
+`Koppla från`-åtgärd. Tjänsten äger samma processgemensamma WebSocket och
+ljudkö som appen, återansluter med exponentiell väntan och skickar en heartbeat
+var 25:e sekund.
+
+Bakgrundsläget tar emot tvättbesked och andra serverdrivna TTS-händelser, men
+startar aldrig mikrofonen. Push-to-talk och samtalsläge kräver fortfarande en
+synlig app och stängs alltid vid `ON_PAUSE`.

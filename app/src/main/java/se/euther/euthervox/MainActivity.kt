@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -70,8 +71,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.edit
 import se.euther.euthervox.app.Latencies
-import se.euther.euthervox.app.VoiceController
 import se.euther.euthervox.app.VoiceStatus
+import se.euther.euthervox.background.EutherVoxNodeRuntime
+import se.euther.euthervox.background.EutherVoxNodeService
 import se.euther.euthervox.network.EutherAuthClient
 import se.euther.euthervox.lights.BleLightController
 import se.euther.euthervox.lights.BleLightDevice
@@ -116,7 +118,7 @@ private fun llmModelLabel(model: String) = when (model) {
 fun EutherVoxApp() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val controller = remember { VoiceController(context, scope) }
+    val controller = remember { EutherVoxNodeRuntime.controller(context) }
     val lightController = remember { BleLightController(context, scope) }
     val wifiLightController = remember { MagicHomeWifiController(context, scope) }
     val state by controller.state.collectAsStateWithLifecycle()
@@ -129,18 +131,25 @@ fun EutherVoxApp() {
     var characterId by remember { mutableStateOf(preferences.getString("character_id", "skinnskattaren").orEmpty()) }
     var voiceId by remember { mutableStateOf(preferences.getString("voice_id", "piper-nst").orEmpty()) }
     var llmModel by remember { mutableStateOf(preferences.getString("llm_model", "qwen3:4b-instruct").orEmpty()) }
+    var backgroundNodeEnabled by remember {
+        mutableStateOf(preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, false))
+    }
     var settingsAddress by remember { mutableStateOf(address) }
     var settingsNodeName by remember { mutableStateOf(nodeName) }
     var settingsUsername by remember { mutableStateOf(username) }
     var settingsCharacterId by remember { mutableStateOf(characterId) }
     var settingsVoiceId by remember { mutableStateOf(voiceId) }
     var settingsLlmModel by remember { mutableStateOf(llmModel) }
+    var settingsBackgroundNodeEnabled by remember { mutableStateOf(backgroundNodeEnabled) }
     var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var selectedTab by remember { mutableStateOf("voice") }
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     var hasBlePermission by remember { mutableStateOf(hasBlePermissions(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> hasPermission = granted }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
     val blePermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
         hasBlePermission = result.values.all { it } && hasBlePermissions(context)
         if (hasBlePermission) lightController.startScan()
@@ -152,14 +161,18 @@ fun EutherVoxApp() {
 
     LaunchedEffect(Unit) {
         if (address.isNotBlank()) {
-            controller.connect(
-                address,
-                nodeName,
-                username,
-                requestedVoiceId = voiceId,
-                requestedCharacterId = characterId,
-                requestedLlmModel = llmModel,
-            )
+            if (backgroundNodeEnabled) {
+                EutherVoxNodeService.start(context)
+            } else {
+                controller.connect(
+                    address,
+                    nodeName,
+                    username,
+                    requestedVoiceId = voiceId,
+                    requestedCharacterId = characterId,
+                    requestedLlmModel = llmModel,
+                )
+            }
         }
     }
 
@@ -174,7 +187,9 @@ fun EutherVoxApp() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            controller.disconnect()
+            if (!preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, false)) {
+                controller.disconnect()
+            }
             lightController.close()
             wifiLightController.close()
         }
@@ -214,6 +229,9 @@ fun EutherVoxApp() {
                 color = Forest,
             )
             Text(state.connectionLabel, color = if (state.canTalk) Forest else Copper)
+            if (backgroundNodeEnabled) {
+                Text("Bakgrundsnod aktiv", style = MaterialTheme.typography.bodySmall, color = Forest)
+            }
             Text(state.serverAddress.ifBlank { "Ingen server vald" }, style = MaterialTheme.typography.bodySmall)
 
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -225,6 +243,7 @@ fun EutherVoxApp() {
                     settingsCharacterId = characterId
                     settingsVoiceId = voiceId
                     settingsLlmModel = llmModel
+                    settingsBackgroundNodeEnabled = backgroundNodeEnabled
                     settingsPassword = ""
                     showSettings = true
                 }) { Text("Inställningar") }
@@ -417,6 +436,33 @@ fun EutherVoxApp() {
                     "Qwen3 4B svarar snabbast. Qwen3.8 27B är betydligt större och kan ta längre tid innan första svaret.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Checkbox(
+                        checked = settingsBackgroundNodeEnabled,
+                        onCheckedChange = { enabled ->
+                            settingsBackgroundNodeEnabled = enabled
+                            if (
+                                enabled &&
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                                PackageManager.PERMISSION_GRANTED
+                            ) {
+                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            }
+                        },
+                    )
+                    Column {
+                        Text("Håll EutherVox ansluten i bakgrunden")
+                        Text(
+                            "Tar emot husmeddelanden och TTS utan appfokus. Mikrofonen förblir avstängd.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
                 OutlinedTextField(
                     settingsPassword,
                     { settingsPassword = it },
@@ -457,6 +503,7 @@ fun EutherVoxApp() {
                     putString("character_id", savedCharacterId)
                     putString("voice_id", savedVoiceId)
                     putString("llm_model", savedLlmModel)
+                    putBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, settingsBackgroundNodeEnabled)
                 }
                 address = savedAddress
                 nodeName = savedNodeName
@@ -464,8 +511,14 @@ fun EutherVoxApp() {
                 characterId = savedCharacterId
                 voiceId = savedVoiceId
                 llmModel = savedLlmModel
+                backgroundNodeEnabled = settingsBackgroundNodeEnabled
                 showSettings = false
                 controller.connect(savedAddress, savedNodeName, savedUsername, settingsPassword, savedVoiceId, savedCharacterId, savedLlmModel)
+                if (settingsBackgroundNodeEnabled) {
+                    EutherVoxNodeService.start(context)
+                } else {
+                    EutherVoxNodeService.stopKeepingAlive(context)
+                }
                 settingsPassword = ""
             }, enabled = settingsAddress.isNotBlank()) { Text("Spara och stäng") }
         },

@@ -117,6 +117,15 @@ private data class PendingLightConfig(
     val room: String,
 )
 
+private data class ConnectionIdentity(
+    val address: String,
+    val nodeName: String,
+    val username: String,
+    val voiceId: String,
+    val characterId: String,
+    val llmModel: String,
+)
+
 class VoiceController(context: Context, private val scope: CoroutineScope) : VoiceTransport.Listener {
     private val microphone = PcmMicrophoneSource(context.applicationContext, scope)
     private val speaker: StreamingAudioSink = PcmAudioTrackSink(scope)
@@ -127,6 +136,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     val state: StateFlow<VoiceUiState> = mutableState.asStateFlow()
     private var transport: VoiceTransport? = null
     private var connectionJob: Job? = null
+    private var connectionIdentity: ConnectionIdentity? = null
     private var timeoutJob: Job? = null
     private var nextConversationTurnJob: Job? = null
     private var bargeInJob: Job? = null
@@ -159,12 +169,22 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             fail("Ange serveradress, till exempel wss://server/euthervox/ws", recoverable = false)
             return
         }
+        val requestedIdentity = ConnectionIdentity(
+            normalized,
+            requestedNodeName.ifBlank { "android-phone" },
+            username.trim(),
+            requestedVoiceId.ifBlank { "piper-nst" },
+            requestedCharacterId.ifBlank { "skinnskattaren" },
+            requestedLlmModel.trim(),
+        )
+        if (shouldReconnect && connectionIdentity == requestedIdentity && password.isBlank()) return
         disconnect()
+        connectionIdentity = requestedIdentity
         address = normalized
-        nodeName = requestedNodeName.ifBlank { "android-phone" }
-        characterId = requestedCharacterId.ifBlank { "skinnskattaren" }
-        voiceId = requestedVoiceId.ifBlank { "piper-nst" }
-        llmModel = requestedLlmModel.trim()
+        nodeName = requestedIdentity.nodeName
+        characterId = requestedIdentity.characterId
+        voiceId = requestedIdentity.voiceId
+        llmModel = requestedIdentity.llmModel
         shouldReconnect = true
         mutableState.value = mutableState.value.copy(serverAddress = normalized, status = VoiceStatus.Connecting, connectionLabel = "Ansluter…", errorMessage = null)
         connectionJob = scope.launch {
@@ -203,6 +223,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     fun disconnect() {
         shouldReconnect = false
+        connectionIdentity = null
         ready = false
         nextConversationTurnJob?.cancel()
         nextConversationTurnJob = null

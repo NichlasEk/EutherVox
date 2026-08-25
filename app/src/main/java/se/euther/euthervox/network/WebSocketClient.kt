@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -39,6 +40,7 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
     private var outgoing = Channel<Frame>(capacity = 12)
     private var socket: Socket? = null
     private var writerJob: Job? = null
+    private var heartbeatJob: Job? = null
     @Volatile private var connected = false
 
     override suspend fun connect(url: String, listener: VoiceTransport.Listener) = withContext(Dispatchers.IO) {
@@ -61,6 +63,12 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
             writerJob = scope.launch(Dispatchers.IO) {
                 for (frame in writeQueue) writeFrame(output, frame)
             }
+            heartbeatJob = scope.launch(Dispatchers.IO) {
+                while (isActive && connected) {
+                    delay(25_000)
+                    outgoing.send(Frame(0x9, ByteArray(0)))
+                }
+            }
             listener.onOpen()
             while (isActive && connected) {
                 when (val frame = readFrame(input)) {
@@ -79,6 +87,7 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
             failure = error
         } finally {
             connected = false
+            heartbeatJob?.cancel()
             writerJob?.cancel()
             socket?.runCatching { close() }
             socket = null
@@ -99,6 +108,7 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
         if (connected) outgoing.trySend(Frame(0x8, ByteArray(0)))
         connected = false
         socket?.runCatching { close() }
+        heartbeatJob?.cancel()
         writerJob?.cancel()
     }
 
