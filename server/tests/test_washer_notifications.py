@@ -77,6 +77,28 @@ def test_completion_is_armed_persisted_and_delivered_once_per_device(tmp_path):
     asyncio.run(scenario())
 
 
+def test_samsung_running_to_idle_edge_is_a_completion(tmp_path):
+    async def scenario():
+        monitor = WasherCompletionMonitor(
+            Washer(["running", "idle"]),
+            {"notifications_enabled": True},
+            tmp_path,
+        )
+        delivered = []
+
+        async def receive(event_id, text):
+            delivered.append((event_id, text))
+            return True
+
+        monitor.subscribe("phone", receive)
+        await monitor.poll_once()
+        await monitor.poll_once()
+        assert len(delivered) == 1
+        assert "Tvätten är klar" in delivered[0][1]
+
+    asyncio.run(scenario())
+
+
 def test_busy_device_keeps_its_own_persistent_queue(tmp_path):
     async def scenario():
         phone_calls = []

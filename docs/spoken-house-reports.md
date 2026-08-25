@@ -15,10 +15,11 @@ separata autentiserings- och bekräftelsevägar.
 
 Gatewayen frågar endast EutherWash fasta statusroute. När den har sett
 `running` eller `paused` armeras det aktuella varvet. Nästa övergång till
-`finished` skapar ett beständigt besked i `state/washer-notification.json` och
-lägger det i en separat kö för varje känd EutherVox-enhet. En omstart tappar
-därför inte ett pågående varv eller väntande besked, men en första start där
-maskinen redan står i `finished` spelar inte upp ett gammalt besked.
+`finished`, eller Samsungs observerade direkta övergång från aktiv till `idle`,
+skapar ett beständigt besked i `state/washer-notification.json` och lägger det
+i en separat kö för varje känd EutherVox-enhet. En omstart tappar därför inte
+ett pågående varv eller väntande besked, men en första start där maskinen redan
+står i `finished` eller `idle` spelar inte upp ett gammalt besked.
 
 Varje autentiserad och ledig EutherVox-klient får sitt eget
 `assistant.notification`, följt av samma PCM-ström som vanlig TTS. Om en app är

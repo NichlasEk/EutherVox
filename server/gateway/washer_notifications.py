@@ -19,7 +19,7 @@ class WasherCompletionMonitor:
     """Persist completion speech in an independent FIFO for every EutherVox node."""
 
     ACTIVE_STATES = {"running", "paused"}
-    FINISHED_STATES = {"finished", "complete", "completed"}
+    FINISHED_STATES = {"finished", "complete", "completed", "idle"}
     FALLBACK_TEXT = "Tvätten är klar! Dags att befria strumporna från sitt snurriga äventyr."
     MAX_QUEUE_DEPTH = 8
     MAX_TEXT_LENGTH = 500
