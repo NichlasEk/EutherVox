@@ -77,8 +77,8 @@ def test_authenticated_idle_session_accepts_unsolicited_washer_speech():
         session.authenticated_user = "nichlas"
         session.washer_notifications = types.SimpleNamespace(
             voice_id="piper-nst", jingle_path=None, enabled=True,
-            subscribe=lambda _callback: None,
-            unsubscribe=lambda _callback: None,
+            subscribe=lambda _node, _callback: None,
+            unsubscribe=lambda _node, _callback: None,
         )
         await session.handle_text(start_message())
 

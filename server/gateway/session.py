@@ -174,7 +174,7 @@ class VoiceSession:
 
     async def close(self) -> None:
         if self.washer_notifications:
-            self.washer_notifications.unsubscribe(self._deliver_washer_notification)
+            self.washer_notifications.unsubscribe(self.node_name, self._deliver_washer_notification)
         if self.response_task:
             self.response_task.cancel()
             await asyncio.gather(self.response_task, return_exceptions=True)
@@ -242,7 +242,7 @@ class VoiceSession:
                 "controls_available": bool(getattr(self.eutherwash, "control_enabled", False)),
             })
         if self.authenticated_user and self.washer_notifications and self.washer_notifications.enabled:
-            self.washer_notifications.subscribe(self._deliver_washer_notification)
+            self.washer_notifications.subscribe(self.node_name, self._deliver_washer_notification)
         LOG.info(
             "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,

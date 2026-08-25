@@ -31,6 +31,32 @@ from .washer_notifications import WasherCompletionMonitor
 LOG = logging.getLogger("euthervox.gateway")
 
 
+async def generate_washer_completion_message(
+    llm,
+    characters,
+    settings: dict,
+    default_character: str,
+    status: dict,
+) -> str:
+    """Generate one short local announcement; the monitor supplies a safe fallback."""
+    character_name = (
+        str(settings.get("notification_character", default_character)).strip()
+        or default_character
+    )
+    character = characters.get(character_name)
+    program = " ".join(str(status.get("program") or "").split())[:80]
+    prompt = str(settings.get(
+        "notification_ai_prompt",
+        "Tvättmaskinen har precis blivit klar. Skriv ett enda kort, vänligt och roligt "
+        "svenskt meddelande som passar att läsas upp i hemmet. Högst två meningar, "
+        "ingen markdown och hitta inte på tekniska fakta.",
+    )).strip()
+    if program and not program.startswith("Table_"):
+        prompt += f" Programmet hette {program}."
+    pieces = [piece async for piece in llm.generate(prompt, character)]
+    return "".join(pieces).strip()
+
+
 def configure_device_hotwords(
     stt: object,
     lights: MagicHomeLightService,
@@ -156,6 +182,7 @@ class OAuthHttpHandler:
 
 async def run(config: GatewayConfig) -> None:
     engines = build_engines(config)
+    characters = TomlCharacterProvider(config.profile_dir)
     youtube = YouTubePlaylistService(config.youtube_settings, config.config_dir)
     playlists = TomlPlaylistStore(config.playlist_settings, config.config_dir)
     cast = CastService(config.cast_settings)
@@ -164,7 +191,24 @@ async def run(config: GatewayConfig) -> None:
     television = NecTvService(config.television_settings, config.config_dir)
     eutherpump = EutherPumpService(config.eutherpump_settings)
     eutherwash = EutherWashService(config.eutherwash_settings)
-    washer_notifications = WasherCompletionMonitor(eutherwash, config.eutherwash_settings, config.config_dir)
+    message_generator = None
+    if bool(config.eutherwash_settings.get("notification_ai_enabled", True)):
+
+        async def message_generator(status: dict) -> str:
+            return await generate_washer_completion_message(
+                engines[1],
+                characters,
+                config.eutherwash_settings,
+                config.default_character,
+                status,
+            )
+
+    washer_notifications = WasherCompletionMonitor(
+        eutherwash,
+        config.eutherwash_settings,
+        config.config_dir,
+        message_generator=message_generator,
+    )
     configure_device_hotwords(engines[0], lights, television, eutherpump, eutherwash)
     tool_registry = EutherVoxToolRegistry(cast, lights, television, eutherpump, eutherwash)
     tool_planner = None
