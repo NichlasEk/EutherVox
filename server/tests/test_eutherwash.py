@@ -89,6 +89,41 @@ def test_control_rejects_unconfirmed_start_before_network(tmp_path: Path):
         asyncio.run(service.command("start"))
 
 
+def test_schedule_uses_fixed_routes_and_control_token(tmp_path: Path):
+    token_file = tmp_path / "control-token"
+    token_file.write_text("synthetic-control-token-at-least-32-characters", encoding="utf-8")
+    token_file.chmod(0o600)
+    requests = []
+
+    def handler(request: httpx.Request):
+        requests.append(request)
+        if request.url.path.endswith("/programs"):
+            return httpx.Response(200, json={"programs": [{"code": "1C", "name": "Eco 40–60"}]})
+        if request.method == "GET":
+            return httpx.Response(200, content=b"null", headers={"content-type": "application/json"})
+        return httpx.Response(200, json={
+            "state": "scheduled", "scheduled_for": "2030-01-02T08:00:00+01:00",
+            "program_code": "1C", "program_name": "Eco 40–60",
+            "created_at": "2030-01-01T08:00:00Z",
+        })
+
+    service = EutherWashService(settings(
+        control_enabled=True, control_token_file=str(token_file),
+    ), transport=httpx.MockTransport(handler))
+    payload = asyncio.run(service.programs_and_schedule())
+    asyncio.run(service.create_schedule("2030-01-02T08:00:00+01:00", "1C"))
+    asyncio.run(service.cancel_schedule())
+
+    assert payload["programs"] == [{"code": "1C", "name": "Eco 40–60"}]
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", "/v1/washers/tvattmaskinen/programs"),
+        ("GET", "/v1/washers/tvattmaskinen/schedule"),
+        ("POST", "/v1/washers/tvattmaskinen/schedule"),
+        ("DELETE", "/v1/washers/tvattmaskinen/schedule"),
+    ]
+    assert requests[2].headers["authorization"].startswith("Bearer ")
+
+
 def test_vacuum_control_uses_only_allowlisted_commands_and_confirmation(tmp_path: Path):
     token_file = tmp_path / "control-token"
     token_file.write_text("synthetic-control-token-at-least-32-characters", encoding="utf-8")

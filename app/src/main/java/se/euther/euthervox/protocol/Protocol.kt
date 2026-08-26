@@ -94,6 +94,21 @@ fun washerCommand(command: String, confirmed: Boolean = false) = JsonObject().ap
     addProperty("confirmed", confirmed)
 }.toString()
 
+fun washerScheduleStatus() = JsonObject().apply {
+    addProperty("type", "washer.schedule.status")
+}.toString()
+
+fun washerScheduleCreate(scheduledFor: String, programCode: String) = JsonObject().apply {
+    addProperty("type", "washer.schedule.create")
+    addProperty("scheduled_for", scheduledFor)
+    addProperty("program_code", programCode)
+    addProperty("confirmed", true)
+}.toString()
+
+fun washerScheduleCancel() = JsonObject().apply {
+    addProperty("type", "washer.schedule.cancel")
+}.toString()
+
 fun pumpCommand(
     target: String,
     power: Boolean? = null,
@@ -247,6 +262,18 @@ sealed interface ServerEvent {
     data class WasherConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
     data class WasherStatusResult(val washer: WasherState, val statistics: WasherStatistics) : ServerEvent
     data class WasherCommandResult(val command: String, val washer: WasherState, val message: String) : ServerEvent
+    data class WasherProgram(val code: String, val name: String)
+    data class WasherSchedule(
+        val state: String,
+        val scheduledFor: String,
+        val programCode: String,
+        val programName: String,
+        val failureCode: String?,
+    )
+    data class WasherScheduleResult(
+        val programs: List<WasherProgram>,
+        val schedule: WasherSchedule?,
+    ) : ServerEvent
     data class VacuumConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
     data class VacuumStatusResult(val vacuum: VacuumState) : ServerEvent
     data class VacuumMapsResult(val vacuumMaps: VacuumMaps) : ServerEvent
@@ -392,6 +419,24 @@ fun parseServerEvent(raw: String): ServerEvent {
                 updatedAt = washer["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
             ) },
             message = json["message"]?.asString ?: "Tvättmaskinen bekräftade ändringen.",
+        )
+        "washer.schedule.result" -> ServerEvent.WasherScheduleResult(
+            programs = json["programs"]?.asJsonArray?.mapNotNull { item ->
+                item.asJsonObject.let { program ->
+                    val code = program["code"]?.asString.orEmpty()
+                    val name = program["name"]?.asString.orEmpty()
+                    if (code.isBlank() || name.isBlank()) null else ServerEvent.WasherProgram(code, name)
+                }
+            }.orEmpty(),
+            schedule = json["schedule"]?.takeUnless { it.isJsonNull }?.asJsonObject?.let { schedule ->
+                ServerEvent.WasherSchedule(
+                    state = schedule["state"]?.asString.orEmpty(),
+                    scheduledFor = schedule["scheduled_for"]?.asString.orEmpty(),
+                    programCode = schedule["program_code"]?.asString.orEmpty(),
+                    programName = schedule["program_name"]?.asString.orEmpty(),
+                    failureCode = schedule["failure_code"]?.takeUnless { it.isJsonNull }?.asString,
+                )
+            },
         )
         "vacuum.config" -> ServerEvent.VacuumConfig(
             json["available"]?.asBoolean ?: false,

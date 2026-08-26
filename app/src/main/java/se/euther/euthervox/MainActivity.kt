@@ -37,6 +37,8 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -78,6 +80,11 @@ import se.euther.euthervox.network.EutherAuthClient
 import se.euther.euthervox.lights.BleLightController
 import se.euther.euthervox.lights.BleLightDevice
 import se.euther.euthervox.lights.BleLightProtocol
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import se.euther.euthervox.lights.hasBlePermissions
 import se.euther.euthervox.lights.requiredBlePermissions
 import se.euther.euthervox.lights.MagicHomeDevice
@@ -365,11 +372,15 @@ fun EutherVoxApp() {
                 WasherPanel(
                     state = state.washerState,
                     statistics = state.washerStatistics,
+                    programs = state.washerPrograms,
+                    schedule = state.washerSchedule,
                     message = state.washerMessage,
                     busy = state.washerBusy,
                     controlsAvailable = state.washerControlsAvailable,
                     onRefresh = controller::refreshWasher,
                     onCommand = controller::controlWasher,
+                    onSchedule = controller::createWasherSchedule,
+                    onCancelSchedule = controller::cancelWasherSchedule,
                 )
             } else {
                 VacuumPanel(
@@ -541,13 +552,23 @@ private fun TabChoice(label: String, selected: Boolean, modifier: Modifier = Mod
 private fun WasherPanel(
     state: ServerEvent.WasherState?,
     statistics: ServerEvent.WasherStatistics?,
+    programs: List<ServerEvent.WasherProgram>,
+    schedule: ServerEvent.WasherSchedule?,
     message: String?,
     busy: Boolean,
     controlsAvailable: Boolean,
     onRefresh: () -> Unit,
     onCommand: (String, Boolean) -> Unit,
+    onSchedule: (String, String) -> Unit,
+    onCancelSchedule: () -> Unit,
 ) {
     var pendingConfirmation by remember { mutableStateOf<String?>(null) }
+    val initialTime = remember { LocalTime.now().plusHours(1).format(DateTimeFormatter.ofPattern("HH:mm")) }
+    var scheduleDate by remember { mutableStateOf(LocalDate.now().toString()) }
+    var scheduleTime by remember { mutableStateOf(initialTime) }
+    var selectedProgram by remember(programs) { mutableStateOf(programs.firstOrNull()) }
+    var programMenuOpen by remember { mutableStateOf(false) }
+    var confirmSchedule by remember { mutableStateOf(false) }
     fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
     fun stateLabel(value: String) = when (value) {
         "idle" -> "Redo"
@@ -558,7 +579,7 @@ private fun WasherPanel(
         else -> "Okänd"
     }
     Text("Tvättmaskin", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
-    Text("Status och fyra avgränsade kontroller. Programmet väljs alltid på maskinen.", textAlign = TextAlign.Center, color = Forest)
+    Text("Status, lokal programväljare och serverstyrd schemaläggning.", textAlign = TextAlign.Center, color = Forest)
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -609,6 +630,77 @@ private fun WasherPanel(
             Button(onClick = onRefresh, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Uppdaterar…" else "Uppdatera") }
             message?.let { Text(it, color = Forest, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth()) }
         }
+    }
+    if (controlsAvailable) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                Text("Schemalägg tvätt", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
+                if (schedule?.state == "scheduled") {
+                    Text("${schedule.programName} · ${schedule.scheduledFor}", fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick = onCancelSchedule, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("Avbryt schema")
+                    }
+                } else {
+                    Box(Modifier.fillMaxWidth()) {
+                        OutlinedButton(
+                            onClick = { programMenuOpen = true },
+                            enabled = programs.isNotEmpty() && !busy,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(selectedProgram?.name ?: "Hämta programlista") }
+                        DropdownMenu(expanded = programMenuOpen, onDismissRequest = { programMenuOpen = false }) {
+                            programs.forEach { program ->
+                                DropdownMenuItem(
+                                    text = { Text(program.name) },
+                                    onClick = { selectedProgram = program; programMenuOpen = false },
+                                )
+                            }
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = scheduleDate,
+                            onValueChange = { scheduleDate = it },
+                            label = { Text("Datum") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1.4f),
+                        )
+                        OutlinedTextField(
+                            value = scheduleTime,
+                            onValueChange = { scheduleTime = it },
+                            label = { Text("Tid") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    Button(
+                        onClick = { confirmSchedule = true },
+                        enabled = selectedProgram != null && state?.remoteControlEnabled == true && !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Schemalägg") }
+                }
+            }
+        }
+    }
+    if (confirmSchedule) {
+        AlertDialog(
+            onDismissRequest = { confirmSchedule = false },
+            title = { Text("Schemalägg tvätten?") },
+            text = { Text("${selectedProgram?.name} startar $scheduleDate klockan $scheduleTime. Kontrollera tvätt, tvättmedel, lucka och Smart Control.") },
+            confirmButton = {
+                Button(onClick = {
+                    val instant = runCatching {
+                        ZonedDateTime.of(
+                            LocalDate.parse(scheduleDate),
+                            LocalTime.parse(scheduleTime),
+                            ZoneId.systemDefault(),
+                        ).toOffsetDateTime().toString()
+                    }.getOrNull()
+                    confirmSchedule = false
+                    if (instant != null) selectedProgram?.let { onSchedule(instant, it.code) }
+                }) { Text("Bekräfta") }
+            },
+            dismissButton = { TextButton(onClick = { confirmSchedule = false }) { Text("Avbryt") } },
+        )
     }
     pendingConfirmation?.let { command ->
         AlertDialog(

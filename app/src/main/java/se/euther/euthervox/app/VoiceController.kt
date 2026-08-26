@@ -35,6 +35,9 @@ import se.euther.euthervox.protocol.vacuumStatus
 import se.euther.euthervox.protocol.vacuumMaps
 import se.euther.euthervox.protocol.vacuumCommand
 import se.euther.euthervox.protocol.washerCommand
+import se.euther.euthervox.protocol.washerScheduleCancel
+import se.euther.euthervox.protocol.washerScheduleCreate
+import se.euther.euthervox.protocol.washerScheduleStatus
 import se.euther.euthervox.protocol.responseCancel
 import se.euther.euthervox.protocol.sessionStart
 import se.euther.euthervox.protocol.lightConfigUpsert
@@ -84,6 +87,8 @@ data class VoiceUiState(
     val pumpBusy: Boolean = false,
     val washerState: ServerEvent.WasherState? = null,
     val washerStatistics: ServerEvent.WasherStatistics? = null,
+    val washerPrograms: List<ServerEvent.WasherProgram> = emptyList(),
+    val washerSchedule: ServerEvent.WasherSchedule? = null,
     val washerMessage: String? = null,
     val washerBusy: Boolean = false,
     val washerControlsAvailable: Boolean = false,
@@ -491,7 +496,30 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             if (transport?.sendText(washerStatus()) != true) {
                 mutableState.value = mutableState.value.copy(washerBusy = false, washerMessage = "Kunde inte fråga tvättmaskinstjänsten.")
             }
+            transport?.sendText(washerScheduleStatus())
         }
+    }
+
+    fun createWasherSchedule(scheduledFor: String, programCode: String) {
+        if (!ready) return
+        mutableState.value = mutableState.value.copy(
+            washerBusy = true,
+            washerMessage = "Sparar tvättschemat på servern…",
+        )
+        scope.launch {
+            if (transport?.sendText(washerScheduleCreate(scheduledFor, programCode)) != true) {
+                mutableState.value = mutableState.value.copy(
+                    washerBusy = false,
+                    washerMessage = "Kunde inte spara tvättschemat.",
+                )
+            }
+        }
+    }
+
+    fun cancelWasherSchedule() {
+        if (!ready) return
+        mutableState.value = mutableState.value.copy(washerBusy = true, washerMessage = "Avbryter tvättschemat…")
+        scope.launch { transport?.sendText(washerScheduleCancel()) }
     }
 
     fun refreshVacuum() {
@@ -785,6 +813,18 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 washerState = event.washer,
                 washerBusy = false,
                 washerMessage = event.message,
+            )
+            is ServerEvent.WasherScheduleResult -> mutableState.value = mutableState.value.copy(
+                washerPrograms = event.programs,
+                washerSchedule = event.schedule,
+                washerBusy = false,
+                washerMessage = when (event.schedule?.state) {
+                    "scheduled" -> "Tvätten är schemalagd."
+                    "started" -> "Den schemalagda tvätten har startat."
+                    "failed" -> "Den schemalagda starten misslyckades: ${event.schedule.failureCode ?: "okänt fel"}."
+                    "cancelled" -> "Tvättschemat är avbrutet."
+                    else -> "Program och schema uppdaterade."
+                },
             )
             is ServerEvent.VacuumConfig -> {
                 mutableState.value = mutableState.value.copy(

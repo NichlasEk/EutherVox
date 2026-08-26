@@ -155,6 +155,12 @@ class VoiceSession:
                 await self._washer_status()
             elif message_type == "washer.command":
                 await self._washer_command(message)
+            elif message_type == "washer.schedule.status":
+                await self._washer_schedule_status()
+            elif message_type == "washer.schedule.create":
+                await self._washer_schedule_create(message)
+            elif message_type == "washer.schedule.cancel":
+                await self._washer_schedule_cancel()
             elif message_type == "vacuum.status":
                 await self._vacuum_status()
             elif message_type == "vacuum.maps":
@@ -462,6 +468,44 @@ class VoiceSession:
             "status": status,
             "message": f"Tvättmaskinen bekräftade att den {labels[command]}.",
         })
+
+    async def _washer_schedule_status(self) -> None:
+        self._require_washer_control()
+        try:
+            payload = await self.eutherwash.programs_and_schedule()
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("WASHER_SCHEDULE_FAILED", str(error)) from error
+        await self.send_json({"type": "washer.schedule.result", **payload})
+
+    async def _washer_schedule_create(self, message: dict) -> None:
+        self._require_washer_control()
+        scheduled_for = str(message.get("scheduled_for", ""))
+        program_code = str(message.get("program_code", ""))
+        if message.get("confirmed") is not True or not scheduled_for or not program_code:
+            raise ProtocolError("WASHER_CONFIRMATION_REQUIRED", "Schemat måste bekräftas")
+        try:
+            await self.eutherwash.create_schedule(scheduled_for, program_code)
+            payload = await self.eutherwash.programs_and_schedule()
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("WASHER_SCHEDULE_FAILED", str(error)) from error
+        await self.send_json({"type": "washer.schedule.result", **payload})
+
+    async def _washer_schedule_cancel(self) -> None:
+        self._require_washer_control()
+        try:
+            await self.eutherwash.cancel_schedule()
+            payload = await self.eutherwash.programs_and_schedule()
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("WASHER_SCHEDULE_FAILED", str(error)) from error
+        await self.send_json({"type": "washer.schedule.result", **payload})
+
+    def _require_washer_control(self) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.authenticated_user:
+            raise ProtocolError("WASHER_AUTH_REQUIRED", "Inloggning krävs för tvättstyrning")
+        if not self.eutherwash or not self.eutherwash.enabled or not self.eutherwash.control_enabled:
+            raise ProtocolError("WASHER_CONTROL_DISABLED", "Tvättstyrning är inte aktiverad")
 
     async def _vacuum_status(self) -> None:
         if self.phase is Phase.CONNECTED:

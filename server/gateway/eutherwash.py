@@ -79,6 +79,70 @@ class EutherWashService:
             raise RuntimeError("EutherWash svarade med ogiltiga data")
         return {key: status.get(key) for key in self._STATUS_KEYS}
 
+    async def programs_and_schedule(self) -> dict[str, object]:
+        encoded = quote(self.alias, safe="")
+        programs = await self._get(f"/v1/washers/{encoded}/programs")
+        schedule = await self._get(f"/v1/washers/{encoded}/schedule")
+        if not isinstance(programs, dict) or schedule is not None and not isinstance(schedule, dict):
+            raise RuntimeError("EutherWash svarade med ogiltig schemadata")
+        safe_programs = []
+        for item in programs.get("programs", [])[:64]:
+            if isinstance(item, dict):
+                safe_programs.append({"code": item.get("code"), "name": item.get("name")})
+        safe_schedule = None
+        if isinstance(schedule, dict):
+            safe_schedule = {key: schedule.get(key) for key in (
+                "state", "scheduled_for", "program_code", "program_name",
+                "created_at", "resolved_at", "failure_code",
+            )}
+        return {"programs": safe_programs, "schedule": safe_schedule}
+
+    async def create_schedule(self, scheduled_for: str, program_code: str) -> dict[str, object]:
+        return await self._schedule_request(
+            "POST", {"scheduled_for": scheduled_for, "program_code": program_code, "confirmed": True}
+        )
+
+    async def cancel_schedule(self) -> dict[str, object]:
+        return await self._schedule_request("DELETE", None)
+
+    async def _schedule_request(self, method: str, body: dict[str, object] | None) -> dict[str, object]:
+        if not self.enabled or not self.control_enabled or not self._control_token:
+            raise RuntimeError("Tvättschemaläggning är inte aktiverad")
+        encoded = quote(self.alias, safe="")
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(self.control_timeout, connect=min(1.0, self.control_timeout)),
+                trust_env=False,
+                transport=self.transport,
+            ) as client:
+                response = await client.request(
+                    method,
+                    f"{self.base_url}/v1/washers/{encoded}/schedule",
+                    headers={"Authorization": f"Bearer {self._control_token}"},
+                    json=body,
+                )
+                if response.status_code == 409:
+                    detail = str(response.json().get("detail", "schedule_rejected"))
+                    messages = {
+                        "remote_control_required": "Slå på Smart Control på tvättmaskinen först.",
+                        "washer_must_be_idle": "Tvättmaskinen måste vara redo.",
+                        "program_not_advertised": "Programmet finns inte på den här maskinen.",
+                        "schedule_already_exists": "Det finns redan en schemalagd tvätt.",
+                        "schedule_too_soon": "Välj en tid minst 30 sekunder framåt.",
+                        "schedule_too_far": "Schemat får ligga högst sju dagar framåt.",
+                        "no_cancellable_schedule": "Det finns inget aktivt schema att avbryta.",
+                    }
+                    raise RuntimeError(messages.get(detail, "Tvättschemat avvisades."))
+                response.raise_for_status()
+                payload = response.json()
+        except RuntimeError:
+            raise
+        except (httpx.HTTPError, ValueError) as error:
+            raise RuntimeError("EutherWash svarar inte på schemabegäran") from error
+        if not isinstance(payload, dict):
+            raise RuntimeError("EutherWash bekräftade inte schemat")
+        return payload
+
     async def status_text(self) -> str:
         """Render the fixed washer report as concise, speakable Swedish."""
         report = await self.report()

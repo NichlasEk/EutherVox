@@ -161,6 +161,21 @@ class ProtocolTest {
         assertEquals(true, event.washer.remoteControlEnabled)
     }
 
+    @Test fun serializesAndParsesWasherSchedule() {
+        val request = JsonParser.parseString(
+            washerScheduleCreate("2030-01-02T08:00:00+01:00", "1C")
+        ).asJsonObject
+        assertEquals("washer.schedule.create", request["type"].asString)
+        assertEquals("1C", request["program_code"].asString)
+        assertTrue(request["confirmed"].asBoolean)
+
+        val event = parseServerEvent(
+            """{"type":"washer.schedule.result","programs":[{"code":"1C","name":"Eco 40–60"}],"schedule":{"state":"scheduled","scheduled_for":"2030-01-02T08:00:00+01:00","program_code":"1C","program_name":"Eco 40–60","failure_code":null}}"""
+        ) as ServerEvent.WasherScheduleResult
+        assertEquals("Eco 40–60", event.programs.single().name)
+        assertEquals("scheduled", event.schedule?.state)
+    }
+
     @Test fun serializesConfirmedFastMappingAndParsesVacuumWarnings() {
         val request = JsonParser.parseString(vacuumCommand("start-fast-mapping", confirmed = true)).asJsonObject
         assertEquals("vacuum.command", request["type"].asString)
