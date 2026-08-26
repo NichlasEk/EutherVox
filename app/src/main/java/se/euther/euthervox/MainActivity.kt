@@ -63,6 +63,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -596,6 +597,8 @@ private fun DeviceNavigator(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = alignedStart)
     val snap = rememberSnapFlingBehavior(lazyListState = listState)
     val scope = rememberCoroutineScope()
+    val currentSelectedTab by rememberUpdatedState(selectedTab)
+    val currentOnSelect by rememberUpdatedState(onSelect)
 
     LaunchedEffect(listState) {
         snapshotFlow {
@@ -607,7 +610,7 @@ private fun DeviceNavigator(
         }.collect { index ->
             index ?: return@collect
             val destination = DeviceDestinations[index % DeviceDestinations.size]
-            if (destination.tab != selectedTab) onSelect(destination.tab)
+            if (destination.tab != currentSelectedTab) currentOnSelect(destination.tab)
         }
     }
 
@@ -674,7 +677,10 @@ private fun DeviceNavigator(
                 val destination = DeviceDestinations[index % DeviceDestinations.size]
                 val isSelected = destination.tab == selectedTab
                 Card(
-                    onClick = { scope.launch { listState.animateScrollToItem(index) } },
+                    onClick = {
+                        currentOnSelect(destination.tab)
+                        scope.launch { listState.animateScrollToItem(index) }
+                    },
                     modifier = Modifier.width(126.dp).height(82.dp),
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
