@@ -17,9 +17,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +31,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,6 +55,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.animation.Crossfade
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -54,15 +63,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -92,7 +104,9 @@ import se.euther.euthervox.lights.MagicHomeWifiController
 import se.euther.euthervox.lights.MagicHomeWifiUiState
 import se.euther.euthervox.lights.MagicHomeProtocol
 import se.euther.euthervox.protocol.ServerEvent
+import kotlinx.coroutines.launch
 import kotlin.math.cos
+import kotlin.math.abs
 import kotlin.math.min
 import kotlin.math.sin
 
@@ -106,6 +120,24 @@ class MainActivity : ComponentActivity() {
 private val Forest = Color(0xFF254C3A)
 private val Copper = Color(0xFFB86035)
 private val Parchment = Color(0xFFF2EBDD)
+
+private data class DeviceDestination(
+    val tab: String,
+    val label: String,
+    val symbol: String,
+    val hero: Int,
+)
+
+private val DeviceDestinations = listOf(
+    DeviceDestination("voice", "Röst", "◉", R.drawable.hero_voice),
+    DeviceDestination("lights", "Ljus", "✦", R.drawable.hero_lights),
+    DeviceDestination("tv", "TV", "▣", R.drawable.hero_tv),
+    DeviceDestination("washer", "Tvättmaskin", "◎", R.drawable.hero_washer),
+    DeviceDestination("dryer", "Torktumlare", "◌", R.drawable.hero_dryer),
+    DeviceDestination("boiler", "Panna", "♨", R.drawable.hero_boiler),
+    DeviceDestination("pump", "Pump", "≈", R.drawable.hero_pump),
+    DeviceDestination("vacuum", "Dammsugare", "◒", R.drawable.hero_vacuum),
+)
 
 private data class CharacterUi(val name: String, val symbol: String)
 
@@ -208,16 +240,20 @@ fun EutherVoxApp() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TabChoice("Röst", selectedTab == "voice", Modifier.weight(1f)) { selectedTab = "voice" }
-                TabChoice("Ljus", selectedTab == "lights", Modifier.weight(1f)) { selectedTab = "lights" }
-                TabChoice("TV", selectedTab == "tv", Modifier.weight(1f)) { selectedTab = "tv" }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TabChoice("Pump", selectedTab == "pump", Modifier.weight(1f)) { selectedTab = "pump" }
-                TabChoice("Tvätt", selectedTab == "washer", Modifier.weight(1f)) { selectedTab = "washer" }
-                TabChoice("Dammsugare", selectedTab == "vacuum", Modifier.weight(1f)) { selectedTab = "vacuum" }
-            }
+            DeviceNavigator(
+                selectedTab = selectedTab,
+                onlineByTab = mapOf(
+                    "voice" to state.canTalk,
+                    "lights" to (wifiLightState.devices.isNotEmpty() || lightState.devices.isNotEmpty()),
+                    "tv" to state.configuredTvs.isNotEmpty(),
+                    "washer" to state.washerState?.online,
+                    "dryer" to null,
+                    "boiler" to null,
+                    "pump" to state.pumpState?.online,
+                    "vacuum" to state.vacuumState?.online,
+                ),
+                onSelect = { selectedTab = it },
+            )
             if (selectedTab == "voice") {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
                 Text(characterSymbol, style = MaterialTheme.typography.displayMedium, color = Parchment)
@@ -382,7 +418,7 @@ fun EutherVoxApp() {
                     onSchedule = controller::createWasherSchedule,
                     onCancelSchedule = controller::cancelWasherSchedule,
                 )
-            } else {
+            } else if (selectedTab == "vacuum") {
                 VacuumPanel(
                     vacuum = state.vacuumState,
                     maps = state.vacuumMaps,
@@ -394,6 +430,15 @@ fun EutherVoxApp() {
                     onRefresh = controller::refreshVacuum,
                     onRefreshMaps = controller::refreshVacuumMaps,
                     onCommand = controller::controlVacuum,
+                )
+            } else {
+                ComingSoonPanel(
+                    title = if (selectedTab == "dryer") "Torktumlare" else "Panna",
+                    description = if (selectedTab == "dryer") {
+                        "Ingen torktumlare är ansluten ännu. Kortet är redo för lokal status och styrning när vi kopplar in den."
+                    } else {
+                        "Ingen separat panna är ansluten ännu. Kortet är redo för temperaturer, driftstatus och rapporter."
+                    },
                 )
             }
             Spacer(Modifier.height(12.dp))
@@ -540,11 +585,138 @@ fun EutherVoxApp() {
 }
 
 @Composable
-private fun TabChoice(label: String, selected: Boolean, modifier: Modifier = Modifier, onSelect: () -> Unit) {
-    if (selected) {
-        Button(onClick = onSelect, modifier = modifier) { Text(label) }
-    } else {
-        OutlinedButton(onClick = onSelect, modifier = modifier) { Text(label) }
+private fun DeviceNavigator(
+    selectedTab: String,
+    onlineByTab: Map<String, Boolean?>,
+    onSelect: (String) -> Unit,
+) {
+    val selected = DeviceDestinations.firstOrNull { it.tab == selectedTab } ?: DeviceDestinations.first()
+    val middle = Int.MAX_VALUE / 2
+    val alignedStart = middle - (middle % DeviceDestinations.size) + DeviceDestinations.indexOf(selected)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = alignedStart)
+    val snap = rememberSnapFlingBehavior(lazyListState = listState)
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(listState) {
+        snapshotFlow {
+            if (listState.isScrollInProgress) return@snapshotFlow null
+            val viewportCenter = (listState.layoutInfo.viewportStartOffset + listState.layoutInfo.viewportEndOffset) / 2
+            listState.layoutInfo.visibleItemsInfo.minByOrNull { item ->
+                abs((item.offset + item.size / 2) - viewportCenter)
+            }?.index
+        }.collect { index ->
+            index ?: return@collect
+            val destination = DeviceDestinations[index % DeviceDestinations.size]
+            if (destination.tab != selectedTab) onSelect(destination.tab)
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+        shape = RoundedCornerShape(24.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Crossfade(targetState = selected, label = "device-hero") { destination ->
+                Image(
+                    painter = painterResource(destination.hero),
+                    contentDescription = "${destination.label}, miljöbild",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            Surface(
+                color = Color.Black.copy(alpha = 0.52f),
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.padding(14.dp).align(Alignment.TopStart),
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    val online = onlineByTab[selected.tab]
+                    Box(Modifier.size(9.dp).background(if (online == true) Color(0xFF55DB71) else Color.LightGray, CircleShape))
+                    Text(
+                        when (online) { true -> "LIVE"; false -> "OFFLINE"; null -> "EJ ANSLUTEN" },
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+            Surface(
+                color = Color.Black.copy(alpha = 0.46f),
+                shape = RoundedCornerShape(topEnd = 18.dp),
+                modifier = Modifier.align(Alignment.BottomStart),
+            ) {
+                Text(
+                    selected.label,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+            }
+        }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val edgePadding = ((maxWidth - 126.dp) / 2).coerceAtLeast(0.dp)
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            state = listState,
+            flingBehavior = snap,
+            contentPadding = PaddingValues(horizontal = edgePadding),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(Int.MAX_VALUE) { index ->
+                val destination = DeviceDestinations[index % DeviceDestinations.size]
+                val isSelected = destination.tab == selectedTab
+                Card(
+                    onClick = { scope.launch { listState.animateScrollToItem(index) } },
+                    modifier = Modifier.width(126.dp).height(82.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (isSelected) Color(0xFF6942A8) else Color(0xFFF8F3EA),
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 5.dp else 1.dp),
+                ) {
+                    Row(
+                        Modifier.fillMaxSize().padding(horizontal = 11.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(9.dp),
+                    ) {
+                        Text(destination.symbol, color = if (isSelected) Color.White else Forest, style = MaterialTheme.typography.headlineSmall)
+                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(destination.label, color = if (isSelected) Color.White else Forest, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                                val online = onlineByTab[destination.tab]
+                                Box(Modifier.size(7.dp).background(if (online == true) Color(0xFF55DB71) else Color.LightGray, CircleShape))
+                                Text(
+                                    when (online) { true -> "ONLINE"; false -> "OFFLINE"; null -> "VÄNTAR" },
+                                    color = if (isSelected) Color.White.copy(alpha = 0.78f) else Color.Gray,
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ComingSoonPanel(title: String, description: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
+        Text(description, color = Forest, textAlign = TextAlign.Center)
+        Text("Inte ansluten", color = Copper, fontWeight = FontWeight.Bold)
     }
 }
 
