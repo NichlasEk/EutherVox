@@ -10,6 +10,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.EOFException
@@ -17,6 +18,7 @@ import java.net.Socket
 import java.net.URI
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.SSLSocketFactory
 
 interface VoiceTransport {
@@ -55,18 +57,37 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
                 SSLSocketFactory.getDefault().createSocket(uri.host, port)
             } else Socket(uri.host, port)
             transport.tcpNoDelay = true
+            transport.keepAlive = true
             socket = transport
             val input = BufferedInputStream(transport.getInputStream())
             val output = BufferedOutputStream(transport.getOutputStream())
             performHandshake(uri, input, output)
             connected = true
+            val lastInboundNanos = AtomicLong(System.nanoTime())
             writerJob = scope.launch(Dispatchers.IO) {
-                for (frame in writeQueue) writeFrame(output, frame)
+                try {
+                    for (frame in writeQueue) writeFrame(output, frame)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    connected = false
+                    writeQueue.close()
+                    socket?.runCatching { close() }
+                }
             }
             heartbeatJob = scope.launch(Dispatchers.IO) {
                 while (isActive && connected) {
                     delay(25_000)
-                    outgoing.send(Frame(0x9, ByteArray(0)))
+                    if (System.nanoTime() - lastInboundNanos.get() > 60_000_000_000L) {
+                        connected = false
+                        socket?.runCatching { close() }
+                        break
+                    }
+                    runCatching { outgoing.send(Frame(0x9, ByteArray(0))) }
+                        .onFailure {
+                            connected = false
+                            socket?.runCatching { close() }
+                        }
                 }
             }
             listener.onOpen()
@@ -74,10 +95,17 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
                 when (val frame = readFrame(input)) {
                     null -> break
                     else -> when (frame.opcode) {
-                        0x1 -> listener.onText(frame.payload.toString(Charsets.UTF_8))
-                        0x2 -> listener.onBinary(frame.payload)
+                        0x1 -> {
+                            lastInboundNanos.set(System.nanoTime())
+                            listener.onText(frame.payload.toString(Charsets.UTF_8))
+                        }
+                        0x2 -> {
+                            lastInboundNanos.set(System.nanoTime())
+                            listener.onBinary(frame.payload)
+                        }
                         0x8 -> break
                         0x9 -> outgoing.send(Frame(0xA, frame.payload))
+                        0xA -> lastInboundNanos.set(System.nanoTime())
                     }
                 }
             }
@@ -89,6 +117,7 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
             connected = false
             heartbeatJob?.cancel()
             writerJob?.cancel()
+            outgoing.close()
             socket?.runCatching { close() }
             socket = null
             listener.onClosed(failure)
@@ -97,8 +126,12 @@ class WebSocketClient(private val scope: CoroutineScope, private val bearerToken
 
     override suspend fun sendText(text: String): Boolean {
         if (!connected) return false
-        outgoing.send(Frame(0x1, text.toByteArray(Charsets.UTF_8)))
-        return true
+        return runCatching {
+            withTimeoutOrNull(1_500) {
+                outgoing.send(Frame(0x1, text.toByteArray(Charsets.UTF_8)))
+                true
+            } ?: false
+        }.getOrDefault(false)
     }
 
     override fun trySendAudio(audio: ByteArray): Boolean =

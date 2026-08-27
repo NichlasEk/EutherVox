@@ -75,6 +75,8 @@ data class VoiceUiState(
     val actionMessage: String? = null,
     val conversationActive: Boolean = false,
     val interruptionListening: Boolean = false,
+    val automaticBargeInEnabled: Boolean = false,
+    val voiceDiagnostics: List<String> = emptyList(),
     val configuredLights: List<ServerEvent.ConfiguredLight> = emptyList(),
     val lightConfigMessage: String? = null,
     val configuredTvs: List<ServerEvent.ConfiguredTv> = emptyList(),
@@ -152,6 +154,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var llmModel = ""
     private var shouldReconnect = false
     private var ready = false
+    @Volatile private var conversationRequested = false
+    @Volatile private var automaticBargeInEnabled = false
     private var utteranceId: String? = null
     private var endpointDetector: SpeechEndDetector? = null
     @Volatile private var automaticEndpointHandled = false
@@ -191,6 +195,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         voiceId = requestedIdentity.voiceId
         llmModel = requestedIdentity.llmModel
         shouldReconnect = true
+        recordDiagnostic("transport.connect_requested")
         mutableState.value = mutableState.value.copy(serverAddress = normalized, status = VoiceStatus.Connecting, connectionLabel = "Ansluter…", errorMessage = null)
         connectionJob = scope.launch {
             var loginPassword = password
@@ -228,6 +233,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     fun disconnect() {
         shouldReconnect = false
+        conversationRequested = false
         connectionIdentity = null
         ready = false
         nextConversationTurnJob?.cancel()
@@ -259,6 +265,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     fun startConversation() {
         if (!ready || utteranceId != null || mutableState.value.conversationActive) return
+        conversationRequested = true
+        recordDiagnostic("conversation.requested")
         mutableState.value = mutableState.value.copy(
             conversationActive = true,
             actionMessage = "Samtalsläge aktivt – jag lyssnar tills du gör en kort paus.",
@@ -268,6 +276,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun stopConversation() {
+        conversationRequested = false
+        recordDiagnostic("conversation.stopped")
         nextConversationTurnJob?.cancel()
         nextConversationTurnJob = null
         bargeInJob?.cancel()
@@ -288,7 +298,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun interruptAndListen() {
-        if (!mutableState.value.conversationActive) return
+        if (!conversationRequested) return
         val activeId = utteranceId ?: run {
             scheduleNextConversationTurn(0)
             return
@@ -304,12 +314,28 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             transport?.sendText(responseCancel(activeId))
             finishUtterance(scheduleConversation = false, expectedUtteranceId = activeId)
             delay(150)
-            if (mutableState.value.conversationActive) beginUtterance(automaticEndpoint = true)
+            if (conversationRequested) beginUtterance(automaticEndpoint = true)
         }
+    }
+
+    fun setAutomaticBargeInEnabled(enabled: Boolean) {
+        automaticBargeInEnabled = enabled
+        if (!enabled) {
+            bargeInJob?.cancel()
+            bargeInJob = null
+            if (mutableState.value.status == VoiceStatus.Speaking) microphone.stop()
+        }
+        mutableState.value = mutableState.value.copy(
+            automaticBargeInEnabled = enabled,
+            interruptionListening = enabled && mutableState.value.interruptionListening,
+            microphoneActive = if (!enabled && mutableState.value.status == VoiceStatus.Speaking) false else mutableState.value.microphoneActive,
+        )
+        recordDiagnostic(if (enabled) "barge_in.enabled" else "barge_in.disabled")
     }
 
     private fun beginUtterance(automaticEndpoint: Boolean) {
         if (!ready || utteranceId != null) return
+        speaker.stop()
         serverActionInProgress = false
         nextConversationTurnJob?.cancel()
         nextConversationTurnJob = null
@@ -317,6 +343,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         bargeInJob = null
         val id = UUID.randomUUID().toString()
         utteranceId = id
+        recordDiagnostic("turn.listening")
         endpointDetector = if (automaticEndpoint) SpeechEndDetector() else null
         automaticEndpointHandled = false
         timeline = Timeline(buttonDown = now())
@@ -365,6 +392,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         logTime("audio_end", timeline.audioEnd)
         updateLatencies()
         mutableState.value = mutableState.value.copy(status = VoiceStatus.Processing, microphoneActive = false)
+        recordDiagnostic(if (cancelledGesture) "turn.cancel_requested" else "turn.processing")
         scope.launch {
             transport?.sendText(audioEnd(id))
             if (cancelledGesture) transport?.sendText(responseCancel(id))
@@ -376,7 +404,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     fun cancelResponse() {
         val id = utteranceId ?: return
-        if (mutableState.value.conversationActive) {
+        if (conversationRequested) {
             interruptAndListen()
             return
         }
@@ -387,6 +415,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun onPause() {
+        conversationRequested = false
         mutableState.value = mutableState.value.copy(conversationActive = false, interruptionListening = false)
         nextConversationTurnJob?.cancel()
         bargeInJob?.cancel()
@@ -601,6 +630,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     override suspend fun onOpen() {
+        recordDiagnostic("transport.open")
         mutableState.value = mutableState.value.copy(connectionLabel = "Handshake…", status = VoiceStatus.Connecting)
         transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId, llmModel = llmModel))
     }
@@ -620,14 +650,19 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             updateLatencies()
         }
         timeline.lastTts = now()
-        if (!speaker.enqueue(data)) fail("Uppspelningskön blev full för $id")
+        if (!speaker.enqueue(data)) {
+            recordDiagnostic("playback.queue_unavailable")
+            fail("Ljuduppspelningen tappade sitt tillstånd")
+        }
     }
 
     override suspend fun onClosed(cause: Throwable?) {
         ready = false
         nextConversationTurnJob?.cancel()
         stopResources()
+        recordDiagnostic("transport.closed.${cause?.javaClass?.simpleName ?: "clean"}")
         if (cause?.message?.contains("(401)") == true) {
+            conversationRequested = false
             tokenStore.clear()
             shouldReconnect = false
             mutableState.value = mutableState.value.copy(
@@ -645,8 +680,9 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             mutableState.value = mutableState.value.copy(
                 connectionLabel = "Frånkopplad: ${cause?.message ?: "servern stängde"}",
                 status = VoiceStatus.Connecting, canTalk = false, microphoneActive = false,
-                conversationActive = false,
+                conversationActive = conversationRequested,
                 interruptionListening = false,
+                actionMessage = if (conversationRequested) "Samtalet återansluter automatiskt…" else mutableState.value.actionMessage,
             )
         }
     }
@@ -655,6 +691,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         when (event) {
             is ServerEvent.Ready -> {
                 ready = true
+                recordDiagnostic("transport.ready")
                 mutableState.value = mutableState.value.copy(
                     connectionLabel = "Ansluten",
                     status = VoiceStatus.Idle,
@@ -662,8 +699,11 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                     errorMessage = null,
                     llmModel = event.llmModel,
                     availableLlmModels = event.availableLlmModels,
+                    conversationActive = conversationRequested,
+                    actionMessage = if (conversationRequested) "Ansluten igen – lyssningen återstartas." else mutableState.value.actionMessage,
                 )
                 sendPendingLightConfig()
+                if (conversationRequested) scheduleNextConversationTurn(250)
             }
             is ServerEvent.SttPartial -> {
                 if (timeline.sttPartial == 0L) {
@@ -710,24 +750,28 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 timeoutJob?.cancel()
                 timeoutJob = null
                 mutableState.value = mutableState.value.copy(status = VoiceStatus.Speaking)
-                speaker.start(
-                    AudioStreamFormat("pcm_s16le", event.sampleRate, event.channels),
-                    onPlaybackStarted = {
-                        timeline.playbackStart = now()
-                        logTime("audio_playback_start", timeline.playbackStart)
-                        updateLatencies()
-                        startBargeInMonitoring(event.utteranceId)
-                    },
-                    onPlaybackError = { message ->
-                        scope.launch {
-                            if (utteranceId == event.utteranceId) fail("Ljuduppspelningen avbröts: $message")
-                        }
-                    },
-                )
+                recordDiagnostic("turn.speaking")
+                runCatching {
+                    speaker.start(
+                        AudioStreamFormat("pcm_s16le", event.sampleRate, event.channels),
+                        onPlaybackStarted = {
+                            timeline.playbackStart = now()
+                            logTime("audio_playback_start", timeline.playbackStart)
+                            updateLatencies()
+                            startBargeInMonitoring(event.utteranceId)
+                        },
+                        onPlaybackError = { message ->
+                            scope.launch {
+                                if (utteranceId == event.utteranceId) fail("Ljuduppspelningen avbröts: $message")
+                            }
+                        },
+                    )
+                }.onFailure { fail("Ljuduppspelningen kunde inte starta") }
             }
             is ServerEvent.TtsEnd -> {
                 if (event.utteranceId != utteranceId || event.utteranceId == cancelledUtteranceId) return
                 logTime("last_tts_frame", timeline.lastTts)
+                recordDiagnostic("turn.tts_complete")
                 speaker.finish {
                     if (!serverActionInProgress) finishUtterance(expectedUtteranceId = event.utteranceId)
                 }
@@ -961,7 +1005,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             interruptionListening = false,
             canTalk = ready,
         )
-        if (scheduleConversation && mutableState.value.conversationActive && mutableState.value.pendingAction == null) {
+        recordDiagnostic("turn.idle")
+        if (scheduleConversation && conversationRequested && mutableState.value.pendingAction == null) {
             scheduleNextConversationTurn()
         }
     }
@@ -970,9 +1015,12 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         nextConversationTurnJob?.cancel()
         nextConversationTurnJob = scope.launch {
             delay(delayMs)
-            if (
-                ready && utteranceId == null && mutableState.value.conversationActive &&
-                mutableState.value.pendingAction == null
+            if (ConversationRecoveryPolicy.shouldArm(
+                    ready = ready,
+                    requested = conversationRequested,
+                    utteranceActive = utteranceId != null,
+                    pendingAction = mutableState.value.pendingAction != null,
+                )
             ) {
                 beginUtterance(automaticEndpoint = true)
             }
@@ -980,12 +1028,12 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     private fun startBargeInMonitoring(id: String) {
-        if (!mutableState.value.conversationActive || !microphone.supportsEchoCancellation) return
+        if (!automaticBargeInEnabled || !conversationRequested || !microphone.supportsEchoCancellation) return
         bargeInJob?.cancel()
         bargeInJob = scope.launch {
             delay(500)
             if (
-                utteranceId != id || !mutableState.value.conversationActive ||
+                utteranceId != id || !conversationRequested ||
                 mutableState.value.status != VoiceStatus.Speaking
             ) return@launch
             val detector = SpeechEndDetector(
@@ -1001,7 +1049,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                         if (!triggered && detector.accept(frame) == SpeechDetection.SpeechStarted) {
                             triggered = true
                             scope.launch {
-                                if (utteranceId == id && mutableState.value.conversationActive) interruptAndListen()
+                                if (utteranceId == id && conversationRequested) interruptAndListen()
                             }
                         }
                     },
@@ -1032,6 +1080,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private fun handleNoSpeechTimeout(id: String) {
         if (automaticEndpointHandled || utteranceId != id) return
         automaticEndpointHandled = true
+        conversationRequested = false
+        recordDiagnostic("conversation.no_speech_timeout")
         endpointDetector = null
         microphone.stop()
         mutableState.value = mutableState.value.copy(
@@ -1071,16 +1121,43 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     private fun fail(message: String, recoverable: Boolean = true) {
+        val activeId = utteranceId
+        if (!recoverable) conversationRequested = false
+        val shouldResumeConversation = ConversationRecoveryPolicy.keepRequestedAfterFailure(
+            recoverable = recoverable,
+            requested = conversationRequested,
+        )
+        recordDiagnostic(if (recoverable) "failure.recoverable" else "failure.terminal")
         stopResources()
         mutableState.value = mutableState.value.copy(
             status = VoiceStatus.Error, errorMessage = message, microphoneActive = false,
-            canTalk = false, conversationActive = false,
+            canTalk = false, conversationActive = shouldResumeConversation,
             interruptionListening = false,
+            actionMessage = if (shouldResumeConversation) "Tillfälligt fel – samtalet återupptas automatiskt." else mutableState.value.actionMessage,
         )
         if (recoverable) scope.launch {
-            delay(2_000)
-            if (ready) mutableState.value = mutableState.value.copy(status = VoiceStatus.Idle, errorMessage = null, canTalk = true)
+            if (activeId != null && ready) transport?.sendText(responseCancel(activeId))
+            delay(1_250)
+            if (ready) {
+                mutableState.value = mutableState.value.copy(
+                    status = VoiceStatus.Idle,
+                    errorMessage = null,
+                    canTalk = true,
+                    conversationActive = shouldResumeConversation,
+                )
+                recordDiagnostic("failure.recovered")
+                if (shouldResumeConversation) scheduleNextConversationTurn(250)
+            }
         }
+    }
+
+    private fun recordDiagnostic(event: String) {
+        val elapsed = SystemClock.elapsedRealtime()
+        val entry = "$elapsed $event"
+        mutableState.value = mutableState.value.copy(
+            voiceDiagnostics = (mutableState.value.voiceDiagnostics + entry).takeLast(48),
+        )
+        Log.i("EutherVoxVoice", entry)
     }
 
     private fun updateLatencies() {

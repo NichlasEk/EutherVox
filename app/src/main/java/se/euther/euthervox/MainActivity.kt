@@ -174,6 +174,9 @@ fun EutherVoxApp() {
     var backgroundNodeEnabled by remember {
         mutableStateOf(preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, false))
     }
+    var automaticBargeInEnabled by remember {
+        mutableStateOf(preferences.getBoolean("automatic_barge_in", false))
+    }
     var settingsAddress by remember { mutableStateOf(address) }
     var settingsNodeName by remember { mutableStateOf(nodeName) }
     var settingsUsername by remember { mutableStateOf(username) }
@@ -181,6 +184,7 @@ fun EutherVoxApp() {
     var settingsVoiceId by remember { mutableStateOf(voiceId) }
     var settingsLlmModel by remember { mutableStateOf(llmModel) }
     var settingsBackgroundNodeEnabled by remember { mutableStateOf(backgroundNodeEnabled) }
+    var settingsAutomaticBargeInEnabled by remember { mutableStateOf(automaticBargeInEnabled) }
     var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var selectedTab by remember { mutableStateOf("voice") }
@@ -198,6 +202,10 @@ fun EutherVoxApp() {
     val character = characterUi(characterId)
     val characterName = character.name
     val characterSymbol = character.symbol
+
+    LaunchedEffect(automaticBargeInEnabled) {
+        controller.setAutomaticBargeInEnabled(automaticBargeInEnabled)
+    }
 
     LaunchedEffect(Unit) {
         if (address.isNotBlank()) {
@@ -288,6 +296,7 @@ fun EutherVoxApp() {
                     settingsVoiceId = voiceId
                     settingsLlmModel = llmModel
                     settingsBackgroundNodeEnabled = backgroundNodeEnabled
+                    settingsAutomaticBargeInEnabled = automaticBargeInEnabled
                     settingsPassword = ""
                     showSettings = true
                 }) { Text("Inställningar") }
@@ -355,6 +364,22 @@ fun EutherVoxApp() {
                 }
             }
             LatencyCard(state.latencies)
+
+            OutlinedButton(
+                onClick = {
+                    val diagnostic = buildString {
+                        appendLine("EutherVox ${BuildConfig.VERSION_NAME} röstdiagnostik")
+                        appendLine("status=${state.status} connection=${state.connectionLabel}")
+                        appendLine("conversation=${state.conversationActive} microphone=${state.microphoneActive}")
+                        appendLine("automatic_barge_in=${state.automaticBargeInEnabled}")
+                        append(state.voiceDiagnostics.joinToString("\n"))
+                    }
+                    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                        ClipData.newPlainText("EutherVox röstdiagnostik", diagnostic),
+                    )
+                },
+                enabled = state.voiceDiagnostics.isNotEmpty(),
+            ) { Text("Kopiera röstdiagnostik") }
 
             OutlinedButton(onClick = controller::cancelResponse, enabled = state.status == VoiceStatus.Speaking || state.status == VoiceStatus.Processing) {
                 Text("Avbryt uppspelning")
@@ -520,6 +545,23 @@ fun EutherVoxApp() {
                         )
                     }
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Checkbox(
+                        checked = settingsAutomaticBargeInEnabled,
+                        onCheckedChange = { settingsAutomaticBargeInEnabled = it },
+                    )
+                    Column {
+                        Text("Avbryt automatiskt när jag börjar tala")
+                        Text(
+                            "Experimentellt. Avstängt rekommenderas för att EutherVox inte ska höra sin egen röst.",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
                 OutlinedTextField(
                     settingsPassword,
                     { settingsPassword = it },
@@ -561,6 +603,7 @@ fun EutherVoxApp() {
                     putString("voice_id", savedVoiceId)
                     putString("llm_model", savedLlmModel)
                     putBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, settingsBackgroundNodeEnabled)
+                    putBoolean("automatic_barge_in", settingsAutomaticBargeInEnabled)
                 }
                 address = savedAddress
                 nodeName = savedNodeName
@@ -569,6 +612,8 @@ fun EutherVoxApp() {
                 voiceId = savedVoiceId
                 llmModel = savedLlmModel
                 backgroundNodeEnabled = settingsBackgroundNodeEnabled
+                automaticBargeInEnabled = settingsAutomaticBargeInEnabled
+                controller.setAutomaticBargeInEnabled(settingsAutomaticBargeInEnabled)
                 showSettings = false
                 controller.connect(savedAddress, savedNodeName, savedUsername, settingsPassword, savedVoiceId, savedCharacterId, savedLlmModel)
                 if (settingsBackgroundNodeEnabled) {
