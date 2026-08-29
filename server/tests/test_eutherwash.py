@@ -98,12 +98,16 @@ def test_schedule_uses_fixed_routes_and_control_token(tmp_path: Path):
     def handler(request: httpx.Request):
         requests.append(request)
         if request.url.path.endswith("/programs"):
-            return httpx.Response(200, json={"programs": [{"code": "1C", "name": "Eco 40–60"}]})
+            return httpx.Response(200, json={
+                "programs": [{"code": "1C", "name": "Eco 40–60"}],
+                "water_temperatures": ["Cold", "20", "40", "60"],
+            })
         if request.method == "GET":
             return httpx.Response(200, content=b"null", headers={"content-type": "application/json"})
         return httpx.Response(200, json={
             "state": "scheduled", "scheduled_for": "2030-01-02T08:00:00+01:00",
             "program_code": "1C", "program_name": "Eco 40–60",
+            "water_temperature": "40",
             "created_at": "2030-01-01T08:00:00Z",
         })
 
@@ -111,10 +115,11 @@ def test_schedule_uses_fixed_routes_and_control_token(tmp_path: Path):
         control_enabled=True, control_token_file=str(token_file),
     ), transport=httpx.MockTransport(handler))
     payload = asyncio.run(service.programs_and_schedule())
-    asyncio.run(service.create_schedule("2030-01-02T08:00:00+01:00", "1C"))
+    asyncio.run(service.create_schedule("2030-01-02T08:00:00+01:00", "1C", "40"))
     asyncio.run(service.cancel_schedule())
 
     assert payload["programs"] == [{"code": "1C", "name": "Eco 40–60"}]
+    assert payload["water_temperatures"] == ["Cold", "20", "40", "60"]
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/v1/washers/tvattmaskinen/programs"),
         ("GET", "/v1/washers/tvattmaskinen/schedule"),
@@ -122,6 +127,7 @@ def test_schedule_uses_fixed_routes_and_control_token(tmp_path: Path):
         ("DELETE", "/v1/washers/tvattmaskinen/schedule"),
     ]
     assert requests[2].headers["authorization"].startswith("Bearer ")
+    assert requests[2].read().decode().find('"water_temperature":"40"') >= 0
 
 
 def test_vacuum_control_uses_only_allowlisted_commands_and_confirmation(tmp_path: Path):

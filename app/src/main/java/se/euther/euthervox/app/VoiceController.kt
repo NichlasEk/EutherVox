@@ -90,6 +90,7 @@ data class VoiceUiState(
     val washerState: ServerEvent.WasherState? = null,
     val washerStatistics: ServerEvent.WasherStatistics? = null,
     val washerPrograms: List<ServerEvent.WasherProgram> = emptyList(),
+    val washerWaterTemperatures: List<String> = emptyList(),
     val washerSchedule: ServerEvent.WasherSchedule? = null,
     val washerMessage: String? = null,
     val washerBusy: Boolean = false,
@@ -529,14 +530,20 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
-    fun createWasherSchedule(scheduledFor: String, programCode: String) {
+    fun createWasherSchedule(
+        scheduledFor: String, programCode: String, waterTemperature: String?
+    ) {
         if (!ready) return
         mutableState.value = mutableState.value.copy(
             washerBusy = true,
             washerMessage = "Sparar tvättschemat på servern…",
         )
         scope.launch {
-            if (transport?.sendText(washerScheduleCreate(scheduledFor, programCode)) != true) {
+            if (
+                transport?.sendText(
+                    washerScheduleCreate(scheduledFor, programCode, waterTemperature)
+                ) != true
+            ) {
                 mutableState.value = mutableState.value.copy(
                     washerBusy = false,
                     washerMessage = "Kunde inte spara tvättschemat.",
@@ -860,6 +867,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             )
             is ServerEvent.WasherScheduleResult -> mutableState.value = mutableState.value.copy(
                 washerPrograms = event.programs,
+                washerWaterTemperatures = event.waterTemperatures,
                 washerSchedule = event.schedule,
                 washerBusy = false,
                 washerMessage = when (event.schedule?.state) {

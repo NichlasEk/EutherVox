@@ -163,17 +163,20 @@ class ProtocolTest {
 
     @Test fun serializesAndParsesWasherSchedule() {
         val request = JsonParser.parseString(
-            washerScheduleCreate("2030-01-02T08:00:00+01:00", "1C")
+            washerScheduleCreate("2030-01-02T08:00:00+01:00", "1C", "40")
         ).asJsonObject
         assertEquals("washer.schedule.create", request["type"].asString)
         assertEquals("1C", request["program_code"].asString)
+        assertEquals("40", request["water_temperature"].asString)
         assertTrue(request["confirmed"].asBoolean)
 
         val event = parseServerEvent(
-            """{"type":"washer.schedule.result","programs":[{"code":"1C","name":"Eco 40–60"}],"schedule":{"state":"scheduled","scheduled_for":"2030-01-02T08:00:00+01:00","program_code":"1C","program_name":"Eco 40–60","failure_code":null}}"""
+            """{"type":"washer.schedule.result","programs":[{"code":"1C","name":"Eco 40–60"}],"water_temperatures":["Cold","20","40","60"],"schedule":{"state":"scheduled","scheduled_for":"2030-01-02T08:00:00+01:00","program_code":"1C","program_name":"Eco 40–60","water_temperature":"40","failure_code":null}}"""
         ) as ServerEvent.WasherScheduleResult
         assertEquals("Eco 40–60", event.programs.single().name)
         assertEquals("scheduled", event.schedule?.state)
+        assertEquals(listOf("Cold", "20", "40", "60"), event.waterTemperatures)
+        assertEquals("40", event.schedule?.waterTemperature)
     }
 
     @Test fun serializesConfirmedFastMappingAndParsesVacuumWarnings() {

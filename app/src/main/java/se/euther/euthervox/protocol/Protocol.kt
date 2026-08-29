@@ -98,10 +98,15 @@ fun washerScheduleStatus() = JsonObject().apply {
     addProperty("type", "washer.schedule.status")
 }.toString()
 
-fun washerScheduleCreate(scheduledFor: String, programCode: String) = JsonObject().apply {
+fun washerScheduleCreate(
+    scheduledFor: String,
+    programCode: String,
+    waterTemperature: String?,
+) = JsonObject().apply {
     addProperty("type", "washer.schedule.create")
     addProperty("scheduled_for", scheduledFor)
     addProperty("program_code", programCode)
+    if (waterTemperature != null) addProperty("water_temperature", waterTemperature)
     addProperty("confirmed", true)
 }.toString()
 
@@ -268,10 +273,12 @@ sealed interface ServerEvent {
         val scheduledFor: String,
         val programCode: String,
         val programName: String,
+        val waterTemperature: String?,
         val failureCode: String?,
     )
     data class WasherScheduleResult(
         val programs: List<WasherProgram>,
+        val waterTemperatures: List<String>,
         val schedule: WasherSchedule?,
     ) : ServerEvent
     data class VacuumConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
@@ -428,12 +435,16 @@ fun parseServerEvent(raw: String): ServerEvent {
                     if (code.isBlank() || name.isBlank()) null else ServerEvent.WasherProgram(code, name)
                 }
             }.orEmpty(),
+            waterTemperatures = json["water_temperatures"]?.asJsonArray?.mapNotNull { item ->
+                item.takeUnless { it.isJsonNull }?.asString
+            }.orEmpty(),
             schedule = json["schedule"]?.takeUnless { it.isJsonNull }?.asJsonObject?.let { schedule ->
                 ServerEvent.WasherSchedule(
                     state = schedule["state"]?.asString.orEmpty(),
                     scheduledFor = schedule["scheduled_for"]?.asString.orEmpty(),
                     programCode = schedule["program_code"]?.asString.orEmpty(),
                     programName = schedule["program_name"]?.asString.orEmpty(),
+                    waterTemperature = schedule["water_temperature"]?.takeUnless { it.isJsonNull }?.asString,
                     failureCode = schedule["failure_code"]?.takeUnless { it.isJsonNull }?.asString,
                 )
             },

@@ -435,6 +435,7 @@ fun EutherVoxApp() {
                     state = state.washerState,
                     statistics = state.washerStatistics,
                     programs = state.washerPrograms,
+                    waterTemperatures = state.washerWaterTemperatures,
                     schedule = state.washerSchedule,
                     message = state.washerMessage,
                     busy = state.washerBusy,
@@ -776,13 +777,14 @@ private fun WasherPanel(
     state: ServerEvent.WasherState?,
     statistics: ServerEvent.WasherStatistics?,
     programs: List<ServerEvent.WasherProgram>,
+    waterTemperatures: List<String>,
     schedule: ServerEvent.WasherSchedule?,
     message: String?,
     busy: Boolean,
     controlsAvailable: Boolean,
     onRefresh: () -> Unit,
     onCommand: (String, Boolean) -> Unit,
-    onSchedule: (String, String) -> Unit,
+    onSchedule: (String, String, String?) -> Unit,
     onCancelSchedule: () -> Unit,
 ) {
     var pendingConfirmation by remember { mutableStateOf<String?>(null) }
@@ -791,6 +793,14 @@ private fun WasherPanel(
     var scheduleTime by remember { mutableStateOf(initialTime) }
     var selectedProgram by remember(programs) { mutableStateOf(programs.firstOrNull()) }
     var programMenuOpen by remember { mutableStateOf(false) }
+    var selectedTemperature by remember(waterTemperatures, state?.waterTemperatureC) {
+        mutableStateOf(
+            state?.waterTemperatureC?.toString()?.takeIf(waterTemperatures::contains)
+                ?: "40".takeIf(waterTemperatures::contains)
+                ?: waterTemperatures.firstOrNull()
+        )
+    }
+    var temperatureMenuOpen by remember { mutableStateOf(false) }
     var confirmSchedule by remember { mutableStateOf(false) }
     fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
     fun stateLabel(value: String) = when (value) {
@@ -801,6 +811,7 @@ private fun WasherPanel(
         "offline" -> "Offline"
         else -> "Okänd"
     }
+    fun temperatureLabel(value: String) = if (value == "Cold") "Kallt" else "$value °C"
     Text("Tvättmaskin", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text("Status, lokal programväljare och serverstyrd schemaläggning.", textAlign = TextAlign.Center, color = Forest)
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
@@ -859,9 +870,39 @@ private fun WasherPanel(
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("Schemalägg tvätt", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
                 if (schedule?.state == "scheduled") {
-                    Text("${schedule.programName} · ${schedule.scheduledFor}", fontWeight = FontWeight.Bold)
+                    Text(
+                        listOfNotNull(
+                            schedule.programName,
+                            schedule.waterTemperature?.let(::temperatureLabel),
+                            schedule.scheduledFor,
+                        ).joinToString(" · "),
+                        fontWeight = FontWeight.Bold,
+                    )
                     OutlinedButton(onClick = onCancelSchedule, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                         Text("Avbryt schema")
+                    }
+                    if (waterTemperatures.isNotEmpty()) {
+                        Box(Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { temperatureMenuOpen = true },
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text(selectedTemperature?.let(::temperatureLabel) ?: "Välj temperatur") }
+                            DropdownMenu(
+                                expanded = temperatureMenuOpen,
+                                onDismissRequest = { temperatureMenuOpen = false },
+                            ) {
+                                waterTemperatures.forEach { temperature ->
+                                    DropdownMenuItem(
+                                        text = { Text(temperatureLabel(temperature)) },
+                                        onClick = {
+                                            selectedTemperature = temperature
+                                            temperatureMenuOpen = false
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
                 } else {
                     Box(Modifier.fillMaxWidth()) {
@@ -897,7 +938,10 @@ private fun WasherPanel(
                     }
                     Button(
                         onClick = { confirmSchedule = true },
-                        enabled = selectedProgram != null && state?.remoteControlEnabled == true && !busy,
+                        enabled = selectedProgram != null &&
+                            state?.remoteControlEnabled == true &&
+                            state?.state == "idle" &&
+                            !busy,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Schemalägg") }
                 }
@@ -908,7 +952,12 @@ private fun WasherPanel(
         AlertDialog(
             onDismissRequest = { confirmSchedule = false },
             title = { Text("Schemalägg tvätten?") },
-            text = { Text("${selectedProgram?.name} startar $scheduleDate klockan $scheduleTime. Kontrollera tvätt, tvättmedel, lucka och Smart Control.") },
+            text = {
+                Text(
+                    "${selectedProgram?.name}, ${selectedTemperature?.let(::temperatureLabel) ?: "maskinens temperatur"}, " +
+                        "startar $scheduleDate klockan $scheduleTime. Kontrollera tvätt, tvättmedel, lucka och Smart Control."
+                )
+            },
             confirmButton = {
                 Button(onClick = {
                     val instant = runCatching {
@@ -919,7 +968,11 @@ private fun WasherPanel(
                         ).toOffsetDateTime().toString()
                     }.getOrNull()
                     confirmSchedule = false
-                    if (instant != null) selectedProgram?.let { onSchedule(instant, it.code) }
+                    if (instant != null) {
+                        selectedProgram?.let {
+                            onSchedule(instant, it.code, selectedTemperature)
+                        }
+                    }
                 }) { Text("Bekräfta") }
             },
             dismissButton = { TextButton(onClick = { confirmSchedule = false }) { Text("Avbryt") } },

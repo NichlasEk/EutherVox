@@ -93,13 +93,30 @@ class EutherWashService:
         if isinstance(schedule, dict):
             safe_schedule = {key: schedule.get(key) for key in (
                 "state", "scheduled_for", "program_code", "program_name",
-                "created_at", "resolved_at", "failure_code",
+                "water_temperature", "created_at", "resolved_at", "failure_code",
             )}
-        return {"programs": safe_programs, "schedule": safe_schedule}
+        safe_temperatures = [
+            value
+            for value in programs.get("water_temperatures", [])[:16]
+            if isinstance(value, str) and value in {"Cold", "20", "30", "40", "60", "90"}
+        ]
+        return {
+            "programs": safe_programs,
+            "water_temperatures": safe_temperatures,
+            "schedule": safe_schedule,
+        }
 
-    async def create_schedule(self, scheduled_for: str, program_code: str) -> dict[str, object]:
+    async def create_schedule(
+        self, scheduled_for: str, program_code: str, water_temperature: str | None
+    ) -> dict[str, object]:
         return await self._schedule_request(
-            "POST", {"scheduled_for": scheduled_for, "program_code": program_code, "confirmed": True}
+            "POST",
+            {
+                "scheduled_for": scheduled_for,
+                "program_code": program_code,
+                "water_temperature": water_temperature,
+                "confirmed": True,
+            },
         )
 
     async def cancel_schedule(self) -> dict[str, object]:
@@ -127,6 +144,7 @@ class EutherWashService:
                         "remote_control_required": "Slå på Smart Control på tvättmaskinen först.",
                         "washer_must_be_idle": "Tvättmaskinen måste vara redo.",
                         "program_not_advertised": "Programmet finns inte på den här maskinen.",
+                        "temperature_not_advertised": "Temperaturen stöds inte av den här maskinen.",
                         "schedule_already_exists": "Det finns redan en schemalagd tvätt.",
                         "schedule_too_soon": "Välj en tid minst 30 sekunder framåt.",
                         "schedule_too_far": "Schemat får ligga högst sju dagar framåt.",

@@ -481,10 +481,16 @@ class VoiceSession:
         self._require_washer_control()
         scheduled_for = str(message.get("scheduled_for", ""))
         program_code = str(message.get("program_code", ""))
+        water_temperature_value = message.get("water_temperature")
+        water_temperature = (
+            str(water_temperature_value) if water_temperature_value is not None else None
+        )
         if message.get("confirmed") is not True or not scheduled_for or not program_code:
             raise ProtocolError("WASHER_CONFIRMATION_REQUIRED", "Schemat måste bekräftas")
         try:
-            await self.eutherwash.create_schedule(scheduled_for, program_code)
+            await self.eutherwash.create_schedule(
+                scheduled_for, program_code, water_temperature
+            )
             payload = await self.eutherwash.programs_and_schedule()
         except (ValueError, RuntimeError, OSError) as error:
             raise ProtocolError("WASHER_SCHEDULE_FAILED", str(error)) from error
