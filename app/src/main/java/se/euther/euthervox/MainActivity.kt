@@ -881,29 +881,6 @@ private fun WasherPanel(
                     OutlinedButton(onClick = onCancelSchedule, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                         Text("Avbryt schema")
                     }
-                    if (waterTemperatures.isNotEmpty()) {
-                        Box(Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = { temperatureMenuOpen = true },
-                                enabled = !busy,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) { Text(selectedTemperature?.let(::temperatureLabel) ?: "Välj temperatur") }
-                            DropdownMenu(
-                                expanded = temperatureMenuOpen,
-                                onDismissRequest = { temperatureMenuOpen = false },
-                            ) {
-                                waterTemperatures.forEach { temperature ->
-                                    DropdownMenuItem(
-                                        text = { Text(temperatureLabel(temperature)) },
-                                        onClick = {
-                                            selectedTemperature = temperature
-                                            temperatureMenuOpen = false
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
                 } else {
                     Box(Modifier.fillMaxWidth()) {
                         OutlinedButton(
@@ -917,6 +894,35 @@ private fun WasherPanel(
                                     text = { Text(program.name) },
                                     onClick = { selectedProgram = program; programMenuOpen = false },
                                 )
+                            }
+                        }
+                    }
+                    if (waterTemperatures.isNotEmpty()) {
+                        Text("Temperatur", fontWeight = FontWeight.Bold, color = Forest)
+                        Box(Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = { temperatureMenuOpen = true },
+                                enabled = !busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    selectedTemperature?.let(::temperatureLabel)
+                                        ?: "Välj temperatur"
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = temperatureMenuOpen,
+                                onDismissRequest = { temperatureMenuOpen = false },
+                            ) {
+                                waterTemperatures.forEach { temperature ->
+                                    DropdownMenuItem(
+                                        text = { Text(temperatureLabel(temperature)) },
+                                        onClick = {
+                                            selectedTemperature = temperature
+                                            temperatureMenuOpen = false
+                                        },
+                                    )
+                                }
                             }
                         }
                     }
