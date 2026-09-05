@@ -22,8 +22,10 @@ refresh. No physical washer command was sent for testing.
 
 The deployed backend on 192.168.32.186 now reports finished and Bomull for the
 same live appliance. The existing gateway detected that transition and queued
-a completion message for android-phone. Delivery/audibility on the physical
-phone was not verified because its connection was absent at verification.
+a completion message for android-phone. At 19:39:35 CEST the gateway logged
+washer_notification_delivered for that event (b51889db-a5ed-4bb0-a79b-66fb22e46bec),
+using moss-nano. Transport delivery is verified; physical phone audibility
+remains a user check.
 
 APK SHA-256:
 a7766e1a9ec0dc3f8bbcf983c0d7790ea1dfbeb08bf580e11f9fa5afdfe371de
