@@ -458,6 +458,7 @@ fun EutherVoxApp() {
                 WasherPanel(
                     state = state.washerState,
                     statistics = state.washerStatistics,
+                    statusStale = state.washerStatusStale,
                     programs = state.washerPrograms,
                     waterTemperatures = state.washerWaterTemperatures,
                     schedule = state.washerSchedule,
@@ -812,6 +813,7 @@ private fun ComingSoonPanel(title: String, description: String) {
 private fun WasherPanel(
     state: ServerEvent.WasherState?,
     statistics: ServerEvent.WasherStatistics?,
+    statusStale: Boolean,
     programs: List<ServerEvent.WasherProgram>,
     waterTemperatures: List<String>,
     schedule: ServerEvent.WasherSchedule?,
@@ -857,9 +859,20 @@ private fun WasherPanel(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(state?.let { stateLabel(it.state) } ?: "Ingen status", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
-                Text(if (state?.online == true) "● ONLINE" else "○ OFFLINE", color = if (state?.online == true) Forest else Copper, fontWeight = FontWeight.Bold)
+                Text(if (statusStale) "○ FÖRDRÖJD" else if (state?.online == true) "● ONLINE" else "○ OFFLINE", color = if (state?.online == true) Forest else Copper, fontWeight = FontWeight.Bold)
             }
             Text(state?.program ?: "Program saknas", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (statusStale) "Väntar på aktuell status – senaste uppgifterna kan vara inaktuella."
+                else "Uppdateras automatiskt ${if (state?.state in setOf("running", "paused") || schedule?.state in setOf("scheduled", "executing")) "var 5:e" else "var 15:e"} sekund.",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (statusStale) Copper else Forest,
+            )
+            state?.updatedAt?.let { timestamp ->
+                val time = runCatching { java.time.Instant.parse(timestamp).atZone(ZoneId.systemDefault())
+                    .format(DateTimeFormatter.ofPattern("HH:mm:ss")) }.getOrNull()
+                time?.let { Text("Senast avläst $it", style = MaterialTheme.typography.bodySmall) }
+            }
             state?.progressPercent?.let {
                 LinearProgressIndicator(progress = { it / 100f }, modifier = Modifier.fillMaxWidth())
                 Text("$it %${state.remainingSeconds?.let { seconds -> " · ${seconds / 60} min kvar" } ?: ""}")
@@ -882,7 +895,7 @@ private fun WasherPanel(
                             OutlinedButton(onClick = { directProgramMenuOpen = true },
                                 enabled = !busy && state?.state == "idle" && programs.isNotEmpty(),
                                 modifier = Modifier.fillMaxWidth()) {
-                                Text(selectedProgram?.name ?: "Hämta programlista")
+                                Text(if (state?.state != "idle") state?.program ?: "Program saknas" else selectedProgram?.name ?: "Hämta programlista")
                             }
                             DropdownMenu(expanded = directProgramMenuOpen, onDismissRequest = { directProgramMenuOpen = false }) {
                                 programs.forEach { program ->
@@ -899,7 +912,7 @@ private fun WasherPanel(
                             OutlinedButton(onClick = { directTemperatureMenuOpen = true },
                                 enabled = !busy && state?.state == "idle" && waterTemperatures.isNotEmpty(),
                                 modifier = Modifier.fillMaxWidth()) {
-                                Text(selectedTemperature?.let(::temperatureLabel) ?: "Programmets")
+                                Text(if (state?.state != "idle") state?.waterTemperatureC?.let { "$it °C" } ?: "—" else selectedTemperature?.let(::temperatureLabel) ?: "Programmets")
                             }
                             DropdownMenu(expanded = directTemperatureMenuOpen, onDismissRequest = { directTemperatureMenuOpen = false }) {
                                 waterTemperatures.forEach { temperature ->

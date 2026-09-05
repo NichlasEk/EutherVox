@@ -3,6 +3,8 @@ package se.euther.euthervox.app
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -94,6 +96,7 @@ data class VoiceUiState(
     val washerSchedule: ServerEvent.WasherSchedule? = null,
     val washerMessage: String? = null,
     val washerBusy: Boolean = false,
+    val washerStatusStale: Boolean = false,
     val washerControlsAvailable: Boolean = false,
     val vacuumState: ServerEvent.VacuumState? = null,
     val vacuumMaps: ServerEvent.VacuumMaps? = null,
@@ -144,6 +147,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     val state: StateFlow<VoiceUiState> = mutableState.asStateFlow()
     private var transport: VoiceTransport? = null
     private var connectionJob: Job? = null
+    private var washerPollingJob: Job? = null
+    private var washerPollResponse: CompletableDeferred<Unit>? = null
     private var connectionIdentity: ConnectionIdentity? = null
     private var timeoutJob: Job? = null
     private var nextConversationTurnJob: Job? = null
@@ -233,7 +238,33 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    private fun stopWasherPolling() {
+        washerPollingJob?.cancel()
+        washerPollingJob = null
+        washerPollResponse?.cancel()
+        washerPollResponse = null
+    }
+
+    private fun startWasherPolling() {
+        stopWasherPolling()
+        washerPollingJob = scope.launch {
+            while (ready) {
+                delay(washerPollIntervalMs(mutableState.value.washerState?.state,
+                    mutableState.value.washerSchedule?.state))
+                if (!ready) break
+                val response = CompletableDeferred<Unit>()
+                washerPollResponse = response
+                val sent = transport?.sendText(washerStatus()) == true
+                if (!sent || withTimeoutOrNull(12_000) { response.await() } == null) {
+                    mutableState.value = mutableState.value.copy(washerStatusStale = true)
+                }
+                if (washerPollResponse === response) washerPollResponse = null
+            }
+        }
+    }
+
     fun disconnect() {
+        stopWasherPolling()
         shouldReconnect = false
         conversationRequested = false
         connectionIdentity = null
@@ -669,6 +700,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     override suspend fun onClosed(cause: Throwable?) {
+        stopWasherPolling()
+        mutableState.value = mutableState.value.copy(washerStatusStale = true)
         ready = false
         nextConversationTurnJob?.cancel()
         stopResources()
@@ -858,14 +891,25 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                     washerControlsAvailable = event.controlsAvailable,
                     washerMessage = if (event.available) "Tvättmaskinen är kopplad till EutherVox." else "Tvättmaskinstjänsten är inte tillgänglig.",
                 )
-                if (event.available) refreshWasher()
+                if (event.available) {
+                    refreshWasher()
+                    startWasherPolling()
+                } else stopWasherPolling()
             }
-            is ServerEvent.WasherStatusResult -> mutableState.value = mutableState.value.copy(
-                washerState = event.washer,
-                washerStatistics = event.statistics,
-                washerBusy = false,
-                washerMessage = if (event.washer.online) "Status och statistik uppdaterade." else "Tvättmaskinen är offline.",
-            )
+            is ServerEvent.WasherStatusResult -> {
+                washerPollResponse?.complete(Unit)
+                mutableState.value = mutableState.value.copy(
+                    washerState = event.washer,
+                    washerStatistics = event.statistics,
+                    washerBusy = false,
+                    washerStatusStale = false,
+                    washerMessage = when {
+                        !event.washer.online -> "Tvättmaskinen är offline."
+                        event.washer.state == "finished" -> "Tvätten är klar."
+                        else -> "Status och statistik uppdaterade."
+                    },
+                )
+            }
             is ServerEvent.WasherCommandResult -> mutableState.value = mutableState.value.copy(
                 washerState = event.washer,
                 washerBusy = false,
@@ -1199,3 +1243,6 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
 internal fun keepNotificationOnPause(activeId: String?, notificationId: String?): Boolean =
     activeId != null && activeId == notificationId
+
+internal fun washerPollIntervalMs(state: String?, scheduleState: String?): Long =
+    if (state in setOf("running", "paused") || scheduleState in setOf("scheduled", "executing")) 5_000L else 15_000L
