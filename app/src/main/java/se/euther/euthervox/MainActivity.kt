@@ -948,7 +948,7 @@ private fun WasherPanel(
                     ) { Text("Fortsätt") }
                     OutlinedButton(
                         onClick = { pendingConfirmation = "stop" },
-                        enabled = !busy && remoteReady && state?.state in setOf("running", "paused"),
+                        enabled = !busy && remoteReady && state?.state in setOf("running", "paused", "finished"),
                         modifier = Modifier.weight(1f),
                     ) { Text("Stoppa") }
                 }
@@ -1084,6 +1084,8 @@ private fun WasherPanel(
                 if (command == "start")
                     "${selectedProgram?.name} · ${selectedTemperature?.let(::temperatureLabel) ?: "programmets temperatur"}. " +
                         "Kontrollera tvätt, tvättmedel och lucka. Program och temperatur bekräftas av maskinen före start."
+                else if (state?.state == "finished")
+                    "Avsluta fjärrprogrammet med Stopp så att maskinen kan släppa lucklåset?"
                 else
                     "Ett stopp kan lämna tvätten blöt och programmet ofärdigt. Vill du verkligen stoppa?"
             ) },
