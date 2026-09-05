@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -164,7 +165,10 @@ fun EutherVoxApp() {
     val state by controller.state.collectAsStateWithLifecycle()
     val lightState by lightController.state.collectAsStateWithLifecycle()
     val wifiLightState by wifiLightController.state.collectAsStateWithLifecycle()
-    val preferences = remember { context.getSharedPreferences("euthervox", 0) }
+    val preferences = remember {
+        EutherVoxNodeService.migrateBackgroundMessages(context)
+        context.getSharedPreferences("euthervox", 0)
+    }
     var address by remember { mutableStateOf(preferences.getString("server_address", "").orEmpty()) }
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
     var username by remember { mutableStateOf(preferences.getString("username", "").orEmpty()) }
@@ -172,7 +176,11 @@ fun EutherVoxApp() {
     var voiceId by remember { mutableStateOf(preferences.getString("voice_id", "piper-nst").orEmpty()) }
     var llmModel by remember { mutableStateOf(preferences.getString("llm_model", "qwen3:4b-instruct").orEmpty()) }
     var backgroundNodeEnabled by remember {
-        mutableStateOf(preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, false))
+        mutableStateOf(preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, true))
+    }
+    var batteryUnrestricted by remember {
+        mutableStateOf(context.getSystemService(PowerManager::class.java)
+            .isIgnoringBatteryOptimizations(context.packageName))
     }
     var automaticBargeInEnabled by remember {
         mutableStateOf(preferences.getBoolean("automatic_barge_in", false))
@@ -211,6 +219,11 @@ fun EutherVoxApp() {
         if (address.isNotBlank()) {
             if (backgroundNodeEnabled) {
                 EutherVoxNodeService.start(context)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED) {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
             } else {
                 controller.connect(
                     address,
@@ -226,6 +239,11 @@ fun EutherVoxApp() {
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                batteryUnrestricted = context.getSystemService(PowerManager::class.java)
+                    .isIgnoringBatteryOptimizations(context.packageName)
+                backgroundNodeEnabled = preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, true)
+            }
             if (event == Lifecycle.Event.ON_PAUSE) {
                 controller.onPause()
                 lightController.stopScan()
@@ -235,7 +253,7 @@ fun EutherVoxApp() {
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            if (!preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, false)) {
+            if (!preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, true)) {
                 controller.disconnect()
             }
             lightController.close()
@@ -281,6 +299,12 @@ fun EutherVoxApp() {
                 color = Forest,
             )
             Text(state.connectionLabel, color = if (state.canTalk) Forest else Copper)
+            if (backgroundNodeEnabled && !batteryUnrestricted) {
+                TextButton(onClick = {
+                    context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                        Uri.parse("package:${context.packageName}")))
+                }) { Text("Tillåt tvättmeddelanden med släckt skärm") }
+            }
             if (backgroundNodeEnabled) {
                 Text("Bakgrundsnod aktiv", style = MaterialTheme.typography.bodySmall, color = Forest)
             }
@@ -519,6 +543,17 @@ fun EutherVoxApp() {
                     "Qwen3 4B svarar snabbast. Qwen3.8 27B är betydligt större och kan ta längre tid innan första svaret.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (settingsBackgroundNodeEnabled) {
+                    Text(
+                        if (batteryUnrestricted) "Bakgrundsmeddelanden tillåts med släckt skärm."
+                        else "Tillåt bakgrundsdrift så att Android inte pausar tvättmeddelanden när telefonen vilar.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (!batteryUnrestricted) TextButton(onClick = {
+                        context.startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                            Uri.parse("package:${context.packageName}")))
+                    }) { Text("Tillåt meddelanden med släckt skärm") }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -541,7 +576,7 @@ fun EutherVoxApp() {
                     Column {
                         Text("Håll EutherVox ansluten i bakgrunden")
                         Text(
-                            "Tar emot husmeddelanden och TTS utan appfokus. Mikrofonen förblir avstängd.",
+                            "Meddelar när tvätten är klar även med stängd app och släckt skärm. Mikrofonen förblir avstängd.",
                             style = MaterialTheme.typography.bodySmall,
                         )
                     }

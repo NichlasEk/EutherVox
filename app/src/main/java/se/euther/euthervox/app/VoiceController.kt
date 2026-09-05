@@ -158,6 +158,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     @Volatile private var conversationRequested = false
     @Volatile private var automaticBargeInEnabled = false
     private var utteranceId: String? = null
+    private var notificationUtteranceId: String? = null
     private var endpointDetector: SpeechEndDetector? = null
     @Volatile private var automaticEndpointHandled = false
     private var cancelledUtteranceId: String? = null
@@ -420,7 +421,10 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         mutableState.value = mutableState.value.copy(conversationActive = false, interruptionListening = false)
         nextConversationTurnJob?.cancel()
         bargeInJob?.cancel()
-        if (utteranceId != null) cancelResponse() else stopResources()
+        microphone.stop()
+        if (!keepNotificationOnPause(utteranceId, notificationUtteranceId)) {
+            if (utteranceId != null) cancelResponse() else stopResources()
+        }
     }
 
     fun saveLightConfig(device: MagicHomeDevice, name: String, room: String) {
@@ -737,6 +741,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             is ServerEvent.Notification -> {
                 if (utteranceId != null || event.utteranceId.isBlank()) return
                 utteranceId = event.utteranceId
+                notificationUtteranceId = event.utteranceId
                 serverActionInProgress = false
                 timeline = Timeline()
                 mutableState.value = mutableState.value.copy(
@@ -1007,6 +1012,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         bargeInJob = null
         microphone.stop()
         utteranceId = null
+        notificationUtteranceId = null
         mutableState.value = mutableState.value.copy(
             status = VoiceStatus.Idle,
             microphoneActive = false,
@@ -1102,6 +1108,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         )
         scope.launch { transport?.sendText(responseCancel(id)) }
         utteranceId = null
+        notificationUtteranceId = null
     }
 
     private fun armTimeout(id: String, timeoutMs: Long, message: String) {
@@ -1125,6 +1132,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         timeoutJob?.cancel()
         nextConversationTurnJob?.cancel()
         utteranceId = null
+        notificationUtteranceId = null
         cancelledUtteranceId = null
     }
 
@@ -1187,3 +1195,6 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         Log.i("EutherVoxMetrics", "event=$event elapsed_ms=$timestampMs utterance=${utteranceId ?: "none"}")
     }
 }
+
+internal fun keepNotificationOnPause(activeId: String?, notificationId: String?): Boolean =
+    activeId != null && activeId == notificationId

@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
@@ -39,6 +40,7 @@ internal fun backgroundNodeNotificationText(
 class EutherVoxNodeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var notificationJob: Job? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -54,13 +56,25 @@ class EutherVoxNodeService : Service() {
             return START_NOT_STICKY
         }
 
+        if (!preferences().getBoolean(PREFERENCE_ENABLED, true) ||
+            !NodeConnectionSettings.load(this).isConfigured) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
         startInForeground("Startar bakgrundsnoden…")
+        if (wakeLock == null) {
+            wakeLock = getSystemService(PowerManager::class.java)
+                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EutherVox:HouseMessages")
+                .apply { acquire() }
+        }
         EutherVoxNodeRuntime.connectSaved(this)
         observeConnection()
         return START_STICKY
     }
 
     override fun onDestroy() {
+        wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
         notificationJob?.cancel()
         scope.cancel()
         super.onDestroy()
@@ -70,8 +84,7 @@ class EutherVoxNodeService : Service() {
 
     private fun startInForeground(text: String) {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         } else {
             0
         }
@@ -141,6 +154,18 @@ class EutherVoxNodeService : Service() {
     private fun preferences() = getSharedPreferences("euthervox", Context.MODE_PRIVATE)
 
     companion object {
+        fun migrateBackgroundMessages(context: Context) {
+            val preferences = context.getSharedPreferences("euthervox", Context.MODE_PRIVATE)
+            if (!preferences.getBoolean("background_messages_v21", false)) {
+                // Older settings saved the old false default even without an explicit opt-out.
+                // Enable house messages once on upgrade; subsequent stop/disable choices persist.
+                preferences.edit(commit = true) {
+                    putBoolean(PREFERENCE_ENABLED, true)
+                    putBoolean("background_messages_v21", true)
+                }
+            }
+        }
+
         const val PREFERENCE_ENABLED = "background_node_enabled"
         private const val ACTION_STOP = "se.euther.euthervox.action.STOP_BACKGROUND_NODE"
         private const val CHANNEL_ID = "euthervox_background_node"
