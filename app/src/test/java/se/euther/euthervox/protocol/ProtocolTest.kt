@@ -148,6 +148,15 @@ class ProtocolTest {
         assertEquals(1, event.statistics.cyclesCompleted7d)
     }
 
+    @Test fun directWasherStartIncludesChosenProgramAndTemperature() {
+        val request = JsonParser.parseString(washerCommand("start", true, "25", "60")).asJsonObject
+        assertEquals("25", request["program_code"].asString)
+        assertEquals("60", request["water_temperature"].asString)
+        assertEquals(true, request["confirmed"].asBoolean)
+        val pause = JsonParser.parseString(washerCommand("pause")).asJsonObject
+        assertEquals(false, pause.has("program_code"))
+    }
+
     @Test fun serializesConfirmedWasherCommandAndParsesApplianceReadback() {
         val request = JsonParser.parseString(washerCommand("start", confirmed = true)).asJsonObject
         assertEquals("washer.command", request["type"].asString)

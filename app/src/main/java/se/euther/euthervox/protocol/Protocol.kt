@@ -88,10 +88,13 @@ fun vacuumCommand(command: String, confirmed: Boolean = false) = JsonObject().ap
     addProperty("confirmed", confirmed)
 }.toString()
 
-fun washerCommand(command: String, confirmed: Boolean = false) = JsonObject().apply {
+fun washerCommand(command: String, confirmed: Boolean = false,
+                  programCode: String? = null, waterTemperature: String? = null) = JsonObject().apply {
     addProperty("type", "washer.command")
     addProperty("command", command)
     addProperty("confirmed", confirmed)
+    programCode?.let { addProperty("program_code", it) }
+    waterTemperature?.let { addProperty("water_temperature", it) }
 }.toString()
 
 fun washerScheduleStatus() = JsonObject().apply {

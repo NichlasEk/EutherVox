@@ -465,7 +465,8 @@ fun EutherVoxApp() {
                     busy = state.washerBusy,
                     controlsAvailable = state.washerControlsAvailable,
                     onRefresh = controller::refreshWasher,
-                    onCommand = controller::controlWasher,
+                    onCommand = { command, confirmed -> controller.controlWasher(command, confirmed) },
+                    onStart = { program, temperature -> controller.controlWasher("start", true, program, temperature) },
                     onSchedule = controller::createWasherSchedule,
                     onCancelSchedule = controller::cancelWasherSchedule,
                 )
@@ -819,6 +820,7 @@ private fun WasherPanel(
     controlsAvailable: Boolean,
     onRefresh: () -> Unit,
     onCommand: (String, Boolean) -> Unit,
+    onStart: (String, String?) -> Unit,
     onSchedule: (String, String, String?) -> Unit,
     onCancelSchedule: () -> Unit,
 ) {
@@ -836,6 +838,8 @@ private fun WasherPanel(
         )
     }
     var temperatureMenuOpen by remember { mutableStateOf(false) }
+    var directProgramMenuOpen by remember { mutableStateOf(false) }
+    var directTemperatureMenuOpen by remember { mutableStateOf(false) }
     var confirmSchedule by remember { mutableStateOf(false) }
     fun number(value: Double?, suffix: String) = value?.let { "%.1f%s".format(it, suffix) } ?: "—"
     fun stateLabel(value: String) = when (value) {
@@ -872,9 +876,49 @@ private fun WasherPanel(
                     Text("Smart Control är av – slå på det vid tvättmaskinen för att låsa upp kontrollerna.", color = Copper, fontWeight = FontWeight.Bold)
                 }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.weight(1.6f)) {
+                        Text("Program", fontWeight = FontWeight.Bold)
+                        Box {
+                            OutlinedButton(onClick = { directProgramMenuOpen = true },
+                                enabled = !busy && state?.state == "idle" && programs.isNotEmpty(),
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(selectedProgram?.name ?: "Hämta programlista")
+                            }
+                            DropdownMenu(expanded = directProgramMenuOpen, onDismissRequest = { directProgramMenuOpen = false }) {
+                                programs.forEach { program ->
+                                    DropdownMenuItem(text = { Text(program.name) }, onClick = {
+                                        selectedProgram = program; directProgramMenuOpen = false
+                                    })
+                                }
+                            }
+                        }
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text("Temperatur", fontWeight = FontWeight.Bold)
+                        Box {
+                            OutlinedButton(onClick = { directTemperatureMenuOpen = true },
+                                enabled = !busy && state?.state == "idle" && waterTemperatures.isNotEmpty(),
+                                modifier = Modifier.fillMaxWidth()) {
+                                Text(selectedTemperature?.let(::temperatureLabel) ?: "Programmets")
+                            }
+                            DropdownMenu(expanded = directTemperatureMenuOpen, onDismissRequest = { directTemperatureMenuOpen = false }) {
+                                waterTemperatures.forEach { temperature ->
+                                    DropdownMenuItem(text = { Text(temperatureLabel(temperature)) }, onClick = {
+                                        selectedTemperature = temperature; directTemperatureMenuOpen = false
+                                    })
+                                }
+                            }
+                        }
+                    }
+                }
+                if (schedule?.state in setOf("scheduled", "executing")) {
+                    Text("Avbryt tvättschemat nedan om du vill starta direkt.", color = Copper)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { pendingConfirmation = "start" },
-                        enabled = !busy && remoteReady && state?.state == "idle",
+                        enabled = !busy && remoteReady && state?.state == "idle" && selectedProgram != null &&
+                            schedule?.state !in setOf("scheduled", "executing"),
                         modifier = Modifier.weight(1f),
                     ) { Text("Starta") }
                     OutlinedButton(
@@ -1025,14 +1069,17 @@ private fun WasherPanel(
             title = { Text(if (command == "start") "Starta tvätten?" else "Stoppa tvätten?") },
             text = { Text(
                 if (command == "start")
-                    "Bekräfta att maskinen är rätt laddad, att tvättmedel finns och att personen hemma vet att den kan starta."
+                    "${selectedProgram?.name} · ${selectedTemperature?.let(::temperatureLabel) ?: "programmets temperatur"}. " +
+                        "Kontrollera tvätt, tvättmedel och lucka. Program och temperatur bekräftas av maskinen före start."
                 else
                     "Ett stopp kan lämna tvätten blöt och programmet ofärdigt. Vill du verkligen stoppa?"
             ) },
             confirmButton = {
                 Button(onClick = {
                     pendingConfirmation = null
-                    onCommand(command, true)
+                    if (command == "start") {
+                        selectedProgram?.let { onStart(it.code, selectedTemperature) }
+                    } else onCommand(command, true)
                 }) { Text("Ja, ${if (command == "start") "starta" else "stoppa"}") }
             },
             dismissButton = { TextButton(onClick = { pendingConfirmation = null }) { Text("Avbryt") } },

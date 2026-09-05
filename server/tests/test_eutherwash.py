@@ -70,10 +70,12 @@ def test_control_uses_fixed_command_token_and_confirmation(tmp_path: Path):
         control_enabled=True,
         control_token_file=str(token_file),
     ), transport=httpx.MockTransport(handler))
-    status = asyncio.run(service.command("start", confirmed=True))
+    status = asyncio.run(service.command("start", confirmed=True, program_code="25", water_temperature="60"))
 
     assert requests[0].url.path == "/v1/washers/tvattmaskinen/commands/start"
     assert requests[0].headers["authorization"] == "Bearer synthetic-control-token-at-least-32-characters"
+    import json
+    assert json.loads(requests[0].content) == {"confirmed": True, "program_code": "25", "water_temperature": "60"}
     assert status["state"] == "running"
 
 

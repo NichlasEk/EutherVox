@@ -466,9 +466,11 @@ def test_authenticated_session_controls_washer_with_start_confirmation():
         async def report(self):
             return {"status": {"online": True, "state": "idle"}, "statistics": {}}
 
-        async def command(self, command, *, confirmed=False):
+        async def command(self, command, *, confirmed=False, program_code=None, water_temperature=None):
             assert command == "start"
             assert confirmed is True
+            assert program_code == "25"
+            assert water_temperature == "60"
             return {"online": True, "state": "running", "remote_control_enabled": True}
 
     async def scenario():
@@ -478,6 +480,7 @@ def test_authenticated_session_controls_washer_with_start_confirmation():
         await session.handle_text(start_message())
         await session.handle_text(json.dumps({
             "type": "washer.command", "command": "start", "confirmed": True,
+            "program_code": "25", "water_temperature": "60",
         }))
         config = next(item for item in sent if item.get("type") == "washer.config")
         result = next(item for item in sent if item.get("type") == "washer.command.result")

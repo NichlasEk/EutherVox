@@ -609,7 +609,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
-    fun controlWasher(command: String, confirmed: Boolean = false) {
+    fun controlWasher(command: String, confirmed: Boolean = false,
+                      programCode: String? = null, waterTemperature: String? = null) {
         if (!ready) {
             mutableState.value = mutableState.value.copy(washerMessage = "Anslut till servern under Röst först.")
             return
@@ -619,7 +620,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             washerMessage = "Skickar och väntar på tvättmaskinens bekräftelse…",
         )
         scope.launch {
-            if (transport?.sendText(washerCommand(command, confirmed)) != true) {
+            if (transport?.sendText(washerCommand(command, confirmed, programCode, waterTemperature)) != true) {
                 mutableState.value = mutableState.value.copy(
                     washerBusy = false,
                     washerMessage = "Kunde inte skicka tvättkommandot.",

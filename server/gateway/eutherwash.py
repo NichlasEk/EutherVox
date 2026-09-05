@@ -324,13 +324,26 @@ class EutherWashService:
             return ""
         return " ".join(value.replace("_", " ").replace("-", " ").split()).casefold()
 
-    async def command(self, command: str, *, confirmed: bool = False) -> dict[str, object]:
+    async def command(self, command: str, *, confirmed: bool = False,
+                      program_code: str | None = None, water_temperature: str | None = None) -> dict[str, object]:
         if not self.enabled or not self.control_enabled or not self._control_token:
             raise RuntimeError("Tvättstyrning är inte aktiverad")
         if command not in {"start", "pause", "resume", "stop"}:
             raise ValueError("Okänt tvättkommando")
         if command in {"start", "stop"} and not confirmed:
             raise ValueError("Start och stopp kräver uttrycklig bekräftelse")
+        body: dict[str, object] = {"confirmed": confirmed}
+        if program_code is not None or water_temperature is not None:
+            if command != "start":
+                raise ValueError("Program och temperatur kan bara väljas vid start")
+            if program_code is not None:
+                if not isinstance(program_code, str) or not re.fullmatch(r"[0-9A-Fa-f]{2}", program_code):
+                    raise ValueError("Ogiltigt tvättprogram")
+                body["program_code"] = program_code.upper()
+            if water_temperature is not None:
+                if not isinstance(water_temperature, str) or water_temperature not in {"Cold", "20", "30", "40", "60", "90"}:
+                    raise ValueError("Ogiltig tvättemperatur")
+                body["water_temperature"] = water_temperature
         encoded = quote(self.alias, safe="")
         try:
             async with httpx.AsyncClient(
@@ -341,7 +354,7 @@ class EutherWashService:
                 response = await client.post(
                     f"{self.base_url}/v1/washers/{encoded}/commands/{command}",
                     headers={"Authorization": f"Bearer {self._control_token}"},
-                    json={"confirmed": confirmed},
+                    json=body,
                 )
                 if response.status_code == 409:
                     detail = response.json().get("detail", "command_rejected")
@@ -351,6 +364,12 @@ class EutherWashService:
                         "command_not_allowed_in_current_state": "Kommandot passar inte maskinens aktuella läge.",
                         "command_rejected": "Tvättmaskinen avvisade kommandot.",
                         "command_not_confirmed": "Maskinen bekräftade inte ändringen.",
+                        "program_not_advertised": "Programmet stöds inte av maskinen.",
+                        "temperature_not_advertised": "Temperaturen stöds inte för det valda programmet.",
+                        "program_selection_not_confirmed": "Programvalet kunde inte bekräftas. Tvätten startades inte.",
+                        "temperature_selection_not_confirmed": "Temperaturen kunde inte bekräftas. Tvätten startades inte.",
+                        "schedule_already_exists": "Avbryt det aktiva tvättschemat före direktstart.",
+                        "start_settings_unavailable": "Servern behöver uppdateras för program och temperatur vid direktstart.",
                     }
                     raise RuntimeError(messages.get(str(detail), "Tvättmaskinen avvisade kommandot."))
                 response.raise_for_status()

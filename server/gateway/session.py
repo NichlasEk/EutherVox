@@ -458,7 +458,8 @@ class VoiceSession:
         if command in {"start", "stop"} and not confirmed:
             raise ProtocolError("WASHER_CONFIRMATION_REQUIRED", "Start och stopp måste bekräftas")
         try:
-            status = await self.eutherwash.command(command, confirmed=confirmed)
+            settings = {key: message[key] for key in ("program_code", "water_temperature") if key in message}
+            status = await self.eutherwash.command(command, confirmed=confirmed, **settings)
         except (ValueError, RuntimeError, OSError) as error:
             raise ProtocolError("WASHER_COMMAND_FAILED", str(error)) from error
         labels = {"start": "startade", "pause": "pausade", "resume": "fortsatte", "stop": "stoppade"}
