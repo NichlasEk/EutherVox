@@ -184,6 +184,10 @@ class EutherVoxToolRegistry:
                 "additionalProperties": False,
             },
         ),
+        ToolDefinition(name="printer_status", description="Läs skrivarens status och toner-varningar.", input_schema={"type": "object", "properties": {}, "additionalProperties": False}),
+        ToolDefinition(name="printer_scan", description="Öppna bekräftelse för att skanna ett dokument.", input_schema={"type": "object", "properties": {}, "additionalProperties": False}),
+        ToolDefinition(name="printer_print", description="Öppna val av PDF att skriva ut.", input_schema={"type": "object", "properties": {}, "additionalProperties": False}),
+        ToolDefinition(name="printer_jobs", description="Visa skrivarjobb som skapats i EutherVox för kontroll eller avbrytande.", input_schema={"type": "object", "properties": {}, "additionalProperties": False}),
         ToolDefinition(
             name="washer_status",
             description="Läs aktuell status och sjudagarsrapport från husets fasta tvättmaskin.",
@@ -211,12 +215,14 @@ class EutherVoxToolRegistry:
         television: NecTvService | None = None,
         eutherpump: EutherPumpService | None = None,
         eutherwash: EutherWashService | None = None,
+        printer=None,
     ):
         self.cast = cast
         self.lights = lights
         self.television = television
         self.eutherpump = eutherpump
         self.eutherwash = eutherwash
+        self.printer = printer
 
     @property
     def ollama_tools(self) -> list[dict[str, Any]]:
@@ -255,6 +261,11 @@ class EutherVoxToolRegistry:
         unexpected = set(arguments) - accepted_keys
         if unexpected:
             raise ToolValidationError(f"Otillåtna argument: {', '.join(sorted(unexpected))}")
+
+        if tool_name in {"printer_status", "printer_scan", "printer_print", "printer_jobs"}:
+            if not self.printer or not self.printer.enabled:
+                raise ToolValidationError("Skrivaren är inte konfigurerad")
+            return DeviceAction(action_id=str(uuid4()), name=tool_name.replace("_", "."), target_node=node_name, arguments={}, acknowledgement="Jag öppnar skrivaren.")
 
         if tool_name == "washer_status":
             if not self.eutherwash or not self.eutherwash.enabled:

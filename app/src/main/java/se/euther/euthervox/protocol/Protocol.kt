@@ -267,6 +267,11 @@ sealed interface ServerEvent {
     data class PumpsConfig(val pumps: List<ConfiguredPump>) : ServerEvent
     data class PumpStatusResult(val pump: PumpState) : ServerEvent
     data class PumpCommandResult(val pump: PumpState, val message: String) : ServerEvent
+    data class PrinterAction(val action: String) : ServerEvent
+    data class PrinterCommandResult(val message: String, val pdf: String?, val jobs: List<PrinterJob>?) : ServerEvent
+    data class PrinterJob(val id: Int, val title: String, val state: String)
+    data class PrinterConfig(val available: Boolean) : ServerEvent
+    data class PrinterStatus(val available: Boolean, val label: String, val model: String, val state: String, val alerts: List<String>, val updatedAt: String?) : ServerEvent
     data class WasherConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
     data class WasherStatusResult(val washer: WasherState, val statistics: WasherStatistics) : ServerEvent
     data class WasherCommandResult(val command: String, val washer: WasherState, val message: String) : ServerEvent
@@ -379,6 +384,22 @@ fun parseServerEvent(raw: String): ServerEvent {
             parsePumpState(json["pump"].asJsonObject),
             json["message"]?.asString ?: "Pumpen bekräftade ändringen.",
         )
+        "printer.action" -> ServerEvent.PrinterAction(json["action"].asString)
+        "printer.command.result" -> ServerEvent.PrinterCommandResult(
+            json["message"]?.asString ?: "Klart",
+            json["pdf_base64"]?.takeUnless { it.isJsonNull }?.asString,
+            json["jobs"]?.takeUnless { it.isJsonNull }?.asJsonArray?.map { item ->
+                val j = item.asJsonObject
+                ServerEvent.PrinterJob(j["job_id"].asInt, j["title"]?.asString ?: "Dokument", j["state"]?.asString ?: "okänt")
+            })
+        "printer.config" -> ServerEvent.PrinterConfig(json["available"]?.asBoolean ?: false)
+        "printer.status.result" -> json["status"].asJsonObject.let { p ->
+            ServerEvent.PrinterStatus(p["available"]?.asBoolean ?: false,
+                p["label"]?.asString ?: "Skrivaren", p["model"]?.asString ?: "",
+                p["state"]?.asString ?: "unknown",
+                p["alerts"]?.takeUnless { it.isJsonNull }?.asJsonArray?.map { it.asString } ?: emptyList(),
+                p["updated_at"]?.takeUnless { it.isJsonNull }?.asString)
+        }
         "washer.config" -> ServerEvent.WasherConfig(
             json["available"]?.asBoolean ?: false,
             json["controls_available"]?.asBoolean ?: false,

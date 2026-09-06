@@ -25,6 +25,7 @@ from .lighting import MagicHomeLightService
 from .television import NecTvService
 from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
+from .printer import PrinterService
 from .washer_notifications import WasherCompletionMonitor
 
 
@@ -84,7 +85,7 @@ def configure_device_hotwords(
     return count
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None, printer=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -107,6 +108,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         eutherpump=eutherpump,
         eutherwash=eutherwash,
         washer_notifications=washer_notifications,
+        printer=printer,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -191,6 +193,7 @@ async def run(config: GatewayConfig) -> None:
     television = NecTvService(config.television_settings, config.config_dir)
     eutherpump = EutherPumpService(config.eutherpump_settings)
     eutherwash = EutherWashService(config.eutherwash_settings)
+    printer = PrinterService(config.printer_settings)
     message_generator = None
     if bool(config.eutherwash_settings.get("notification_ai_enabled", True)):
 
@@ -210,7 +213,7 @@ async def run(config: GatewayConfig) -> None:
         message_generator=message_generator,
     )
     configure_device_hotwords(engines[0], lights, television, eutherpump, eutherwash)
-    tool_registry = EutherVoxToolRegistry(cast, lights, television, eutherpump, eutherwash)
+    tool_registry = EutherVoxToolRegistry(cast, lights, television, eutherpump, eutherwash, printer)
     tool_planner = None
     if bool(config.mcp_settings.get("enabled", False)) and config.llm_provider == "ollama":
         tool_planner = OllamaToolPlanner(
@@ -235,10 +238,10 @@ async def run(config: GatewayConfig) -> None:
     await washer_notifications.start()
     try:
         async with serve(
-            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications),
+            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications, printer),
             config.host,
             config.port,
-            max_size=2**20,
+            max_size=14 * 1024 * 1024,
             process_request=oauth_http,
         ):
             LOG.info("listening ws://%s:%d", config.host, config.port)

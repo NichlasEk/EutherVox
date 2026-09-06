@@ -96,6 +96,13 @@ data class VoiceUiState(
     val washerSchedule: ServerEvent.WasherSchedule? = null,
     val washerMessage: String? = null,
     val washerBusy: Boolean = false,
+    val printerAction: String? = null,
+    val printerMessage: String? = null,
+    val printerBusy: Boolean = false,
+    val printerPdf: String? = null,
+    val printerJobs: List<ServerEvent.PrinterJob> = emptyList(),
+    val printerState: ServerEvent.PrinterStatus? = null,
+    val printerAvailable: Boolean = false,
     val washerStatusStale: Boolean = false,
     val washerControlsAvailable: Boolean = false,
     val vacuumState: ServerEvent.VacuumState? = null,
@@ -147,6 +154,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     val state: StateFlow<VoiceUiState> = mutableState.asStateFlow()
     private var transport: VoiceTransport? = null
     private var connectionJob: Job? = null
+    private var printerTimeoutJob: Job? = null
     private var washerPollingJob: Job? = null
     private var washerPollResponse: CompletableDeferred<Unit>? = null
     private var connectionIdentity: ConnectionIdentity? = null
@@ -264,6 +272,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun disconnect() {
+        printerTimeoutJob?.cancel()
+        mutableState.value = mutableState.value.copy(printerState = null, printerAvailable = false, printerPdf = null, printerJobs = emptyList(), printerAction = null, printerMessage = null, printerBusy = false)
         stopWasherPolling()
         shouldReconnect = false
         conversationRequested = false
@@ -551,6 +561,36 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    fun clearPrinterAction() { mutableState.value = mutableState.value.copy(printerAction = null) }
+    fun clearPrinterPdf() { mutableState.value = mutableState.value.copy(printerPdf = null) }
+    fun printerCommand(action: String, pdf: String? = null, title: String? = null, jobId: Int? = null) {
+        if (!ready || mutableState.value.printerBusy) return
+        mutableState.value = mutableState.value.copy(printerBusy = true, printerMessage = "Arbetar med skrivaren…")
+        printerTimeoutJob?.cancel()
+        printerTimeoutJob = scope.launch {
+            delay(95_000)
+            if (mutableState.value.printerBusy) mutableState.value = mutableState.value.copy(printerBusy = false, printerMessage = "Inget svar. Kontrollera skrivaren och jobblistan innan du försöker igen.")
+        }
+        scope.launch {
+            val request = com.google.gson.JsonObject().apply {
+                addProperty("type", "printer.command"); addProperty("action", action)
+                addProperty("confirmed", action != "jobs")
+                addProperty("request_id", java.util.UUID.randomUUID().toString())
+                pdf?.let { addProperty("pdf_base64", it) }; title?.let { addProperty("title", it) }
+                jobId?.let { addProperty("job_id", it) }
+            }
+            if (transport?.sendText(request.toString()) != true) {
+                mutableState.value = mutableState.value.copy(printerBusy = false, printerMessage = "Kunde inte skicka. Kontrollera anslutningen.")
+            }
+        }
+    }
+
+    fun refreshPrinter() {
+        if (ready && mutableState.value.printerAvailable) scope.launch {
+            transport?.sendText("{\"type\":\"printer.status\"}")
+        }
+    }
+
     fun refreshWasher() {
         if (!ready) {
             mutableState.value = mutableState.value.copy(washerMessage = "Anslut till servern under Röst först.")
@@ -701,7 +741,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
 
     override suspend fun onClosed(cause: Throwable?) {
         stopWasherPolling()
-        mutableState.value = mutableState.value.copy(washerStatusStale = true)
+        mutableState.value = mutableState.value.copy(washerStatusStale = true, printerBusy = false, printerAvailable = false)
         ready = false
         nextConversationTurnJob?.cancel()
         stopResources()
@@ -886,6 +926,19 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 pumpBusy = false,
                 pumpMessage = event.message,
             )
+            is ServerEvent.PrinterAction -> mutableState.value = mutableState.value.copy(printerAction = event.action)
+            is ServerEvent.PrinterCommandResult -> {
+                printerTimeoutJob?.cancel()
+                mutableState.value = mutableState.value.copy(
+                printerBusy = false, printerMessage = event.message,
+                printerPdf = event.pdf ?: mutableState.value.printerPdf,
+                printerJobs = event.jobs ?: mutableState.value.printerJobs)
+            }
+            is ServerEvent.PrinterConfig -> {
+                mutableState.value = mutableState.value.copy(printerAvailable = event.available)
+                refreshPrinter()
+            }
+            is ServerEvent.PrinterStatus -> mutableState.value = mutableState.value.copy(printerState = event)
             is ServerEvent.WasherConfig -> {
                 mutableState.value = mutableState.value.copy(
                     washerControlsAvailable = event.controlsAvailable,
@@ -959,6 +1012,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             )
             is ServerEvent.Error -> if (event.code.startsWith("PUMP_")) {
                 mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = event.message)
+            } else if (event.code.startsWith("PRINTER_")) {
+                mutableState.value = mutableState.value.copy(printerBusy = false, printerMessage = event.message)
             } else if (event.code.startsWith("WASHER_")) {
                 mutableState.value = mutableState.value.copy(washerBusy = false, washerMessage = event.message)
             } else if (event.code.startsWith("VACUUM_")) {

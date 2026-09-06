@@ -135,6 +135,7 @@ private val DeviceDestinations = listOf(
     DeviceDestination("lights", "Ljus", "✦", R.drawable.hero_lights),
     DeviceDestination("tv", "TV", "▣", R.drawable.hero_tv),
     DeviceDestination("washer", "Tvättmaskin", "◎", R.drawable.hero_washer),
+    DeviceDestination("printer", "Skrivare", "▤", R.drawable.hero_printer),
     DeviceDestination("dryer", "Torktumlare", "◌", R.drawable.hero_dryer),
     DeviceDestination("boiler", "Panna", "♨", R.drawable.hero_boiler),
     DeviceDestination("pump", "Pump", "≈", R.drawable.hero_pump),
@@ -196,6 +197,7 @@ fun EutherVoxApp() {
     var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var selectedTab by remember { mutableStateOf("voice") }
+    LaunchedEffect(state.printerAction) { if (state.printerAction != null) selectedTab = "printer" }
     var hasPermission by remember { mutableStateOf(context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) }
     var hasBlePermission by remember { mutableStateOf(hasBlePermissions(context)) }
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted -> hasPermission = granted }
@@ -274,6 +276,7 @@ fun EutherVoxApp() {
                     "lights" to (wifiLightState.devices.isNotEmpty() || lightState.devices.isNotEmpty()),
                     "tv" to state.configuredTvs.isNotEmpty(),
                     "washer" to state.washerState?.online,
+                    "printer" to state.printerState?.available,
                     "dryer" to null,
                     "boiler" to null,
                     "pump" to state.pumpState?.online,
@@ -471,6 +474,8 @@ fun EutherVoxApp() {
                     onSchedule = controller::createWasherSchedule,
                     onCancelSchedule = controller::cancelWasherSchedule,
                 )
+            } else if (selectedTab == "printer") {
+                PrinterPanel(state, controller)
             } else if (selectedTab == "vacuum") {
                 VacuumPanel(
                     vacuum = state.vacuumState,
@@ -793,6 +798,103 @@ private fun DeviceNavigator(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PrinterPanel(state: se.euther.euthervox.app.VoiceUiState, controller: se.euther.euthervox.app.VoiceController) {
+    val printer = state.printerState
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var selectedPdf by remember { mutableStateOf<android.net.Uri?>(null) }
+    var title by remember { mutableStateOf("Dokument.pdf") }
+    var confirmation by remember { mutableStateOf<String?>(null) }
+    var cancelJob by remember { mutableStateOf<ServerEvent.PrinterJob?>(null) }
+    var localMessage by remember { mutableStateOf<String?>(null) }
+    val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            selectedPdf = uri
+            title = runCatching { context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } }.getOrNull() ?: "Dokument.pdf"
+            confirmation = "print"
+        }
+    }
+    val saver = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/pdf")) { uri ->
+        val pdf = state.printerPdf
+        if (uri != null && pdf != null) scope.launch {
+            val result = runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)?.use { it.write(android.util.Base64.decode(pdf, android.util.Base64.DEFAULT)) } ?: error("Filen kunde inte öppnas")
+            } }
+            localMessage = if (result.isSuccess) "PDF sparad." else "Kunde inte spara PDF. Försök igen."
+            if (result.isSuccess) controller.clearPrinterPdf()
+        }
+    }
+    LaunchedEffect(state.printerAction) {
+        when (state.printerAction) {
+            "print" -> picker.launch(arrayOf("application/pdf"))
+            "scan" -> confirmation = "scan"
+            "jobs" -> controller.printerCommand("jobs")
+        }
+        controller.clearPrinterAction()
+    }
+    Text("Skrivaren", style = MaterialTheme.typography.headlineMedium, color = Forest, fontWeight = FontWeight.Bold)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(printer?.label ?: "Laserskrivaren", style = MaterialTheme.typography.titleLarge)
+            Text(printer?.model ?: "HP Color LaserJet MFP M283fdw")
+            val labels = mapOf("sleeping" to "Viloläge", "ready" to "Redo", "printing" to "Skriver ut", "busy" to "Arbetar", "warning" to "Varning", "error" to "Behöver hjälp")
+            Text(if (printer?.available == true) labels[printer.state] ?: "Okänd status" else "Status tillfälligt otillgänglig", fontWeight = FontWeight.Bold)
+            printer?.alerts?.forEach { Text(it) }
+            printer?.updatedAt?.let { timestamp ->
+                val time = runCatching { java.time.Instant.parse(timestamp).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) }.getOrNull()
+                time?.let { Text("Senast avläst $it", style = MaterialTheme.typography.bodySmall) }
+            }
+            Text("Delar status med EutherShould. Skrivaren avläses högst var tionde minut.", style = MaterialTheme.typography.bodySmall)
+            val enabled = state.printerAvailable && !state.printerBusy
+            Button(onClick = controller::refreshPrinter, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Hämta status") }
+            Button(onClick = { picker.launch(arrayOf("application/pdf")) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Välj PDF att skriva ut") }
+            OutlinedButton(onClick = { confirmation = "scan" }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Skanna från glaset") }
+            OutlinedButton(onClick = { controller.printerCommand("jobs") }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("Visa mina utskriftsjobb") }
+            if (state.printerPdf != null) Button(onClick = { saver.launch("Skanning.pdf") }) { Text("Spara skannad PDF") }
+            (localMessage ?: state.printerMessage)?.let { Text(it) }
+            state.printerJobs.forEach { job ->
+                Text("${job.title} · ${job.state}")
+                if (job.state in setOf("väntar", "pausat", "skriver ut", "stoppat")) {
+                    OutlinedButton(onClick = { cancelJob = job; confirmation = "cancel" }, enabled = enabled) { Text("Avbryt jobb ${job.id}") }
+                }
+            }
+        }
+    }
+    confirmation?.let { action ->
+        AlertDialog(onDismissRequest = { confirmation = null },
+            title = { Text(when(action) { "print" -> "Skriv ut PDF?"; "scan" -> "Starta skanning?"; else -> "Avbryt utskriften?" }) },
+            text = { Text(when(action) { "print" -> "$title · en kopia med skrivarens standardinställningar. Högst 10 MB."; "scan" -> "Lägg en A4-sida på glaset och stäng locket. Skanna till PDF i färg, 300 dpi. Spara sedan filen på telefonen."; else -> cancelJob?.title ?: "Valt jobb" }) },
+            confirmButton = { Button(onClick = {
+                confirmation = null; localMessage = null
+                when(action) {
+                    "scan" -> controller.printerCommand("scan")
+                    "cancel" -> cancelJob?.let { controller.printerCommand("cancel", jobId = it.id) }
+                    "print" -> selectedPdf?.let { uri -> scope.launch {
+                        val result = runCatching { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                            val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                                val output = java.io.ByteArrayOutputStream()
+                                val buffer = ByteArray(8192)
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    require(output.size() + count <= 10 * 1024 * 1024)
+                                    output.write(buffer, 0, count)
+                                }
+                                output.toByteArray()
+                             } ?: error("Filen kunde inte läsas")
+                            require(bytes.size <= 10 * 1024 * 1024 && bytes.take(5).toByteArray().decodeToString() == "%PDF-")
+                            android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                        } }
+                        result.onSuccess { controller.printerCommand("print", pdf = it, title = title) }
+                            .onFailure { localMessage = "Välj en giltig PDF på högst 10 MB." }
+                    } }
+                }
+            }) { Text("Ja") } },
+            dismissButton = { OutlinedButton(onClick = { confirmation = null }) { Text("Nej") } })
     }
 }
 

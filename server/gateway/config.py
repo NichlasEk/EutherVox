@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import tomllib
 
@@ -40,6 +40,7 @@ class GatewayConfig:
     television_settings: dict
     eutherpump_settings: dict
     eutherwash_settings: dict
+    printer_settings: dict = field(default_factory=dict)
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -109,4 +110,5 @@ def load_config(path: str | Path) -> GatewayConfig:
         television_settings=television_settings,
         eutherpump_settings=eutherpump_settings,
         eutherwash_settings=eutherwash_settings,
+        printer_settings=dict(raw.get("printer", {})),
     )

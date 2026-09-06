@@ -167,3 +167,9 @@ host = "192.168.32.5"
 port = 8009
 uuid = "513b23e1-0384-d9e8-8eeb-c31f9c7b656e"
 model_name = "Google Nest Mini"
+
+[printer]
+enabled = true
+status_url = "https://apothictech.se/euthershould/api/printer-service"
+allowed_users = ["nichlas"]
+token_file = "/home/nichlas/.config/euthervox/printer-service-token"

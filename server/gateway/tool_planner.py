@@ -200,6 +200,14 @@ class OllamaToolPlanner:
 
     def _plan_report(self, transcript: str, node_name: str) -> DeviceAction | None:
         lowered = transcript.casefold()
+        printer_action = None
+        if re.search(r"\bskanna\b", lowered): printer_action = "printer_scan"
+        elif re.search(r"\bskriv ut\b", lowered): printer_action = "printer_print"
+        elif re.search(r"\b(?:skrivarjobb|utskriftsjobb)\b", lowered): printer_action = "printer_jobs"
+        elif re.search(r"\b(?:skrivaren|skrivarstatus|toner|skrivarrapport)\b", lowered): printer_action = "printer_status"
+        if printer_action:
+            try: return self.registry.create_action(printer_action, {}, node_name)
+            except ToolValidationError: return None
         if not self._REPORT_INTENT.search(lowered) and not re.search(
             r"\b(?:tvätt|värmepumps?|dammsugar|robotdammsugar)rapport\b", lowered
         ):

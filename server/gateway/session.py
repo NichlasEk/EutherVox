@@ -28,6 +28,7 @@ from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
+from .printer import PrinterService
 from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
@@ -104,6 +105,7 @@ class VoiceSession:
     eutherpump: EutherPumpService | None = None
     eutherwash: EutherWashService | None = None
     washer_notifications: WasherCompletionMonitor | None = None
+    printer: PrinterService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -151,6 +153,10 @@ class VoiceSession:
                 await self._pump_status(message)
             elif message_type == "pump.command":
                 await self._pump_command(message)
+            elif message_type == "printer.command":
+                await self._printer_command(message)
+            elif message_type == "printer.status":
+                await self._printer_status()
             elif message_type == "washer.status":
                 await self._washer_status()
             elif message_type == "washer.command":
@@ -247,6 +253,8 @@ class VoiceSession:
                 "available": True,
                 "controls_available": bool(getattr(self.eutherwash, "control_enabled", False)),
             })
+        if self.printer and self.printer.can_use(self.authenticated_user):
+            await self.send_json({"type": "printer.config", "available": True})
         if self.authenticated_user and self.washer_notifications and self.washer_notifications.enabled:
             self.washer_notifications.subscribe(self.node_name, self._deliver_washer_notification)
         LOG.info(
@@ -430,6 +438,23 @@ class VoiceSession:
             raise ProtocolError("PUMP_AUTH_REQUIRED", "Inloggning krävs för pumpstatus")
         if not self.eutherpump or not self.eutherpump.enabled:
             raise ProtocolError("PUMP_DISABLED", "Värmepumpstjänsten är inte aktiverad")
+
+    async def _printer_command(self, message):
+        if self.phase is Phase.CONNECTED or not self.printer or not self.printer.can_use(self.authenticated_user):
+            raise ProtocolError("PRINTER_AUTH_REQUIRED", "Åtkomst nekad")
+        try:
+            result = await self.printer.command(self.authenticated_user, message)
+            await self.send_json({"type": "printer.command.result", **result})
+        except ValueError as error:
+            raise ProtocolError("PRINTER_COMMAND_FAILED", str(error)) from error
+
+    async def _printer_status(self) -> None:
+        if self.phase is Phase.CONNECTED:
+            raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
+        if not self.printer or not self.printer.can_use(self.authenticated_user):
+            raise ProtocolError("PRINTER_AUTH_REQUIRED", "Skrivarstatus är inte tillgänglig för denna användare")
+        report = await self.printer.status(self.authenticated_user)
+        await self.send_json({"type": "printer.status.result", "status": report})
 
     async def _washer_status(self) -> None:
         if self.phase is Phase.CONNECTED:
@@ -954,6 +979,23 @@ class VoiceSession:
                             "status": "failed",
                             "message": failure,
                         })
+                    self._reset()
+                    return
+                if action.name.startswith("printer."):
+                    if not self.printer or not self.printer.can_use(self.authenticated_user):
+                        spoken = "Skrivaren är inte tillgänglig för denna användare."
+                    elif action.name == "printer.status":
+                        report = await self.printer.status(self.authenticated_user)
+                        await self.send_json({"type": "printer.status.result", "status": report})
+                        labels = {"sleeping": "är i viloläge", "ready": "är redo", "busy": "arbetar", "printing": "skriver ut", "warning": "har en varning", "error": "behöver hjälp"}
+                        spoken = ("Skrivaren " + labels.get(report.get("state"), "har okänd status") + ". " + ". ".join(report.get("alerts", []))) if report.get("available") else "Skrivarens status är tillfälligt otillgänglig."
+                    else:
+                        await self.send_json({"type": "printer.action", "action": action.name.split(".")[1]})
+                        spoken = "Jag öppnar skrivarkortet. Välj dokument eller bekräfta åtgärden där."
+                    await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
+                    await self._stream_action_speech(utterance_id, spoken, self._character())
+                    await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "completed", "message": spoken})
+                    self._remember_turn(transcript, spoken)
                     self._reset()
                     return
                 if action.name == "washer.status":
