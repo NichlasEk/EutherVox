@@ -14,3 +14,10 @@ class WasherPollingTest {
         assertEquals(15_000L, washerPollIntervalMs("finished", "started"))
     }
 }
+
+class ReconnectPolicyTest {
+    @Test fun reconnectBacksOffFurtherInBackground() {
+        assertEquals(8_000L, reconnectLimitMs(true))
+        assertEquals(120_000L, reconnectLimitMs(false))
+    }
+}

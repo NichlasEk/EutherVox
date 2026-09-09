@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import inspect
 from dataclasses import dataclass, field, replace
 from enum import Enum
@@ -114,6 +115,7 @@ class VoiceSession:
     voice_id: str = ""
     llm_model: str = ""
     node_name: str = "unknown"
+    notification_node: str = "unknown"
     audio: bytearray = field(default_factory=bytearray)
     response_task: asyncio.Task | None = None
     received_frames: int = 0
@@ -186,7 +188,7 @@ class VoiceSession:
 
     async def close(self) -> None:
         if self.washer_notifications:
-            self.washer_notifications.unsubscribe(self.node_name, self._deliver_washer_notification)
+            self.washer_notifications.unsubscribe(self.notification_node, self._deliver_washer_notification)
         if self.response_task:
             self.response_task.cancel()
             await asyncio.gather(self.response_task, return_exceptions=True)
@@ -207,6 +209,15 @@ class VoiceSession:
             raise ProtocolError("UNSUPPORTED_AUDIO", "Expected mono pcm_s16le, 16000 Hz, 20 ms frames", False)
         self.character_name = message.get("character", self.config.default_character)
         self.node_name = str(message.get("node_name", "unknown"))
+        # Keep the display/routing name independent from each installation's queue.
+        device_id = message.get("notification_device_id", "")
+        if not isinstance(device_id, str) or len(device_id) > 128:
+            raise ProtocolError("INVALID_MESSAGE", "Invalid notification device identity", False)
+        self.notification_node = (
+            "device-" + hashlib.sha256(
+                json.dumps([self.authenticated_user, device_id]).encode()
+            ).hexdigest() if device_id else self.node_name
+        )
         available_models = self._available_llm_models()
         if available_models:
             requested_model = str(message.get("llm_model", available_models[0])).strip() or available_models[0]
@@ -256,7 +267,7 @@ class VoiceSession:
         if self.printer and self.printer.can_use(self.authenticated_user):
             await self.send_json({"type": "printer.config", "available": True})
         if self.authenticated_user and self.washer_notifications and self.washer_notifications.enabled:
-            self.washer_notifications.subscribe(self.node_name, self._deliver_washer_notification)
+            self.washer_notifications.subscribe(self.notification_node, self._deliver_washer_notification)
         LOG.info(
             "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,

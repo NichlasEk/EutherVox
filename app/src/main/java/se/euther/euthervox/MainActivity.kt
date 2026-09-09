@@ -179,6 +179,8 @@ fun EutherVoxApp() {
     var backgroundNodeEnabled by remember {
         mutableStateOf(preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, true))
     }
+    var batterySaver by remember { mutableStateOf(preferences.getBoolean(EutherVoxNodeService.PREFERENCE_BATTERY_SAVER, true)) }
+    var settingsBatterySaver by remember { mutableStateOf(batterySaver) }
     var batteryUnrestricted by remember {
         mutableStateOf(context.getSystemService(PowerManager::class.java)
             .isIgnoringBatteryOptimizations(context.packageName))
@@ -242,19 +244,23 @@ fun EutherVoxApp() {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                controller.setUiVisible(true)
                 batteryUnrestricted = context.getSystemService(PowerManager::class.java)
                     .isIgnoringBatteryOptimizations(context.packageName)
                 backgroundNodeEnabled = preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, true)
             }
             if (event == Lifecycle.Event.ON_PAUSE) {
+                controller.setUiVisible(false)
                 controller.onPause()
                 lightController.stopScan()
                 wifiLightController.stopMusicMode()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
+        controller.setUiVisible(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            controller.setUiVisible(false)
             if (!preferences.getBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, true)) {
                 controller.disconnect()
             }
@@ -323,6 +329,7 @@ fun EutherVoxApp() {
                     settingsVoiceId = voiceId
                     settingsLlmModel = llmModel
                     settingsBackgroundNodeEnabled = backgroundNodeEnabled
+                    settingsBatterySaver = batterySaver
                     settingsAutomaticBargeInEnabled = automaticBargeInEnabled
                     settingsPassword = ""
                     showSettings = true
@@ -550,9 +557,18 @@ fun EutherVoxApp() {
                     "Qwen3 4B svarar snabbast. Qwen3.8 27B är betydligt större och kan ta längre tid innan första svaret.",
                     style = MaterialTheme.typography.bodySmall,
                 )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = settingsBatterySaver, onCheckedChange = { settingsBatterySaver = it })
+                    Text("Batterisnål bakgrund")
+                }
+                Text(
+                    if (settingsBatterySaver) "Låter telefonen sova. Klarmeddelanden kan fördröjas i djupsömn; servern köar dem när telefonen inte är ansluten."
+                    else "Prioriterar ständig mottagning och håller telefonens processor vaken. Drar mer batteri.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
                 if (settingsBackgroundNodeEnabled) {
                     Text(
-                        if (batteryUnrestricted) "Bakgrundsmeddelanden tillåts med släckt skärm."
+                        if (batteryUnrestricted) "Bakgrundsdrift är tillåten av Android."
                         else "Tillåt bakgrundsdrift så att Android inte pausar tvättmeddelanden när telefonen vilar.",
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -646,6 +662,7 @@ fun EutherVoxApp() {
                     putString("voice_id", savedVoiceId)
                     putString("llm_model", savedLlmModel)
                     putBoolean(EutherVoxNodeService.PREFERENCE_ENABLED, settingsBackgroundNodeEnabled)
+                    putBoolean(EutherVoxNodeService.PREFERENCE_BATTERY_SAVER, settingsBatterySaver)
                     putBoolean("automatic_barge_in", settingsAutomaticBargeInEnabled)
                 }
                 address = savedAddress
@@ -655,6 +672,7 @@ fun EutherVoxApp() {
                 voiceId = savedVoiceId
                 llmModel = savedLlmModel
                 backgroundNodeEnabled = settingsBackgroundNodeEnabled
+                batterySaver = settingsBatterySaver
                 automaticBargeInEnabled = settingsAutomaticBargeInEnabled
                 controller.setAutomaticBargeInEnabled(settingsAutomaticBargeInEnabled)
                 showSettings = false

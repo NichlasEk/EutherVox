@@ -1481,3 +1481,42 @@ def test_direct_cast_failure_stays_on_requested_room_and_finishes_cleanly():
         assert not any(item.get("type") == "action.request" for item in controls)
 
     asyncio.run(scenario())
+
+
+def test_same_node_name_has_independent_persistent_phone_queues(tmp_path):
+    from gateway.washer_notifications import WasherCompletionMonitor
+
+    async def scenario():
+        monitor = WasherCompletionMonitor(
+            types.SimpleNamespace(enabled=True),
+            {"notifications_enabled": True, "notification_state_file": "phones.json"}, tmp_path,
+        )
+        sessions = []
+        for device in ("graphene-install", "samsung-install"):
+            session, sent = make_session()
+            session.authenticated_user = "nichlas"
+            session.washer_notifications = monitor
+            message = json.loads(start_message())
+            message.update(node_name="android-phone", notification_device_id=device)
+            await session.handle_text(json.dumps(message))
+            sessions.append((session, sent))
+        first, second = [entry[0] for entry in sessions]
+        assert first.node_name == second.node_name == "android-phone"
+        assert first.notification_node != second.notification_node
+        for session, _ in sessions:
+            monitor._state["queues"][session.notification_node].append({"id": "finished-1", "text": "Tvätten är klar!"})
+        await monitor._deliver_pending()
+        for session, sent in sessions:
+            assert sum(isinstance(item, dict) and item.get("type") == "assistant.notification" for item in sent) == 1
+            assert not monitor._state["queues"][session.notification_node]
+        await first.close()
+        assert first.notification_node not in monitor._callbacks
+        again, _ = make_session()
+        again.authenticated_user = "nichlas"
+        again.washer_notifications = monitor
+        message.update(notification_device_id="graphene-install")
+        await again.handle_text(json.dumps(message))
+        assert again.notification_node == first.notification_node
+        await again.close()
+        await second.close()
+    asyncio.run(scenario())

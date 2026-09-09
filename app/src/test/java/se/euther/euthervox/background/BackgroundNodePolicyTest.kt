@@ -25,3 +25,20 @@ class BackgroundNodePolicyTest {
         )
     }
 }
+
+class BatteryWakeLockPolicyTest {
+    @Test fun batteryModeSleepsWhileIdleOrReconnecting() {
+        for (status in listOf(VoiceStatus.Idle, VoiceStatus.Connecting, VoiceStatus.Error)) {
+            assertEquals(false, backgroundNeedsWakeLock(true, status, false))
+        }
+    }
+    @Test fun workAndSpeechKeepTemporaryProtection() {
+        for (status in listOf(VoiceStatus.Listening, VoiceStatus.Processing, VoiceStatus.Speaking)) {
+            assertEquals(true, backgroundNeedsWakeLock(true, status, false))
+        }
+        assertEquals(true, backgroundNeedsWakeLock(true, VoiceStatus.Idle, true))
+    }
+    @Test fun reliableModeKeepsReceptionAwake() {
+        assertEquals(true, backgroundNeedsWakeLock(false, VoiceStatus.Idle, false))
+    }
+}

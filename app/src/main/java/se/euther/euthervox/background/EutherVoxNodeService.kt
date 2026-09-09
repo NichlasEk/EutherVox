@@ -40,6 +40,8 @@ internal fun backgroundNodeNotificationText(
 class EutherVoxNodeService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var notificationJob: Job? = null
+    private var batterySaver = true
+    private var lastNotificationLabel: String? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
@@ -61,12 +63,13 @@ class EutherVoxNodeService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        startInForeground("Startar bakgrundsnoden…")
-        if (wakeLock == null) {
-            wakeLock = getSystemService(PowerManager::class.java)
-                .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EutherVox:HouseMessages")
-                .apply { acquire() }
-        }
+        val current = EutherVoxNodeRuntime.controller(this).state.value
+        startInForeground(backgroundNodeNotificationText(current.status, current.canTalk, current.connectionLabel))
+        lastNotificationLabel = null
+        // Re-acquire under the selected policy when switching modes.
+        wakeLock?.let { if (it.isHeld) it.release() }
+        batterySaver = preferences().getBoolean(PREFERENCE_BATTERY_SAVER, true)
+        updateWakeLock(EutherVoxNodeRuntime.controller(this).state.value)
         EutherVoxNodeRuntime.connectSaved(this)
         observeConnection()
         return START_STICKY
@@ -95,11 +98,13 @@ class EutherVoxNodeService : Service() {
         if (notificationJob != null) return
         notificationJob = scope.launch {
             EutherVoxNodeRuntime.controller(this@EutherVoxNodeService).state.collectLatest { state ->
+                updateWakeLock(state)
                 val label = backgroundNodeNotificationText(
                     state.status,
                     state.canTalk,
                     state.connectionLabel,
                 )
+                if (label == lastNotificationLabel) return@collectLatest
                 if (
                     Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
                     ContextCompat.checkSelfPermission(
@@ -109,9 +114,24 @@ class EutherVoxNodeService : Service() {
                 ) runCatching {
                     NotificationManagerCompat.from(this@EutherVoxNodeService)
                         .notify(NOTIFICATION_ID, notification(label))
+                    lastNotificationLabel = label
                 }
             }
         }
+    }
+
+    private fun updateWakeLock(state: se.euther.euthervox.app.VoiceUiState) {
+        val needed = backgroundNeedsWakeLock(batterySaver, state.status, state.printerBusy)
+        if (!needed) {
+            wakeLock?.let { if (it.isHeld) it.release() }
+            return
+        }
+        val lock = wakeLock ?: getSystemService(PowerManager::class.java)
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "EutherVox:HouseMessages")
+            .apply { setReferenceCounted(false) }.also { wakeLock = it }
+        if (batterySaver) {
+            if (!lock.isHeld) lock.acquire(120_000L)
+        } else if (!lock.isHeld) lock.acquire()
     }
 
     private fun notification(text: String) = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -166,6 +186,7 @@ class EutherVoxNodeService : Service() {
             }
         }
 
+        const val PREFERENCE_BATTERY_SAVER = "background_battery_saver"
         const val PREFERENCE_ENABLED = "background_node_enabled"
         private const val ACTION_STOP = "se.euther.euthervox.action.STOP_BACKGROUND_NODE"
         private const val CHANNEL_ID = "euthervox_background_node"
@@ -187,3 +208,6 @@ class EutherVoxNodeService : Service() {
         }
     }
 }
+
+internal fun backgroundNeedsWakeLock(batterySaver: Boolean, status: VoiceStatus, printerBusy: Boolean): Boolean =
+    !batterySaver || printerBusy || status in setOf(VoiceStatus.Listening, VoiceStatus.Processing, VoiceStatus.Speaking)

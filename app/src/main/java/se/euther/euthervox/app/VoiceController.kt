@@ -145,6 +145,12 @@ private data class ConnectionIdentity(
 )
 
 class VoiceController(context: Context, private val scope: CoroutineScope) : VoiceTransport.Listener {
+    private val notificationDeviceId = context.applicationContext
+        .getSharedPreferences("euthervox", Context.MODE_PRIVATE).let { preferences ->
+            preferences.getString("notification_device_id", null) ?: UUID.randomUUID().toString().also {
+                check(preferences.edit().putString("notification_device_id", it).commit())
+            }
+        }
     private val microphone = PcmMicrophoneSource(context.applicationContext, scope)
     private val speaker: StreamingAudioSink = PcmAudioTrackSink(scope)
     private val authClient = EutherAuthClient()
@@ -168,6 +174,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var llmModel = ""
     private var shouldReconnect = false
     private var ready = false
+    private var uiVisible = false
+    private var reconnectWake: CompletableDeferred<Unit>? = null
     @Volatile private var conversationRequested = false
     @Volatile private var automaticBargeInEnabled = false
     private var utteranceId: String? = null
@@ -240,8 +248,11 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 if (!shouldReconnect) break
                 ready = false
                 mutableState.value = mutableState.value.copy(connectionLabel = "Återansluter…", status = VoiceStatus.Connecting, canTalk = false)
-                delay(retryMs)
-                retryMs = (retryMs * 2).coerceAtMost(8_000)
+                val wake = CompletableDeferred<Unit>()
+                reconnectWake = wake
+                withTimeoutOrNull(retryMs.coerceAtMost(reconnectLimitMs(uiVisible))) { wake.await() }
+                if (reconnectWake === wake) reconnectWake = null
+                retryMs = (retryMs * 2).coerceAtMost(reconnectLimitMs(uiVisible))
             }
         }
     }
@@ -253,13 +264,26 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         washerPollResponse = null
     }
 
+    fun setUiVisible(visible: Boolean) {
+        if (uiVisible == visible) return
+        uiVisible = visible
+        if (visible) {
+            reconnectWake?.complete(Unit)
+            if (ready && mutableState.value.washerState != null) {
+                refreshWasher()
+                startWasherPolling()
+            }
+        } else stopWasherPolling()
+    }
+
     private fun startWasherPolling() {
         stopWasherPolling()
+        if (!uiVisible) return
         washerPollingJob = scope.launch {
-            while (ready) {
+            while (ready && uiVisible) {
                 delay(washerPollIntervalMs(mutableState.value.washerState?.state,
                     mutableState.value.washerSchedule?.state))
-                if (!ready) break
+                if (!ready || !uiVisible) break
                 val response = CompletableDeferred<Unit>()
                 washerPollResponse = response
                 val sent = transport?.sendText(washerStatus()) == true
@@ -715,7 +739,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     override suspend fun onOpen() {
         recordDiagnostic("transport.open")
         mutableState.value = mutableState.value.copy(connectionLabel = "Handshake…", status = VoiceStatus.Connecting)
-        transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId, llmModel = llmModel))
+        transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId, llmModel = llmModel, notificationDeviceId = notificationDeviceId))
     }
 
     override suspend fun onText(text: String) {
@@ -1301,3 +1325,5 @@ internal fun keepNotificationOnPause(activeId: String?, notificationId: String?)
 
 internal fun washerPollIntervalMs(state: String?, scheduleState: String?): Long =
     if (state in setOf("running", "paused") || scheduleState in setOf("scheduled", "executing")) 5_000L else 15_000L
+
+internal fun reconnectLimitMs(uiVisible: Boolean): Long = if (uiVisible) 8_000L else 120_000L

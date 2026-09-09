@@ -10,12 +10,14 @@ fun sessionStart(
     character: String = "skinnskattaren",
     voiceId: String = "piper-nst",
     llmModel: String = "",
+    notificationDeviceId: String = "",
 ): String =
     JsonObject().apply {
         addProperty("type", "session.start")
         addProperty("protocol_version", PROTOCOL_VERSION)
         addProperty("client_id", "android-phone")
         addProperty("node_name", nodeName)
+        if (notificationDeviceId.isNotBlank()) addProperty("notification_device_id", notificationDeviceId)
         addProperty("room", "mobile")
         addProperty("character", character)
         addProperty("voice_id", voiceId)
