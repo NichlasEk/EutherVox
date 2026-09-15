@@ -9,9 +9,11 @@ serviceintervall från faktiskt slitage. Inga återställningar via röstkommand
 
 Bekräftelse krävs både i gateway och EutherWash API, utöver befintlig autentisering.
 En accepterad återställning följs av befintlig statusavläsning; ingen optimistisk
-ändring av procentvärden. Ingen verklig återställning har provats på Ebba.
+ändring av procentvärden. Ingen verklig återställning kördes under utvecklingstesterna.
 
 Validering: 184 gatewaytester, 51 Android-enhetstester och debugbygge passerade.
 EutherWash: 125 tester. APK har samma signeringscertifikat som publicerade beta26.
 SHA-256: 19ec3c92baa869800565620d4b9c13142548eb78d9fb181b15beb926d0d7e804.
-Installeringsprov och visuell kontroll på telefon återstår.
+Användaren installerade beta 27 och bekräftade därefter att alla tre
+återställningarna fungerade på Ebba. Filter uppdaterades först; huvudborste
+och sidoborste tog längre tid att visa resultat. Ingen exakt fördröjning mättes.
