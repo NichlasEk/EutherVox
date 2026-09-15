@@ -1040,7 +1040,7 @@ class VoiceSession:
                         await self.send_json({"type": "action.completed", "action_id": action.action_id, "status": "failed", "message": failure})
                     self._reset()
                     return
-                if action.name == "vacuum.status":
+                if action.name in {"vacuum.status", "vacuum.control"}:
                     try:
                         if not self.authenticated_user:
                             raise RuntimeError("Logga in med EutherID för att läsa dammsugarrapporten")
@@ -1052,7 +1052,22 @@ class VoiceSession:
                             "status": "running",
                             "message": "Läser robotdammsugaren…",
                         })
-                        spoken = await self.eutherwash.vacuum_status_text()
+                        if action.name == "vacuum.control":
+                            command = str(action.arguments["command"])
+                            if command not in {"start", "pause", "stop", "return-to-dock"}:
+                                raise ValueError("Okänt dammsugarkommando")
+                            # The deterministic full-utterance imperative supplies
+                            # explicit intent; no model-generated confirmation.
+                            status = await self.eutherwash.vacuum_command(command, confirmed=command == "start")
+                            await self.send_json({"type": "vacuum.status.result", "status": status})
+                            spoken = {
+                                "start": "Ebba tog emot kommandot att börja städa.",
+                                "pause": "Ebba tog emot pauskommandot.",
+                                "stop": "Ebba tog emot stoppkommandot.",
+                                "return-to-dock": "Ebba tog emot kommandot att återvända till laddaren.",
+                            }[command]
+                        else:
+                            spoken = await self.eutherwash.vacuum_status_text()
                         character = self._character()
                         await self.send_json({"type": "assistant.text.delta", "utterance_id": utterance_id, "text": spoken})
                         await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})

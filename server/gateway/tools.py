@@ -254,6 +254,19 @@ class EutherVoxToolRegistry:
     def create_action(self, tool_name: str, arguments: dict[str, Any], node_name: str) -> DeviceAction:
         if not isinstance(arguments, dict):
             raise ToolValidationError("Verktygsargument måste vara ett objekt")
+        # Deliberately not exposed as an LLM tool: motion is parsed from a
+        # complete, explicit voice command by the deterministic planner only.
+        if tool_name == "vacuum_control":
+            if not self.eutherwash or not self.eutherwash.enabled or not self.eutherwash.control_enabled:
+                raise ToolValidationError("Dammsugarstyrning är inte aktiverad")
+            command = arguments.get("command")
+            if not isinstance(command, str) or command not in {"start", "pause", "stop", "return-to-dock"} or set(arguments) != {"command"}:
+                raise ToolValidationError("Okänt dammsugarkommando")
+            return DeviceAction(
+                action_id=str(uuid4()), name="vacuum.control", target_node=node_name,
+                arguments={"command": command}, acknowledgement="Jag styr Ebba.",
+            )
+
         allowed = next((item for item in self.definitions if item.name == tool_name), None)
         if allowed is None:
             raise ToolValidationError(f"Okänt verktyg: {tool_name}")

@@ -51,7 +51,7 @@ class OllamaToolPlanner:
         re.IGNORECASE,
     )
     _VACUUM_REFERENCE = re.compile(
-        r"\b(?:robotdammsug(?:are|aren)|dammsug(?:are|aren)|städrobot(?:en)?|roboten)\b",
+        r"\b(?:robotdammsug(?:are|aren)|dammsug(?:are|aren)|städrobot(?:en)?|roboten|ebba)\b",
         re.IGNORECASE,
     )
     _PUMP_CONTROL_INTENT = re.compile(
@@ -160,6 +160,8 @@ class OllamaToolPlanner:
             if len(calls) != 1:
                 return None
             function = calls[0].get("function", {})
+            if function.get("name") == "vacuum_control":
+                return None
             arguments: Any = function.get("arguments", {})
             if isinstance(arguments, str):
                 arguments = json.loads(arguments)
@@ -171,6 +173,9 @@ class OllamaToolPlanner:
             return None
 
     def plan_deterministic(self, transcript: str, node_name: str) -> DeviceAction | None:
+        vacuum = self._plan_vacuum_control(transcript, node_name)
+        if vacuum is not None:
+            return vacuum
         report = self._plan_report(transcript, node_name)
         if report is not None:
             LOG.info("tool_decision path=deterministic domain=report action=%s", report.name)
@@ -196,6 +201,27 @@ class OllamaToolPlanner:
                 television.name, television.arguments.get("target", "none"),
             )
             return television
+        return None
+
+    def _plan_vacuum_control(self, transcript: str, node_name: str) -> DeviceAction | None:
+        # Full utterance matches only: no negations, hypothetical requests, room
+        # targets or model-generated motion. A spoken imperative is the request.
+        text = transcript.casefold().strip().rstrip(".!?").strip()
+        text = re.sub(r"^(?:kan du|skulle du kunna|snälla)\s+", "", text)
+        text = re.sub(r"\s+tack$", "", text)
+        target = r"(?:ebba|robotdammsugaren|dammsugaren|städroboten)"
+        patterns = (
+            (rf"(?:starta|fortsätt med) {target}|{target}[, ]+städa", "start"),
+            (rf"pausa {target}|{target}[, ]+pausa", "pause"),
+            (rf"stoppa {target}|{target}[, ]+stoppa", "stop"),
+            (rf"skicka hem {target}|skicka {target} (?:hem|till laddaren)|{target}[, ]+(?:gå|åk) hem", "return-to-dock"),
+        )
+        for pattern, command in patterns:
+            if re.fullmatch(pattern, text):
+                try:
+                    return self.registry.create_action("vacuum_control", {"command": command}, node_name)
+                except ToolValidationError:
+                    return None
         return None
 
     def _plan_report(self, transcript: str, node_name: str) -> DeviceAction | None:
