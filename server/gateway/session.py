@@ -584,11 +584,12 @@ class VoiceSession:
         if not self.eutherwash or not self.eutherwash.enabled or not self.eutherwash.control_enabled:
             raise ProtocolError("VACUUM_CONTROL_DISABLED", "Dammsugarstyrning är inte aktiverad")
         command = str(message.get("command", ""))
-        allowed_commands = {"start", "pause", "stop", "return-to-dock", "start-fast-mapping"}
+        allowed_commands = {"start", "pause", "stop", "return-to-dock", "start-fast-mapping",
+                            "reset-main-brush", "reset-side-brush", "reset-filter"}
         if command not in allowed_commands:
             raise ProtocolError("VACUUM_COMMAND_INVALID", "Okänt dammsugarkommando")
         confirmed = message.get("confirmed") is True
-        if command in {"start", "start-fast-mapping"} and not confirmed:
+        if command in {"start", "start-fast-mapping", "reset-main-brush", "reset-side-brush", "reset-filter"} and not confirmed:
             raise ProtocolError("VACUUM_CONFIRMATION_REQUIRED", "Kommandot måste bekräftas")
         try:
             status = await self.eutherwash.vacuum_command(command, confirmed=confirmed)
@@ -604,6 +605,9 @@ class VoiceSession:
                 "stop": "Robotdammsugaren stoppades.",
                 "return-to-dock": "Robotdammsugaren återvänder till laddaren.",
                 "start-fast-mapping": "Robotdammsugaren startade en ny snabbkarta.",
+                "reset-main-brush": "Huvudborstens återställning accepterades. Status är avläst igen.",
+                "reset-side-brush": "Sidoborstens återställning accepterades. Status är avläst igen.",
+                "reset-filter": "Filtrets återställning accepterades. Status är avläst igen.",
             }[command],
         })
 

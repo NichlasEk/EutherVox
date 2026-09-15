@@ -40,8 +40,9 @@ class EutherWashService:
     }
     _VACUUM_COMMANDS = {
         "start", "pause", "stop", "return-to-dock", "start-fast-mapping",
+        "reset-main-brush", "reset-side-brush", "reset-filter",
     }
-    _VACUUM_CONFIRMATION_REQUIRED = {"start", "start-fast-mapping"}
+    _VACUUM_CONFIRMATION_REQUIRED = {"start", "start-fast-mapping", "reset-main-brush", "reset-side-brush", "reset-filter"}
 
     def __init__(self, settings: dict, *, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.enabled = bool(settings.get("enabled", False))

@@ -1251,6 +1251,23 @@ private fun VacuumPanel(
 ) {
     var pendingVacuumStart by remember { mutableStateOf(false) }
     var pendingVacuumMapping by remember { mutableStateOf(false) }
+    var showMaintenance by remember { mutableStateOf(false) }
+    var pendingReset by remember { mutableStateOf<Pair<String, String>?>(null) }
+    pendingReset?.let { (command, part) ->
+        AlertDialog(
+            onDismissRequest = { pendingReset = null },
+            title = { Text("Återställ räknare för $part?") },
+            text = { Text("Gör detta efter byte eller utfört underhåll av $part. Endast den valda serviceräknaren återställs; det mäter inte delens skick.") },
+            confirmButton = {
+                Button(onClick = { pendingReset = null; onCommand(command, true) },
+                    enabled = !busy && controlsAvailable && vacuum?.online == true && vacuum.state in setOf("idle", "charging")) {
+                    Text("Ja, återställ")
+                }
+            },
+            dismissButton = { TextButton(onClick = { pendingReset = null }) { Text("Nej, avbryt") } },
+        )
+    }
+
     Text("Robotdammsugare", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text("Status, lokala kartor och kontroller samlade på ett ställe.", textAlign = TextAlign.Center, color = Forest)
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
@@ -1300,6 +1317,17 @@ private fun VacuumPanel(
                 Text(if (busy) "Uppdaterar…" else "Uppdatera dammsugaren")
             }
             if (controlsAvailable) {
+                OutlinedButton(onClick = { showMaintenance = !showMaintenance }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (showMaintenance) "Stäng underhåll" else "Underhåll och serviceräknare")
+                }
+                if (showMaintenance) {
+                    Text("Räknarna visar serviceintervall, inte uppmätt slitage. Återställ bara den del du har bytt eller underhållit.", style = MaterialTheme.typography.bodySmall)
+                    listOf("reset-main-brush" to "huvudborste", "reset-side-brush" to "sidoborste", "reset-filter" to "filter").forEach { entry ->
+                        OutlinedButton(onClick = { pendingReset = entry },
+                            enabled = !busy && vacuum?.online == true && vacuum.state in setOf("idle", "charging"),
+                            modifier = Modifier.fillMaxWidth()) { Text("Återställ ${entry.second}") }
+                    }
+                }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { pendingVacuumStart = true },

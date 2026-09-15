@@ -177,7 +177,7 @@ def test_vacuum_control_rejects_unknown_and_unconfirmed_motion(tmp_path: Path):
 
     with pytest.raises(ValueError, match="Okänt"):
         asyncio.run(service.vacuum_command("drive-anywhere", confirmed=True))
-    for command in ("start", "start-fast-mapping"):
+    for command in ("start", "start-fast-mapping", "reset-main-brush", "reset-side-brush", "reset-filter"):
         with pytest.raises(ValueError, match="bekräftelse"):
             asyncio.run(service.vacuum_command(command))
 
@@ -204,3 +204,17 @@ def test_vacuum_maps_uses_fixed_route_and_drops_cloud_metadata():
     assert maps["maps"][0]["rooms"] == [{"id": 1, "name": "Kök"}]
     assert maps["maps"][0]["robot"] == {"x": 3.5, "y": 4.5, "angle": 90}
     assert "object_name" not in maps and "md5" not in maps["maps"][0]
+
+
+@pytest.mark.parametrize("command", ["reset-main-brush", "reset-side-brush", "reset-filter"])
+def test_counter_reset_uses_confirmed_fixed_route(tmp_path, command):
+    token = tmp_path / "token"
+    token.write_text("synthetic-control-token-at-least-32-characters")
+    token.chmod(0o600)
+    def handler(request):
+        assert request.method == "POST"
+        assert request.url.path == "/v1/vacuums/dammsugaren/commands/" + command
+        assert request.content == b'{"confirmed":true}'
+        return httpx.Response(200, json={"accepted": True, "status": {"online": True}})
+    service = EutherWashService(settings(control_enabled=True, control_token_file=str(token)), transport=httpx.MockTransport(handler))
+    assert asyncio.run(service.vacuum_command(command, confirmed=True))["online"] is True

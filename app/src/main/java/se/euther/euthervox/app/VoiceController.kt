@@ -694,6 +694,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             "stop" -> "Stoppar robotdammsugaren…"
             "return-to-dock" -> "Skickar robotdammsugaren till laddaren…"
             "start-fast-mapping" -> "Startar en ny snabbkarta…"
+            "reset-main-brush", "reset-side-brush", "reset-filter" -> "Återställer vald serviceräknare…"
             else -> "Skickar dammsugarkommandot…"
         }
         mutableState.value = mutableState.value.copy(vacuumBusy = true, vacuumMessage = progress)
