@@ -1,5 +1,8 @@
 package se.euther.euthervox.app
 
+import com.google.gson.JsonObject
+import android.util.Base64
+import kotlinx.coroutines.channels.Channel
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
@@ -105,6 +108,15 @@ data class VoiceUiState(
     val printerAvailable: Boolean = false,
     val washerStatusStale: Boolean = false,
     val washerControlsAvailable: Boolean = false,
+    val robotMusic: JsonObject? = null,
+    val robotMusicBusy: Boolean = false,
+    val robotMusicMessage: String? = null,
+    val robotTalking: Boolean = false,
+    val robotTalkMessage: String? = null,
+    val deliveryMap: JsonObject? = null,
+    val deliveryJob: JsonObject? = null,
+    val deliveryMessage: String? = null,
+    val deliveryBusy: Boolean = false,
     val vacuumState: ServerEvent.VacuumState? = null,
     val vacuumMaps: ServerEvent.VacuumMaps? = null,
     val vacuumMapsBusy: Boolean = false,
@@ -265,6 +277,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun setUiVisible(visible: Boolean) {
+        if (!visible && robotTalkHeld) stopRobotTalk()
         if (uiVisible == visible) return
         uiVisible = visible
         if (visible) {
@@ -296,6 +309,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     fun disconnect() {
+        stopRobotTalk()
         printerTimeoutJob?.cancel()
         mutableState.value = mutableState.value.copy(printerState = null, printerAvailable = false, printerPdf = null, printerJobs = emptyList(), printerAction = null, printerMessage = null, printerBusy = false)
         stopWasherPolling()
@@ -657,6 +671,131 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         scope.launch { transport?.sendText(washerScheduleCancel()) }
     }
 
+    private var robotMusicDeadline: Job? = null
+    fun robotMusic(operation: String, query: String = "", cleaning: Boolean = false, volume: Int = 50) {
+        if (!ready) return
+        if (operation != "status") {
+            stopRobotTalk()
+            mutableState.value = mutableState.value.copy(robotMusicBusy = true, robotMusicMessage = if (operation == "play") "Söker och öppnar låten…" else "Styr musiken…")
+            robotMusicDeadline?.cancel()
+            robotMusicDeadline = scope.launch { delay(45_000); mutableState.value = mutableState.value.copy(robotMusicBusy = false, robotMusicMessage = "Musiksvaret dröjer. Uppdatera status innan du försöker igen.") }
+        }
+        scope.launch {
+            val message = JsonObject().apply {
+                addProperty("type", "vacuum.music"); addProperty("operation", operation)
+                addProperty("query", query); addProperty("cleaning", cleaning); addProperty("volume", volume)
+            }
+            if (transport?.sendText(message.toString()) != true) {
+                robotMusicDeadline?.cancel()
+                mutableState.value = mutableState.value.copy(robotMusicBusy = false, robotMusicMessage = "Anslut till Vox för att styra musiken")
+            }
+        }
+    }
+
+    private val robotMicrophone = PcmMicrophoneSource(context.applicationContext, scope)
+    @Volatile private var robotTalkId: String? = null
+    @Volatile private var robotTalkHeld = false
+    private var robotTalkWriter: Job? = null
+    private var robotTalkAck: CompletableDeferred<Int>? = null
+    private var robotTalkDeadline: Job? = null
+
+    private suspend fun sendRobotTalk(operation: String, id: String, sequence: Int = 0, data: ByteArray? = null): Boolean =
+        transport?.sendText(JsonObject().apply {
+            addProperty("type", "vacuum.talk"); addProperty("operation", operation); addProperty("id", id)
+            if (data != null) { addProperty("sequence", sequence); addProperty("data", Base64.encodeToString(data, Base64.NO_WRAP)) }
+        }.toString()) == true
+
+    fun startRobotTalk() {
+        if (!ready || !uiVisible || robotTalkHeld) return
+        stopConversation()
+        robotTalkHeld = true
+        val id = UUID.randomUUID().toString(); robotTalkId = id
+        mutableState.value = mutableState.value.copy(robotTalking = true, robotTalkMessage = "Öppnar Ebbas högtalare…")
+        scope.launch {
+            if (!sendRobotTalk("start", id) && robotTalkId == id) stopRobotTalk("Kunde inte öppna ljudströmmen")
+        }
+        robotTalkDeadline = scope.launch { delay(10_000); if (robotTalkId == id) stopRobotTalk("Högtalaren svarade inte i tid") }
+    }
+
+    fun stopRobotTalk(message: String? = null) {
+        val id = robotTalkId
+        robotTalkHeld = false; robotTalkId = null
+        robotMicrophone.stop(); robotTalkWriter?.cancel(); robotTalkWriter = null
+        robotTalkAck?.cancel(); robotTalkAck = null
+        robotTalkDeadline?.cancel(); robotTalkDeadline = null
+        mutableState.value = mutableState.value.copy(robotTalking = false, robotTalkMessage = message ?: if (id != null) "Mikrofonen är avstängd" else mutableState.value.robotTalkMessage)
+        if (id != null) scope.launch { sendRobotTalk("stop", id) }
+    }
+
+    private fun robotSpeakerReady(id: String) {
+        if (!robotTalkHeld || robotTalkId != id || !uiVisible) {
+            scope.launch { sendRobotTalk("stop", id) }; return
+        }
+        robotTalkDeadline?.cancel()
+        robotTalkDeadline = scope.launch { delay(28_000); if (robotTalkId == id) stopRobotTalk("Släpp och håll inne igen för att fortsätta") }
+        val batches = Channel<ByteArray>(1)
+        robotTalkWriter = scope.launch {
+            try {
+                var sequence = 0
+                for (batch in batches) {
+                    if (robotTalkId != id) break
+                    val ack = CompletableDeferred<Int>(); robotTalkAck = ack
+                    if (!sendRobotTalk("frame", id, sequence, batch) || withTimeoutOrNull(1000) { ack.await() } != sequence) {
+                        if (robotTalkId == id) stopRobotTalk("Ljudanslutningen hann inte med. Håll inne igen för att försöka på nytt.")
+                        break
+                    }
+                    sequence++
+                }
+            } finally { batches.close() }
+        }
+        var buffer = ByteArray(6400); var offset = 0
+        runCatching {
+            robotMicrophone.start(onFirstFrame = {}, onFrame = { frame ->
+                if (robotTalkHeld && robotTalkId == id) {
+                    frame.copyInto(buffer, offset); offset += frame.size
+                    if (offset == buffer.size) {
+                        if (!batches.trySend(buffer).isSuccess) scope.launch {
+                            if (robotTalkId == id) stopRobotTalk("Ljudet fördröjdes. Håll inne igen för att försöka på nytt.")
+                        }
+                        buffer = ByteArray(6400); offset = 0
+                    }
+                }
+            })
+        }.onSuccess {
+            mutableState.value = mutableState.value.copy(robotTalkMessage = "Prata nu – din röst hörs genom Ebba")
+        }.onFailure { stopRobotTalk("Mikrofonen kunde inte öppnas. Kontrollera mikrofontillståndet.") }
+    }
+
+    private var deliveryPending: String? = null
+    private var deliverySequence = 0L
+    fun delivery(operation: String, payload: JsonObject = JsonObject()) {
+        if (!ready) {
+            mutableState.value = mutableState.value.copy(deliveryMessage = "Anslut till servern under Röst först.", deliveryBusy = false)
+            return
+        }
+        if (operation == "current" && deliveryPending != null) return
+        if (deliveryPending != null && deliveryPending != "current") return
+        deliveryPending = operation
+        val sequence = ++deliverySequence
+        mutableState.value = mutableState.value.copy(deliveryBusy = operation != "current",
+            deliveryMessage = if (operation == "map") "Hämtar Ebbas aktuella karta…" else if (operation in setOf("create", "speak")) null else mutableState.value.deliveryMessage)
+        scope.launch {
+            val sent = transport?.sendText(JsonObject().apply {
+                addProperty("type", "vacuum.delivery"); addProperty("operation", operation); add("payload", payload)
+            }.toString()) == true
+            if (!sent) {
+                deliveryPending = null
+                mutableState.value = mutableState.value.copy(deliveryBusy = false, deliveryMessage = "Anslutningen bröts. Uppdatera status innan du skickar igen.")
+            } else {
+                delay(50_000)
+                if (deliveryPending == operation && deliverySequence == sequence) {
+                    deliveryPending = null
+                    mutableState.value = mutableState.value.copy(deliveryBusy = false, deliveryMessage = "Svaret dröjer. Uppdatera status; ett skickat uppdrag kan fortfarande pågå.")
+                }
+            }
+        }
+    }
+
     fun refreshVacuum() {
         if (!ready) {
             mutableState.value = mutableState.value.copy(vacuumMessage = "Anslut till servern under Röst först.")
@@ -765,6 +904,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     override suspend fun onClosed(cause: Throwable?) {
+        stopRobotTalk("Anslutningen bröts – mikrofonen är avstängd")
         stopWasherPolling()
         mutableState.value = mutableState.value.copy(washerStatusStale = true, printerBusy = false, printerAvailable = false)
         ready = false
@@ -1026,6 +1166,28 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 vacuumBusy = false,
                 vacuumMessage = event.message,
             )
+            is ServerEvent.MusicResult -> {
+                if (event.operation != "status") robotMusicDeadline?.cancel()
+                mutableState.value = mutableState.value.copy(robotMusic = event.data,
+                    robotMusicBusy = if (event.operation == "status") mutableState.value.robotMusicBusy else false,
+                    robotMusicMessage = if (event.operation == "status" && mutableState.value.robotMusicBusy) mutableState.value.robotMusicMessage else event.data.get("message")?.asString)
+            }
+            is ServerEvent.TalkResult -> {
+                val id = event.data.get("id")?.takeUnless { it.isJsonNull }?.asString ?: ""
+                when (event.data.get("state")?.asString) {
+                    "ready" -> robotSpeakerReady(id)
+                    "frame" -> if (robotTalkId == id) robotTalkAck?.complete(event.data.get("sequence").asInt)
+                    "stopped" -> if (robotTalkId == id) stopRobotTalk()
+                }
+            }
+            is ServerEvent.DeliveryResult -> {
+                if (deliveryPending == event.operation) deliveryPending = null
+                mutableState.value = if (event.operation == "map") mutableState.value.copy(
+                    deliveryMap = event.data, deliveryBusy = false, deliveryMessage = "Nyp för att zooma. Tryck på fri golvyta för att välja mål.")
+                else mutableState.value.copy(deliveryBusy = deliveryPending != null && deliveryPending != "current",
+                    deliveryJob = event.data.get("job")?.takeUnless { it.isJsonNull }?.asJsonObject,
+                    deliveryMessage = if (event.operation == "cancel") "Avbrott begärt. Ebba stannar innan nästa steg." else mutableState.value.deliveryMessage)
+            }
             is ServerEvent.VacuumMapsResult -> mutableState.value = mutableState.value.copy(
                 vacuumMaps = event.vacuumMaps,
                 vacuumMapsBusy = false,
@@ -1041,6 +1203,14 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 mutableState.value = mutableState.value.copy(printerBusy = false, printerMessage = event.message)
             } else if (event.code.startsWith("WASHER_")) {
                 mutableState.value = mutableState.value.copy(washerBusy = false, washerMessage = event.message)
+            } else if (event.code.startsWith("VACUUM_MUSIC")) {
+                robotMusicDeadline?.cancel()
+                mutableState.value = mutableState.value.copy(robotMusicBusy = false, robotMusicMessage = event.message)
+            } else if (event.code.startsWith("VACUUM_TALK")) {
+                stopRobotTalk(event.message)
+            } else if (event.code.startsWith("VACUUM_DELIVERY")) {
+                deliveryPending = null
+                mutableState.value = mutableState.value.copy(deliveryBusy = false, deliveryMessage = event.message)
             } else if (event.code.startsWith("VACUUM_")) {
                 mutableState.value = mutableState.value.copy(
                     vacuumBusy = false,

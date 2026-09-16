@@ -293,6 +293,9 @@ sealed interface ServerEvent {
     ) : ServerEvent
     data class VacuumConfig(val available: Boolean, val controlsAvailable: Boolean) : ServerEvent
     data class VacuumStatusResult(val vacuum: VacuumState) : ServerEvent
+    data class MusicResult(val operation: String, val data: JsonObject) : ServerEvent
+    data class TalkResult(val data: JsonObject) : ServerEvent
+    data class DeliveryResult(val operation: String, val data: JsonObject) : ServerEvent
     data class VacuumMapsResult(val vacuumMaps: VacuumMaps) : ServerEvent
     data class VacuumCommandResult(val command: String, val vacuum: VacuumState, val message: String) : ServerEvent
     data class Error(val code: String, val message: String, val recoverable: Boolean) : ServerEvent
@@ -510,6 +513,9 @@ fun parseServerEvent(raw: String): ServerEvent {
                 updatedAt = vacuum["updated_at"]?.takeUnless { it.isJsonNull }?.asString,
             ) },
         )
+        "vacuum.music.result" -> ServerEvent.MusicResult(json["operation"].asString, json["data"].asJsonObject)
+        "vacuum.talk.result" -> ServerEvent.TalkResult(json["data"].asJsonObject)
+        "vacuum.delivery.result" -> ServerEvent.DeliveryResult(json["operation"].asString, json["data"].asJsonObject)
         "vacuum.maps.result" -> json["maps"].asJsonObject.let { collection ->
             ServerEvent.VacuumMapsResult(ServerEvent.VacuumMaps(
                 available = collection["available"]?.asBoolean ?: false,

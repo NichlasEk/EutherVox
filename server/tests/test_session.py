@@ -1520,3 +1520,86 @@ def test_same_node_name_has_independent_persistent_phone_queues(tmp_path):
         await again.close()
         await second.close()
     asyncio.run(scenario())
+
+
+def test_delivery_requires_login_and_routes_authenticated_result():
+    class DeliveryService:
+        control_enabled=True
+        async def delivery(self,operation,payload):
+            assert operation=='current' and payload=={}
+            return {'job':{'phase':'driving'}}
+    async def scenario():
+        session,sent=make_session();session.eutherwash=DeliveryService()
+        await session.handle_text(start_message())
+        try:
+            await session.handle_text(json.dumps({'type':'vacuum.delivery','operation':'current'}))
+        except ProtocolError as error:
+            assert error.code=='VACUUM_DELIVERY_AUTH'
+        else:raise AssertionError('Unauthenticated delivery was accepted')
+        session.authenticated_user='nichlas'
+        await session.handle_text(json.dumps({'type':'vacuum.delivery','operation':'current'}))
+        assert sent[-1]['type']=='vacuum.delivery.result'
+        assert sent[-1]['data']['job']['phase']=='driving'
+        await session.close()
+    asyncio.run(scenario())
+
+
+def test_talk_requires_login_routes_frames_and_closes_on_disconnect():
+    from uuid import uuid4
+    calls=[]
+    class TalkService:
+        control_enabled=True
+        async def talk(self,operation,payload):
+            calls.append((operation,payload))
+            return {'id':payload['id'],'state':'ready' if operation=='start' else operation}
+    async def scenario():
+        session,sent=make_session();session.eutherwash=TalkService()
+        await session.handle_text(start_message());ident=str(uuid4())
+        def msg(op,**kw):return json.dumps({'type':'vacuum.talk','operation':op,'id':ident,**kw})
+        try:await session.handle_text(msg('start'))
+        except ProtocolError as e:assert e.code=='VACUUM_TALK_AUTH'
+        else:raise AssertionError('Authentication bypass')
+        session.authenticated_user='nichlas'
+        await session.handle_text(msg('start'))
+        assert session.talk_id==ident and sent[-1]['type']=='vacuum.talk.result'
+        await session.handle_text(msg('frame',sequence=0,data='abc'))
+        assert calls[-1][0]=='frame'
+        await session.close();assert calls[-1][0]=='stop' and session.talk_id is None
+        count=len(calls);await session.handle_text(msg('frame',sequence=1,data='abc'));assert len(calls)==count
+    asyncio.run(scenario())
+
+
+def test_robot_music_requires_auth_and_validates_link_before_resolving():
+    async def scenario():
+        session, sent = make_session()
+        import pytest
+        with pytest.raises(ProtocolError) as error:
+            await session.handle_text(json.dumps({'type':'vacuum.music','operation':'play','query':'x'}))
+        assert error.value.code == 'VACUUM_MUSIC_AUTH'
+        session.phase = Phase.READY; session.authenticated_user = 'owner'
+        calls = []
+        async def music(operation, payload):
+            calls.append((operation, payload)); return {'state':'stopped'}
+        session.eutherwash = types.SimpleNamespace(control_enabled=True, music=music)
+        with pytest.raises(ProtocolError) as error:
+            await session.handle_text(json.dumps({'type':'vacuum.music','operation':'play','query':'https://localhost/private'}))
+        assert error.value.code == 'VACUUM_MUSIC_FAILED' and not calls
+        await session.handle_text(json.dumps({'type':'vacuum.music','operation':'stop'}))
+        assert calls == [('stop', {})]
+        assert sent[-1]['type'] == 'vacuum.music.result'
+    asyncio.run(scenario())
+
+
+def test_robot_music_extractor_failure_is_reported_without_disconnect(monkeypatch):
+    from gateway.youtube_audio import YouTubeAudioResolver
+    import pytest
+    async def fail(self, video_id): raise Exception('internal extractor failure')
+    monkeypatch.setattr(YouTubeAudioResolver, 'resolve', fail)
+    async def scenario():
+        session, sent = make_session(); session.phase = Phase.READY; session.authenticated_user = 'owner'
+        session.eutherwash = types.SimpleNamespace(control_enabled=True)
+        with pytest.raises(ProtocolError) as error:
+            await session._vacuum_music({'operation':'play','query':'https://youtu.be/jNQXAC9IVRw'})
+        assert error.value.code == 'VACUUM_MUSIC_FAILED'
+        assert 'internal' not in str(error.value)
+    asyncio.run(scenario())

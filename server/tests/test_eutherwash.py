@@ -218,3 +218,32 @@ def test_counter_reset_uses_confirmed_fixed_route(tmp_path, command):
         return httpx.Response(200, json={"accepted": True, "status": {"online": True}})
     service = EutherWashService(settings(control_enabled=True, control_token_file=str(token)), transport=httpx.MockTransport(handler))
     assert asyncio.run(service.vacuum_command(command, confirmed=True))["online"] is True
+
+
+def test_delivery_fixed_routes_auth_and_errors(tmp_path):
+    token=tmp_path/'token';token.write_text('synthetic-token-at-least-thirty-two-characters');token.chmod(0o600)
+    requests=[]
+    def handler(r):
+        requests.append(r)
+        assert r.headers['authorization'].startswith('Bearer synthetic')
+        if r.method=='POST' and not r.url.path.endswith('cancel'):
+            return httpx.Response(409,json={'detail':'Välj fri golvyta'})
+        return httpx.Response(200,json={'job':None})
+    service=EutherWashService(settings(control_enabled=True,control_token_file=str(token)),transport=httpx.MockTransport(handler))
+    asyncio.run(service.delivery('current',{}))
+    asyncio.run(service.delivery('cancel',{'home':True}))
+    assert str(requests[-1].url).endswith('/delivery/cancel?home=true')
+    with pytest.raises(RuntimeError,match='Välj fri golvyta'):asyncio.run(service.delivery('create',{}))
+    with pytest.raises(ValueError):asyncio.run(service.delivery('../../anything',{}))
+
+
+def test_direct_speech_uses_fixed_post_route_without_map(tmp_path):
+    token=tmp_path/'token';token.write_text('synthetic-token-at-least-thirty-two-characters');token.chmod(0o600)
+    payload={'request_id':'ab6f23b4-9410-491a-926c-242af927821a','text':'Hej'}
+    def handler(r):
+        assert r.method=='POST' and r.url.path.endswith('/delivery/speak')
+        assert json.loads(r.content)==payload
+        assert r.headers['authorization'].startswith('Bearer synthetic')
+        return httpx.Response(200,json={'job':{'kind':'speech','phase':'preparing'}})
+    service=EutherWashService(settings(control_enabled=True,control_token_file=str(token)),transport=httpx.MockTransport(handler))
+    assert asyncio.run(service.delivery('speak',payload))['job']['kind']=='speech'

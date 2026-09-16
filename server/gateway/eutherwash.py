@@ -277,6 +277,64 @@ class EutherWashService:
             parts.append("En huskarta finns sparad lokalt i roboten.")
         return " ".join(parts)
 
+    async def music(self, operation: str, payload: dict) -> dict:
+        if not self.enabled or not self.control_enabled or not self._control_token:
+            raise RuntimeError("Högtalarstyrning är inte aktiverad")
+        if operation not in {"play", "pause", "resume", "stop", "status", "volume"}:
+            raise ValueError("Okänd ljudåtgärd")
+        url = f"{self.base_url}/v1/vacuums/{quote(self.vacuum_alias, safe='')}/delivery/music/{operation}"
+        try:
+            async with httpx.AsyncClient(timeout=20, trust_env=False, transport=self.transport) as client:
+                response = await client.post(url, headers={"Authorization": f"Bearer {self._control_token}"}, json=payload)
+                if response.is_error:
+                    try: detail = response.json().get("detail")
+                    except ValueError: detail = None
+                    raise RuntimeError(detail if isinstance(detail, str) else "Ljudströmmen avbröts")
+                return response.json()
+        except httpx.HTTPError:
+            raise RuntimeError("Kontakten med Ebbas högtalare bröts") from None
+
+    async def talk(self, operation: str, payload: dict) -> dict:
+        if not self.enabled or not self.control_enabled or not self._control_token:
+            raise RuntimeError("Högtalarstyrning är inte aktiverad")
+        if operation not in {"start", "frame", "stop"}:
+            raise ValueError("Okänd ljudåtgärd")
+        url = f"{self.base_url}/v1/vacuums/{quote(self.vacuum_alias, safe='')}/delivery/talk/{operation}"
+        try:
+            async with httpx.AsyncClient(timeout=10 if operation == "start" else 5, trust_env=False, transport=self.transport) as client:
+                response = await client.post(url, headers={"Authorization": f"Bearer {self._control_token}"}, json=payload)
+                if response.is_error:
+                    try: detail = response.json().get("detail")
+                    except ValueError: detail = None
+                    raise RuntimeError(detail if isinstance(detail, str) else "Ljudströmmen avbröts")
+                return response.json()
+        except httpx.HTTPError:
+            raise RuntimeError("Kontakten med Ebbas högtalare bröts") from None
+
+    async def delivery(self, operation: str, payload: dict) -> dict:
+        if not self.enabled or not self.control_enabled or not self._control_token:
+            raise RuntimeError("Budbärarstyrning är inte aktiverad")
+        if operation not in {"map", "current", "create", "cancel", "speak"}:
+            raise ValueError("Okänd budbäraråtgärd")
+        suffix = "/"+operation if operation in {"map", "cancel", "speak"} else ""
+        url = f"{self.base_url}/v1/vacuums/{quote(self.vacuum_alias, safe='')}/delivery{suffix}"
+        if operation == "cancel":
+            url += "?home=" + ("true" if payload.get("home") is True else "false")
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(45, connect=3), trust_env=False, transport=self.transport) as client:
+                response = await client.request("POST" if operation in {"create", "cancel", "speak"} else "GET", url,
+                    headers={"Authorization": f"Bearer {self._control_token}"},
+                    json=payload if operation in {"create", "speak"} else None)
+                if response.is_error:
+                    try:
+                        detail = response.json().get("detail")
+                    except ValueError:
+                        detail = "Budbärartjänsten svarade inte korrekt. Uppdatera status."
+                    raise RuntimeError(detail if isinstance(detail, str) else "Kontrollera meddelande och målpunkt")
+                return response.json()
+        except httpx.HTTPError:
+            raise RuntimeError("Kunde inte nå budbärartjänsten. Uppdatera status innan du försöker igen.") from None
+
     async def vacuum_command(self, command: str, *, confirmed: bool = False) -> dict[str, object]:
         if not self.enabled or not self.control_enabled or not self._control_token:
             raise RuntimeError("Dammsugarstyrning är inte aktiverad")
@@ -299,6 +357,8 @@ class EutherWashService:
                 if response.status_code == 409:
                     detail = response.json().get("detail", "command_rejected")
                     messages = {
+                        "delivery_busy": "Avsluta Ebbas budbäraruppdrag först.",
+                        "speaker_busy": "Väntar på att Ebbas ljudström stängs. Försök igen om en liten stund.",
                         "vacuum_busy": "Robotdammsugaren måste vara stilla innan snabbkartläggningen startar.",
                         "battery_too_low": "Robotdammsugaren behöver minst 15 procent batteri.",
                         "remove_mop_before_mapping": "Ta bort moppen innan snabb kartläggning.",

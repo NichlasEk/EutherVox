@@ -110,6 +110,7 @@ class VoiceSession:
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
+    talk_id: str | None = None
     utterance_id: str | None = None
     character_name: str = ""
     voice_id: str = ""
@@ -171,6 +172,12 @@ class VoiceSession:
                 await self._washer_schedule_cancel()
             elif message_type == "vacuum.status":
                 await self._vacuum_status()
+            elif message_type == "vacuum.music":
+                await self._vacuum_music(message)
+            elif message_type == "vacuum.talk":
+                await self._vacuum_talk(message)
+            elif message_type == "vacuum.delivery":
+                await self._vacuum_delivery(message)
             elif message_type == "vacuum.maps":
                 await self._vacuum_maps()
             elif message_type == "vacuum.command":
@@ -187,6 +194,7 @@ class VoiceSession:
         self.received_frames += 1
 
     async def close(self) -> None:
+        await self._stop_robot_talk()
         if self.washer_notifications:
             self.washer_notifications.unsubscribe(self.notification_node, self._deliver_washer_notification)
         if self.response_task:
@@ -563,6 +571,91 @@ class VoiceSession:
             raise ProtocolError("VACUUM_STATUS_FAILED", str(error)) from error
         await self.send_json({"type": "vacuum.status.result", "status": status})
 
+    async def _stop_robot_talk(self):
+        ident = self.talk_id
+        self.talk_id = None
+        if ident and self.eutherwash:
+            try: await self.eutherwash.talk("stop", {"id": ident})
+            except (RuntimeError, ValueError, OSError): pass
+
+    async def _vacuum_music(self, message):
+        from .youtube_audio import YouTubeAudioResolver
+        from urllib.parse import urlsplit, parse_qs
+        import re
+        if self.phase is Phase.CONNECTED or not self.authenticated_user:
+            raise ProtocolError("VACUUM_MUSIC_AUTH", "Logga in och anslut först")
+        if not self.eutherwash or not self.eutherwash.control_enabled:
+            raise ProtocolError("VACUUM_MUSIC_DISABLED", "Ebbas musik är inte aktiverad")
+        operation = message.get("operation", "")
+        try:
+            payload = {}
+            if operation == "volume": payload["volume"] = int(message.get("volume", 50))
+            if operation == "play":
+                query = str(message.get("query", "")).strip()[:300]
+                if not query: raise ValueError("Skriv en låt eller en YouTube-länk")
+                video_id = ""
+                if query.startswith(("https://", "http://")):
+                    url = urlsplit(query); host = (url.hostname or "").lower()
+                    if host == "youtu.be": video_id = url.path.strip("/")
+                    elif host in {"youtube.com", "www.youtube.com", "music.youtube.com", "m.youtube.com"}:
+                        video_id = parse_qs(url.query).get("v", [""])[0]
+                    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id): raise ValueError("Använd en YouTube-länk till en enskild låt")
+                else:
+                    if not self.youtube or not self.youtube.authorized(self.authenticated_user):
+                        raise ValueError("Koppla YouTube-kontot för sökning, eller klistra in en låtlänk")
+                    tracks = await self.youtube.find_tracks(self.authenticated_user, self.youtube.preview(query))
+                    if not tracks: raise ValueError("Hittade ingen låt")
+                    video_id = tracks[0].provider_id
+                audio = await asyncio.wait_for(YouTubeAudioResolver().resolve(video_id), timeout=25)
+                payload = {"url": audio.url, "title": audio.title, "volume": int(message.get("volume", 50)), "cleaning": message.get("cleaning") is True}
+            result = await self.eutherwash.music(operation, payload)
+        except (ValueError, RuntimeError, OSError, TimeoutError) as error:
+            raise ProtocolError("VACUUM_MUSIC_FAILED", str(error) or "Musiken svarade inte i tid") from error
+        except Exception:
+            raise ProtocolError("VACUUM_MUSIC_FAILED", "Kunde inte hämta låten från YouTube. Prova en annan låt eller länk.") from None
+        await self.send_json({"type": "vacuum.music.result", "operation": operation, "data": result})
+
+    async def _vacuum_talk(self, message: dict):
+        from uuid import UUID
+        if self.phase is Phase.CONNECTED or not self.authenticated_user:
+            raise ProtocolError("VACUUM_TALK_AUTH", "Logga in och anslut först")
+        if not self.eutherwash or not self.eutherwash.control_enabled:
+            raise ProtocolError("VACUUM_TALK_DISABLED", "Högtalarstyrning är inte aktiverad")
+        operation = message.get("operation")
+        try:
+            ident = str(UUID(message.get("id", "")))
+            if operation == "start":
+                if self.phase is not Phase.READY or self.talk_id:
+                    raise ValueError("Avsluta pågående samtal först")
+                self.talk_id = ident
+                result = await self.eutherwash.talk("start", {"id": ident})
+            elif operation == "stop":
+                if ident == self.talk_id: await self._stop_robot_talk()
+                result = {"id": ident, "state": "stopped"}
+            elif operation == "frame":
+                if ident != self.talk_id: return
+                result = await self.eutherwash.talk("frame", {"id": ident, "sequence": message.get("sequence"), "data": message.get("data")})
+            else: raise ValueError("Okänd ljudåtgärd")
+        except (ValueError, RuntimeError, OSError) as error:
+            await self._stop_robot_talk()
+            raise ProtocolError("VACUUM_TALK_FAILED", str(error)) from error
+        await self.send_json({"type": "vacuum.talk.result", "data": result})
+
+    async def _vacuum_delivery(self, message: dict) -> None:
+        if self.phase is Phase.CONNECTED or not self.authenticated_user:
+            raise ProtocolError("VACUUM_DELIVERY_AUTH", "Logga in och anslut först")
+        if not self.eutherwash or not self.eutherwash.control_enabled:
+            raise ProtocolError("VACUUM_DELIVERY_DISABLED", "Budbäraren är inte aktiverad")
+        operation = str(message.get("operation", ""))
+        try:
+            payload = message.get("payload", {})
+            if not isinstance(payload, dict):
+                raise ValueError("Ogiltig leverans")
+            result = await self.eutherwash.delivery(operation, payload)
+        except (ValueError, RuntimeError, OSError) as error:
+            raise ProtocolError("VACUUM_DELIVERY_FAILED", str(error)) from error
+        await self.send_json({"type": "vacuum.delivery.result", "operation": operation, "data": result})
+
     async def _vacuum_maps(self) -> None:
         if self.phase is Phase.CONNECTED:
             raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
@@ -612,6 +705,7 @@ class VoiceSession:
         })
 
     async def _start_audio(self, message: dict) -> None:
+        await self._stop_robot_talk()
         if self.phase is not Phase.READY:
             raise ProtocolError("SESSION_BUSY", "Only one utterance may be active")
         utterance_id = str(message["utterance_id"])

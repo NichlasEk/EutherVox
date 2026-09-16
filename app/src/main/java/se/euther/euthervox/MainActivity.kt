@@ -484,6 +484,8 @@ fun EutherVoxApp() {
             } else if (selectedTab == "printer") {
                 PrinterPanel(state, controller)
             } else if (selectedTab == "vacuum") {
+                RobotMusicPanel(state, controller)
+                DeliveryPanel(state, controller)
                 VacuumPanel(
                     vacuum = state.vacuumState,
                     maps = state.vacuumMaps,
