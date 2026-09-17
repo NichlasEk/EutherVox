@@ -144,6 +144,7 @@ private fun message(type: String, utteranceId: String) = JsonObject().apply {
 }.toString()
 
 sealed interface ServerEvent {
+    data class AppearanceSaved(val theme: String) : ServerEvent
     data class ConfiguredLight(
         val id: String,
         val name: String,
@@ -240,6 +241,7 @@ sealed interface ServerEvent {
         val sessionId: String,
         val llmModel: String = "",
         val availableLlmModels: List<String> = emptyList(),
+        val appearanceTheme: String? = null,
     ) : ServerEvent
     data class SttPartial(val utteranceId: String, val text: String) : ServerEvent
     data class SttFinal(val utteranceId: String, val text: String) : ServerEvent
@@ -307,7 +309,9 @@ fun parseServerEvent(raw: String): ServerEvent {
     val type = json["type"].asString
     val utterance = json["utterance_id"]?.asString.orEmpty()
     return when (type) {
+        "appearance.saved" -> ServerEvent.AppearanceSaved(json["theme"].asString)
         "session.ready" -> ServerEvent.Ready(
+            appearanceTheme = json["appearance_theme"]?.asString,
             sessionId = json["session_id"].asString,
             llmModel = json["llm_model"]?.asString.orEmpty(),
             availableLlmModels = json["available_llm_models"]?.asJsonArray?.map { it.asString }.orEmpty(),

@@ -29,6 +29,7 @@ from .youtube import YouTubePlaylistService
 from .tool_planner import OllamaToolPlanner
 from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
+from .appearance import AppearanceStore, THEMES
 from .printer import PrinterService
 from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
@@ -134,6 +135,8 @@ class VoiceSession:
             message_type = message.get("type")
             if message_type == "session.start":
                 await self._start_session(message)
+            elif message_type == "appearance.set":
+                await self._set_appearance(message)
             elif message_type == "audio.start":
                 await self._start_audio(message)
             elif message_type == "audio.end":
@@ -254,6 +257,11 @@ class VoiceSession:
         if available_models:
             ready["llm_model"] = self.llm_model
             ready["available_llm_models"] = list(available_models)
+        if self.authenticated_user:
+            try:
+                ready["appearance_theme"] = AppearanceStore(self.config.config_dir).read(self.authenticated_user)
+            except (OSError, ValueError, TypeError):
+                LOG.warning("appearance_read_failed session=%s", self.session_id)
         await self.send_json(ready)
         if self.authenticated_user and self.lights and self.lights.enabled:
             await self._send_light_config()
@@ -457,6 +465,18 @@ class VoiceSession:
             raise ProtocolError("PUMP_AUTH_REQUIRED", "Inloggning krävs för pumpstatus")
         if not self.eutherpump or not self.eutherpump.enabled:
             raise ProtocolError("PUMP_DISABLED", "Värmepumpstjänsten är inte aktiverad")
+
+    async def _set_appearance(self, message: dict) -> None:
+        if self.phase is Phase.CONNECTED or not self.authenticated_user:
+            raise ProtocolError("AUTH_REQUIRED", "Logga in för att spara temat")
+        theme = message.get("theme")
+        if not isinstance(theme, str) or theme not in THEMES:
+            raise ProtocolError("INVALID_THEME", "Okänt tema")
+        try:
+            AppearanceStore(self.config.config_dir).write(self.authenticated_user, theme)
+        except OSError:
+            raise ProtocolError("PREFERENCES_UNAVAILABLE", "Temat kunde inte sparas på servern") from None
+        await self.send_json({"type": "appearance.saved", "theme": theme})
 
     async def _printer_command(self, message):
         if self.phase is Phase.CONNECTED or not self.printer or not self.printer.can_use(self.authenticated_user):

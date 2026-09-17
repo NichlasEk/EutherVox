@@ -1,6 +1,9 @@
 <resources>
     <!-- A neutral dark launch window is intentional even before user preferences can be read. -->
     <style name="Theme.EutherVox" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowSplashScreenBackground">#071523</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launch_dark</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#071523</item>
         <item name="android:fontFamily">sans</item>
         <item name="android:windowBackground">#071523</item>
         <item name="android:colorBackground">#071523</item>

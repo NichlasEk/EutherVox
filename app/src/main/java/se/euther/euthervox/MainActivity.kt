@@ -1,5 +1,10 @@
 package se.euther.euthervox
 
+import se.euther.euthervox.ui.*
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.safeDrawing
 import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -115,12 +120,12 @@ import kotlin.math.sin
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { EutherVoxApp() } }
+        setContent { VoxTheme(this) { EutherVoxApp() } }
     }
 }
 
-private val Forest = Color(0xFF254C3A)
-private val Copper = Color(0xFFB86035)
+private val Forest: Color @Composable get() = if (LocalRegis.current) RegisGold else Color(0xFF254C3A)
+private val Copper: Color @Composable get() = if (LocalRegis.current) MaterialTheme.colorScheme.error else Color(0xFFB86035)
 private val Parchment = Color(0xFFF2EBDD)
 
 private data class DeviceDestination(
@@ -188,6 +193,8 @@ fun EutherVoxApp() {
     var automaticBargeInEnabled by remember {
         mutableStateOf(preferences.getBoolean("automatic_barge_in", false))
     }
+    val appearanceCache = remember { AppearanceCache(context) }
+    var settingsTheme by remember { mutableStateOf(appearanceCache.theme(username)) }
     var settingsAddress by remember { mutableStateOf(address) }
     var settingsNodeName by remember { mutableStateOf(nodeName) }
     var settingsUsername by remember { mutableStateOf(username) }
@@ -196,6 +203,7 @@ fun EutherVoxApp() {
     var settingsLlmModel by remember { mutableStateOf(llmModel) }
     var settingsBackgroundNodeEnabled by remember { mutableStateOf(backgroundNodeEnabled) }
     var settingsAutomaticBargeInEnabled by remember { mutableStateOf(automaticBargeInEnabled) }
+    LaunchedEffect(settingsUsername) { settingsTheme = appearanceCache.theme(settingsUsername) }
     var settingsPassword by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(address.isBlank()) }
     var selectedTab by remember { mutableStateOf("voice") }
@@ -269,9 +277,9 @@ fun EutherVoxApp() {
         }
     }
 
-    Surface(color = Parchment, modifier = Modifier.fillMaxSize()) {
+    Surface(color = if (LocalRegis.current) RegisNavy else Parchment, modifier = Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState()).padding(20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -292,7 +300,7 @@ fun EutherVoxApp() {
             )
             if (selectedTab == "voice") {
             Box(Modifier.size(92.dp).background(Forest, CircleShape), contentAlignment = Alignment.Center) {
-                Text(characterSymbol, style = MaterialTheme.typography.displayMedium, color = Parchment)
+                Text(characterSymbol, style = MaterialTheme.typography.displayMedium, color = if (LocalRegis.current) RegisNavy else Parchment)
             }
             Text(characterName, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
             Text(
@@ -322,6 +330,7 @@ fun EutherVoxApp() {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Button(onClick = { controller.connect(address, nodeName, username, requestedVoiceId = voiceId, requestedCharacterId = characterId, requestedLlmModel = llmModel) }, enabled = address.isNotBlank()) { Text("Anslut") }
                 OutlinedButton(onClick = {
+                    settingsTheme = appearanceCache.theme(username)
                     settingsAddress = address
                     settingsNodeName = nodeName
                     settingsUsername = username
@@ -376,15 +385,15 @@ fun EutherVoxApp() {
                     enabled = state.canTalk && hasPermission,
                 ) { Text("Starta samtal") }
             }
-            Text(state.status.name, style = MaterialTheme.typography.titleMedium, color = if (state.status == VoiceStatus.Error) Color.Red else Forest)
-            if (state.errorMessage != null) Text(state.errorMessage!!, color = Color.Red, textAlign = TextAlign.Center)
-            if (state.droppedCaptureFrames > 0) Text("Tappade mikrofonblock: ${state.droppedCaptureFrames}", color = Color.Red)
+            Text(state.status.name, style = MaterialTheme.typography.titleMedium, color = if (state.status == VoiceStatus.Error) MaterialTheme.colorScheme.error else Forest)
+            if (state.errorMessage != null) Text(state.errorMessage!!, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center)
+            if (state.droppedCaptureFrames > 0) Text("Tappade mikrofonblock: ${state.droppedCaptureFrames}", color = MaterialTheme.colorScheme.error)
 
             TranscriptCard("Preliminärt", state.partialTranscript)
             TranscriptCard("Du sade", state.finalTranscript)
             TranscriptCard(characterName, state.responseText)
             if (state.actionMessage != null) {
-                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.secondaryContainer else Color(0xFFFFF1C7))) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Åtgärd", fontWeight = FontWeight.Bold, color = Forest)
                         Text(state.actionMessage!!)
@@ -514,7 +523,7 @@ fun EutherVoxApp() {
 
     if (showSettings) AlertDialog(
         onDismissRequest = { showSettings = false },
-        title = { Text("Anslutning") },
+        title = { Text("Inställningar") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -523,6 +532,10 @@ fun EutherVoxApp() {
                 OutlinedTextField(settingsAddress, { settingsAddress = it }, label = { Text("Serveradress") }, placeholder = { Text("wss://apothictech.se/euthervox/ws") }, singleLine = true)
                 OutlinedTextField(settingsNodeName, { settingsNodeName = it }, label = { Text("Nodnamn") }, singleLine = true)
                 OutlinedTextField(settingsUsername, { settingsUsername = it }, label = { Text("EutherOxide-användare") }, singleLine = true)
+                Text("Utseende", fontWeight = FontWeight.Bold, color = Forest)
+                CharacterChoice(CLASSIC, "Klassiskt – ljust", settingsTheme) { settingsTheme = it }
+                CharacterChoice(SYSTEM_REGIS, "System Regis – Stormakt 2030", settingsTheme) { settingsTheme = it }
+                Text("Mörkblått · guld · ljusblått. Valet följer ditt konto och finns kvar för mörk uppstart även offline.", style = MaterialTheme.typography.bodySmall)
                 Text("Figur", fontWeight = FontWeight.Bold, color = Forest)
                 CharacterChoice("skinnskattaren", "Skinnskattaren", settingsCharacterId) {
                     settingsCharacterId = it
@@ -667,6 +680,7 @@ fun EutherVoxApp() {
                     putBoolean(EutherVoxNodeService.PREFERENCE_BATTERY_SAVER, settingsBatterySaver)
                     putBoolean("automatic_barge_in", settingsAutomaticBargeInEnabled)
                 }
+                controller.setAppearance(savedUsername, settingsTheme)
                 address = savedAddress
                 nodeName = savedNodeName
                 username = savedUsername
@@ -722,7 +736,14 @@ private fun DeviceNavigator(
         }
     }
 
-    Card(
+    if (LocalRegis.current) {
+        Column(Modifier.fillMaxWidth().border(1.dp, RegisGold.copy(alpha = 0.55f), MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surface, MaterialTheme.shapes.medium).padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("SYSTEM REGIS  /  EUTHERVOX", color = RegisGold, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            Text(selected.label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.headlineMedium)
+            Text("STORMAKT 2030  ·  " + when (onlineByTab[selected.tab]) { true -> "ANSLUTEN"; false -> "OFFLINE"; null -> "VÄNTAR" }, color = RegisIce, style = MaterialTheme.typography.labelMedium)
+        }
+    } else Card(
         modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
         shape = RoundedCornerShape(24.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 5.dp),
@@ -790,9 +811,9 @@ private fun DeviceNavigator(
                         scope.launch { listState.animateScrollToItem(index) }
                     },
                     modifier = Modifier.width(126.dp).height(82.dp),
-                    shape = RoundedCornerShape(20.dp),
+                    shape = if (LocalRegis.current) MaterialTheme.shapes.medium else RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = if (isSelected) Color(0xFF6942A8) else Color(0xFFF8F3EA),
+                        containerColor = if (LocalRegis.current) { if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface } else if (isSelected) Color(0xFF6942A8) else Color(0xFFF8F3EA),
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = if (isSelected) 5.dp else 1.dp),
                 ) {
@@ -977,7 +998,7 @@ private fun WasherPanel(
     fun temperatureLabel(value: String) = if (value == "Cold") "Kallt" else "$value °C"
     Text("Tvättmaskin", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text("Status, lokal programväljare och serverstyrd schemaläggning.", textAlign = TextAlign.Center, color = Forest)
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.82f))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(state?.let { stateLabel(it.state) } ?: "Ingen status", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
@@ -1080,7 +1101,7 @@ private fun WasherPanel(
         }
     }
     if (controlsAvailable) {
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.secondaryContainer else Color(0xFFFFF1C7))) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
                 Text("Schemalägg tvätt", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
                 if (schedule?.state == "scheduled") {
@@ -1223,7 +1244,7 @@ private fun WasherPanel(
         )
     }
     Text("Senaste 7 dagarna", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.secondaryContainer else Color(0xFFFFF1C7))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column { Text("Klarmarkerade", style = MaterialTheme.typography.bodySmall); Text("${statistics?.cyclesCompleted7d ?: 0}", style = MaterialTheme.typography.headlineSmall, color = Forest) }
@@ -1272,7 +1293,7 @@ private fun VacuumPanel(
 
     Text("Robotdammsugare", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Forest)
     Text("Status, lokala kartor och kontroller samlade på ett ställe.", textAlign = TextAlign.Center, color = Forest)
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.82f))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 val vacuumState = when (vacuum?.state) {
@@ -1504,7 +1525,7 @@ private fun VacuumMapCard(
                     map.robot?.let { point ->
                         val p = project(point.x.toFloat(), point.y.toFloat(), if (threeDimensional) 9f else 0f)
                         drawCircle(Color(0xFFEAF4EF), radius = 9f, center = p)
-                        drawCircle(Forest, radius = 3f, center = p)
+                        drawCircle(Color(0xFF254C3A), radius = 3f, center = p)
                     }
                 }
                 if (threeDimensional) {
@@ -1557,7 +1578,7 @@ private fun PumpPanel(
         return
     }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.82f))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
@@ -1579,7 +1600,7 @@ private fun PumpPanel(
         }
     }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF1C7))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.secondaryContainer else Color(0xFFFFF1C7))) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Text("Smarta snabbknappar", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
             Text("Varje tryck skickas som en avgränsad ändring och räknas som klart först när pumpen har återläst samma värde.", style = MaterialTheme.typography.bodySmall)
@@ -1698,7 +1719,7 @@ private fun TvPanel(
     message?.let { Text(it, color = Forest, textAlign = TextAlign.Center) }
 
     discovered.filter { candidate -> configured.none { it.host == candidate.host } }.forEach { candidate ->
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.72f))) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.72f))) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Hittad: ${candidate.host}:${candidate.port}", fontWeight = FontWeight.Bold, color = Forest)
                 OutlinedTextField(manualName, { manualName = it }, label = { Text("Namn") }, singleLine = true)
@@ -1708,7 +1729,7 @@ private fun TvPanel(
         }
     }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.72f))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.72f))) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Lägg till med IP", fontWeight = FontWeight.Bold, color = Forest)
             OutlinedTextField(manualHost, { manualHost = it }, label = { Text("Privat IPv4-adress") }, placeholder = { Text("192.168.32.1") }, singleLine = true)
@@ -1719,7 +1740,7 @@ private fun TvPanel(
     }
 
     configured.forEach { tv ->
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.82f))) {
+        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.82f))) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(tv.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
                 Text("${tv.room} · ${tv.host}:${tv.port}", style = MaterialTheme.typography.bodySmall)
@@ -1793,10 +1814,10 @@ private fun LightPanel(
         }
     }
     Text(wifiState.status, textAlign = TextAlign.Center)
-    wifiState.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
+    wifiState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
     configMessage?.let { Text(it, color = Forest, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center) }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE4DDCB))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFE4DDCB))) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Musikljus", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Forest)
             Text(
@@ -1921,7 +1942,7 @@ private fun LightPanel(
             }
         }
         Text(bleState.status, textAlign = TextAlign.Center)
-        bleState.error?.let { Text(it, color = Color.Red, textAlign = TextAlign.Center) }
+        bleState.error?.let { Text(it, color = MaterialTheme.colorScheme.error, textAlign = TextAlign.Center) }
 
         bleState.devices.forEach { device ->
             BleDeviceCard(device, bleState.inspectingAddress == device.address) { onInspect(device) }
@@ -1929,7 +1950,7 @@ private fun LightPanel(
 
         val inspected = bleState.inspectedDevice
         if (inspected != null) {
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE4DDCB))) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFE4DDCB))) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("GATT-diagnostik", fontWeight = FontWeight.Bold, color = Forest)
                     Text("${inspected.name} · ${inspected.protocol.label}")
@@ -2224,7 +2245,7 @@ private fun BleDeviceCard(device: BleLightDevice, inspecting: Boolean, onInspect
     val likely = device.protocol != BleLightProtocol.Unknown
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = if (likely) Color(0xFFFFF1C7) else Color.White.copy(alpha = 0.72f)),
+        colors = CardDefaults.cardColors(containerColor = if (likely) if (LocalRegis.current) MaterialTheme.colorScheme.secondaryContainer else Color(0xFFFFF1C7) else if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.72f)),
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(device.name, fontWeight = FontWeight.Bold, color = Forest)
@@ -2274,7 +2295,7 @@ private fun PushToTalkButton(active: Boolean, enabled: Boolean, onStart: () -> U
 
 @Composable
 private fun TranscriptCard(label: String, value: String) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.72f)), shape = RoundedCornerShape(12.dp)) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surface else if (LocalRegis.current) MaterialTheme.colorScheme.surface else Color.White.copy(alpha = 0.72f)), shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.padding(14.dp)) {
             Text(label, fontWeight = FontWeight.Bold, color = Forest)
             Text(value.ifBlank { "—" })
@@ -2285,7 +2306,7 @@ private fun TranscriptCard(label: String, value: String) {
 @Composable
 private fun LatencyCard(latencies: Latencies) {
     fun value(ms: Long?) = ms?.let { "$it ms" } ?: "—"
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFE4DDCB))) {
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = if (LocalRegis.current) MaterialTheme.colorScheme.surfaceVariant else Color(0xFFE4DDCB))) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text("Latens", fontWeight = FontWeight.Bold, color = Forest)
             listOf(

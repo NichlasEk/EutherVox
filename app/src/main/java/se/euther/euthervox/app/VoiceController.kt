@@ -157,6 +157,8 @@ private data class ConnectionIdentity(
 )
 
 class VoiceController(context: Context, private val scope: CoroutineScope) : VoiceTransport.Listener {
+    private val appearanceCache = se.euther.euthervox.ui.AppearanceCache(context)
+    private var appearanceInFlight: Pair<String, String>? = null
     private val notificationDeviceId = context.applicationContext
         .getSharedPreferences("euthervox", Context.MODE_PRIVATE).let { preferences ->
             preferences.getString("notification_device_id", null) ?: UUID.randomUUID().toString().also {
@@ -937,10 +939,35 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    fun setAppearance(user: String, theme: String) {
+        appearanceCache.save(user, theme, true)
+        if (ready && connectionIdentity?.username == user) syncAppearance(null)
+    }
+
+    private fun syncAppearance(serverTheme: String?) {
+        val user = connectionIdentity?.username ?: return
+        if (user.isBlank()) return
+        if (appearanceCache.pending(user)) {
+            val theme = appearanceCache.theme(user)
+            appearanceInFlight = user to theme
+            scope.launch { transport?.sendText(JsonObject().apply {
+                addProperty("type", "appearance.set"); addProperty("theme", theme)
+            }.toString()) }
+        } else if (serverTheme != null) appearanceCache.save(user, serverTheme, false)
+    }
+
     private fun handleEvent(event: ServerEvent) {
         when (event) {
+            is ServerEvent.AppearanceSaved -> {
+                val sent = appearanceInFlight
+                if (sent != null && sent.first == connectionIdentity?.username && sent.second == event.theme && appearanceCache.theme(sent.first) == event.theme) {
+                    appearanceCache.save(sent.first, event.theme, false)
+                    appearanceInFlight = null
+                }
+            }
             is ServerEvent.Ready -> {
                 ready = true
+                syncAppearance(event.appearanceTheme)
                 recordDiagnostic("transport.ready")
                 mutableState.value = mutableState.value.copy(
                     connectionLabel = "Ansluten",
