@@ -600,6 +600,8 @@ class VoiceSession:
 
     async def _vacuum_music(self, message):
         from .youtube_audio import YouTubeAudioResolver
+        from .youtube_playlist import playlist_id, resolve_playlist
+        from .robot_music_queue import RobotMusicQueue
         from urllib.parse import urlsplit, parse_qs
         import re
         if self.phase is Phase.CONNECTED or not self.authenticated_user:
@@ -609,12 +611,18 @@ class VoiceSession:
         operation = message.get("operation", "")
         try:
             payload = {}
+            tracks = []; playlist_title = ""
             if operation == "volume": payload["volume"] = int(message.get("volume", 50))
             if operation == "play":
                 query = str(message.get("query", "")).strip()[:300]
                 if not query: raise ValueError("Skriv en låt eller en YouTube-länk")
                 video_id = ""
-                if query.startswith(("https://", "http://")):
+                ident = playlist_id(query)
+                if ident:
+                    playlist = await resolve_playlist(ident)
+                    tracks = playlist["tracks"]; playlist_title = playlist["title"]
+                    video_id = tracks[0]["video_id"]
+                elif query.startswith(("https://", "http://")):
                     url = urlsplit(query); host = (url.hostname or "").lower()
                     if host == "youtu.be": video_id = url.path.strip("/")
                     elif host in {"youtube.com", "www.youtube.com", "music.youtube.com", "m.youtube.com"}:
@@ -627,8 +635,15 @@ class VoiceSession:
                     if not tracks: raise ValueError("Hittade ingen låt")
                     video_id = tracks[0].provider_id
                 audio = await asyncio.wait_for(YouTubeAudioResolver().resolve(video_id), timeout=25)
-                payload = {"url": audio.url, "title": audio.title, "volume": int(message.get("volume", 50)), "cleaning": message.get("cleaning") is True}
-            result = await self.eutherwash.music(operation, payload)
+                if not tracks: tracks = [{"video_id": video_id, "title": audio.title}]
+            queue = getattr(self.eutherwash, "robot_music_queue", None)
+            if queue is None:
+                queue = RobotMusicQueue(self.eutherwash)
+                self.eutherwash.robot_music_queue = queue
+            if operation == "play":
+                result = await queue.start(tracks, playlist_title, audio, int(message.get("volume", 50)), message.get("cleaning") is True)
+            else:
+                result = await queue.control(operation, payload)
         except (ValueError, RuntimeError, OSError, TimeoutError) as error:
             raise ProtocolError("VACUUM_MUSIC_FAILED", str(error) or "Musiken svarade inte i tid") from error
         except Exception:

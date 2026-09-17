@@ -678,9 +678,9 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         if (!ready) return
         if (operation != "status") {
             stopRobotTalk()
-            mutableState.value = mutableState.value.copy(robotMusicBusy = true, robotMusicMessage = if (operation == "play") "Söker och öppnar låten…" else "Styr musiken…")
+            mutableState.value = mutableState.value.copy(robotMusicBusy = true, robotMusicMessage = if (operation == "play") "Hämtar musik eller spellista…" else "Styr musiken…")
             robotMusicDeadline?.cancel()
-            robotMusicDeadline = scope.launch { delay(45_000); mutableState.value = mutableState.value.copy(robotMusicBusy = false, robotMusicMessage = "Musiksvaret dröjer. Uppdatera status innan du försöker igen.") }
+            robotMusicDeadline = scope.launch { delay(75_000); mutableState.value = mutableState.value.copy(robotMusicBusy = false, robotMusicMessage = "Musiksvaret dröjer. Uppdatera status innan du försöker igen.") }
         }
         scope.launch {
             val message = JsonObject().apply {

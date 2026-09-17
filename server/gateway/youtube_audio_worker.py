@@ -7,6 +7,10 @@ from youtube_audio import YouTubeAudioResolver, _VIDEO_ID
 
 if __name__ == '__main__':
     try:
+        if sys.argv[1] == '--playlist':
+            from youtube_playlist import extract
+            print(json.dumps(extract(sys.argv[2], yt_dlp.YoutubeDL)))
+            sys.exit(0)
         video = sys.argv[1]
         if not _VIDEO_ID.fullmatch(video):
             raise ValueError('Invalid video ID')

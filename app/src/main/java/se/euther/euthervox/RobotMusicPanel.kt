@@ -36,8 +36,8 @@ fun RobotMusicPanel(state: VoiceUiState, controller: VoiceController) {
                 Text(if (expanded) "Dölj musiken" else "Öppna musiken")
             }
             if (expanded) {
-                Text("Spela en låt medan Ebba står still eller städar. Musiken fortsätter när du lämnar appen.")
-                OutlinedTextField(value = query, onValueChange = { query = it.take(300) }, label = { Text("Låt och artist eller YouTube-länk") }, modifier = Modifier.fillMaxWidth())
+                Text("Spela en låt eller spellista medan Ebba står still eller städar. Musiken fortsätter när du lämnar appen.")
+                OutlinedTextField(value = query, onValueChange = { query = it.take(300) }, label = { Text("Låt, artist eller länk till låt/spellista") }, modifier = Modifier.fillMaxWidth())
                 Row {
                     Checkbox(checked = cleaning, onCheckedChange = { cleaning = it })
                     Text("Tillåt musik under städning", Modifier.padding(top = 12.dp))
@@ -45,6 +45,15 @@ fun RobotMusicPanel(state: VoiceUiState, controller: VoiceController) {
                 Text("Läget väljs när du startar låten. Starta städningen med de vanliga kontrollerna. Musiken stängs när hon har städat och dockar.", style = MaterialTheme.typography.bodySmall)
                 Button(onClick = { controller.robotMusic("play", query, cleaning, volume.toInt()) }, enabled = query.isNotBlank() && state.vacuumControlsAvailable && !state.robotMusicBusy, modifier = Modifier.fillMaxWidth()) { Text("Spela på Ebba") }
                 music?.get("title")?.asString?.takeIf { it.isNotBlank() }?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
+                val queueCount = music?.get("queue_count")?.asInt ?: 0
+                val queueIndex = music?.get("queue_index")?.asInt ?: 0
+                if (queueCount > 1) {
+                    Text("${music?.get("queue_title")?.asString ?: "Spellista"} · $queueIndex av $queueCount", style = MaterialTheme.typography.titleSmall)
+                    music?.getAsJsonArray("queue")?.drop(queueIndex)?.take(3)?.forEachIndexed { index, item ->
+                        Text("${queueIndex + index + 1}. ${item.asJsonObject.get("title").asString}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    OutlinedButton(onClick = { controller.robotMusic("next") }, enabled = music?.get("has_next")?.asBoolean == true && state.vacuumControlsAvailable && !state.robotMusicBusy, modifier = Modifier.fillMaxWidth()) { Text("Nästa låt") }
+                }
                 state.robotMusicMessage?.let { Text(it) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { controller.robotMusic(if (phase == "paused") "resume" else "pause") }, enabled = phase in setOf("playing", "paused", "loading") && !state.robotMusicBusy, modifier = Modifier.weight(1f)) { Text(if (phase == "paused") "Fortsätt" else "Pausa") }
@@ -52,7 +61,7 @@ fun RobotMusicPanel(state: VoiceUiState, controller: VoiceController) {
                 }
                 Text("Musikvolym ${volume.toInt()} %")
                 Slider(value = volume, onValueChange = { volume = it }, valueRange = 0f..100f, onValueChangeFinished = { controller.robotMusic("volume", volume = volume.toInt()) })
-                Text("Robotens egna meddelanden, budbäraren och pratknappen pausar musiken. Tryck Fortsätt efteråt. En låt i taget, högst 20 minuter.", style = MaterialTheme.typography.bodySmall)
+                Text("Robotens egna meddelanden, budbäraren och pratknappen pausar musiken. Tryck Fortsätt efteråt. Offentliga och olistade spellistor: upp till 50 låtar, högst 20 minuter per låt. Stoppa musik tömmer kön.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
