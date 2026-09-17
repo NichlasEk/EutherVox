@@ -1,0 +1,17 @@
+[Unit]
+Description=Test and update EutherVox YouTube extractor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/nichlas/EutherVox
+ExecStart=/home/nichlas/EutherVox/.venv/bin/python /home/nichlas/EutherVox/scripts/update_youtube_runtime.py
+Environment=PATH=/home/nichlas/.local/bin:/home/nichlas/.deno/bin:/usr/local/bin:/usr/bin:/bin
+Environment=EUTHERVOX_YOUTUBE_SMOKE_SSH=euther-server
+Environment=SSH_ASKPASS=/home/nichlas/EutherWash/.private/cloud-independence-20260915/server-askpass
+Environment=SSH_ASKPASS_REQUIRE=force
+Environment=DISPLAY=euther
+TimeoutStartSec=8min
+UMask=0077
+Nice=10

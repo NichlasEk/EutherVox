@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly verified YouTube extractor maintenance
+
+[Timer]
+OnCalendar=Sun *-*-* 04:30:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=euthervox-youtube-update.service
+
+[Install]
+WantedBy=timers.target
