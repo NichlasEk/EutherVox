@@ -5,6 +5,10 @@ from .youtube_audio import YouTubeAudioResolver
 
 LOG = logging.getLogger(__name__)
 
+def duration(audio):
+    value = getattr(audio, 'duration_seconds', None)
+    return min(float(value), 1200.) if value is not None else None
+
 
 class RobotMusicQueue:
     def __init__(self, service, resolver=None, poll_seconds=3):
@@ -30,7 +34,7 @@ class RobotMusicQueue:
         result = dict(status)
         result.update(queue_title=self.title if self.tracks else '', queue_count=len(self.tracks),
                       queue_index=self.index + 1 if self.tracks else 0,
-                      has_next=self.index + 1 < len(self.tracks),
+                      has_next=self.index + 1 < len(self.tracks), has_previous=bool(self.tracks),
                       queue=[{'title': t['title']} for t in self.tracks])
         if self.error:
             result.update(state='error', message=self.error)
@@ -39,7 +43,7 @@ class RobotMusicQueue:
     async def start(self, tracks, title, audio, volume, cleaning):
         async with self.lock:
             # Keep the old queue intact if starting its replacement fails.
-            status = await self.service.music('play', dict(url=audio.url, title=audio.title, volume=volume, cleaning=cleaning))
+            status = await self.service.music('play', dict(url=audio.url, title=audio.title, volume=volume, cleaning=cleaning, duration_seconds=duration(audio)))
             self.tracks = tracks[:50]; self.index = 0; self.title = title
             self.volume = volume; self.cleaning = cleaning; self.error = ''
             self.playback_id = status.get('playback_id')
@@ -50,8 +54,8 @@ class RobotMusicQueue:
                 self.task = asyncio.create_task(self._watch())
             return self.decorate(status)
 
-    async def _advance(self, *, automatic=False):
-        next_index = self.index + 1
+    async def _advance(self, *, automatic=False, step=1):
+        next_index = self.index + step
         audio = await asyncio.wait_for(self.resolver.resolve(self.tracks[next_index]['video_id']), 25)
         # Recheck after extraction: a native prompt, delivery, or stop wins the race.
         status = await self.service.music('status', {})
@@ -60,36 +64,45 @@ class RobotMusicQueue:
         if automatic and not (status.get('ended') is True and status.get('state') == 'stopped' and not status.get('busy')):
             return self.decorate(status)
         status = await self.service.music('play', dict(url=audio.url, title=audio.title,
-                                                     volume=status.get('volume', self.volume), cleaning=self.cleaning))
+                                                     volume=status.get('volume', self.volume), cleaning=self.cleaning, duration_seconds=duration(audio)))
         self.index = next_index; self.playback_id = status.get('playback_id'); self.error = ''
         return self.decorate(status)
 
     async def control(self, operation, payload):
         # Stop/pause must not wait behind a slow automatic next-track extraction.
-        if operation in {'stop', 'pause'} and self.task and not self.task.done():
+        if operation in {'stop', 'pause', 'previous', 'next', 'seek'} and self.task and not self.task.done():
             self.task.cancel()
             try:
                 await self.task
             except asyncio.CancelledError:
                 pass
             self.task = None
-        async with self.lock:
-            if operation == 'next':
-                status = self.decorate(await self.service.music('status', {}))
-                if not status['has_next']: raise ValueError('Inga fler låtar i kön')
-                await self.service.music('pause', {})
-                result = await self._advance()
-                if self.tracks and (self.task is None or self.task.done()):
-                    self.task = asyncio.create_task(self._watch())
-                return result
-            status = await self.service.music(operation, payload)
-            if operation == 'stop':
-                self.tracks = []; self.playback_id = None; self.error = ''
-            if operation == 'resume':
-                self.error = ''
-                if self.tracks and (self.task is None or self.task.done()):
-                    self.task = asyncio.create_task(self._watch())
-            return self.decorate(status)
+        try:
+            async with self.lock:
+                if operation in {'next', 'previous'}:
+                    status = self.decorate(await self.service.music('status', {}))
+                    if operation == 'next' and not status['has_next']: raise ValueError('Inga fler låtar i kön')
+                    if operation == 'previous' and not status['has_previous']: raise ValueError('Välj en låt först')
+                    if operation == 'previous' and self.index == 0:
+                        result = self.decorate(await self.service.music('seek', {'position_seconds': 0}))
+                        if self.task is None or self.task.done(): self.task = asyncio.create_task(self._watch())
+                        return result
+                    await self.service.music('pause', {})
+                    result = await self._advance(step=-1 if operation == 'previous' else 1)
+                    if self.tracks and (self.task is None or self.task.done()):
+                        self.task = asyncio.create_task(self._watch())
+                    return result
+                status = await self.service.music(operation, payload)
+                if operation == 'stop':
+                    self.tracks = []; self.playback_id = None; self.error = ''
+                if operation in {'resume', 'seek'}:
+                    self.error = ''
+                    if self.tracks and (self.task is None or self.task.done()):
+                        self.task = asyncio.create_task(self._watch())
+                return self.decorate(status)
+        finally:
+            if operation in {'seek', 'previous', 'next'} and self.tracks and (self.task is None or self.task.done()):
+                self.task = asyncio.create_task(self._watch())
 
     async def tick(self):
         async with self.lock:

@@ -21,6 +21,7 @@ class ResolvedAudio:
     content_type: str
     title: str
     thumbnail: str
+    duration_seconds: float | None = None
 
 
 class YouTubeAudioResolver:
@@ -88,4 +89,5 @@ class YouTubeAudioResolver:
             content_type=content_type,
             title=str(info.get("title", "YouTube Music"))[:160],
             thumbnail=str(info.get("thumbnail", "")),
+            duration_seconds=float(info["duration"]) if isinstance(info.get("duration"), (int, float)) and 0 < info["duration"] < float("inf") else None,
         )

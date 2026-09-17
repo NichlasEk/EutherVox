@@ -613,6 +613,9 @@ class VoiceSession:
             payload = {}
             tracks = []; playlist_title = ""
             if operation == "volume": payload["volume"] = int(message.get("volume", 50))
+            if operation == "seek":
+                payload["position_seconds"] = float(message.get("position_seconds", -1))
+                if message.get("playback_id"): payload["playback_id"] = message["playback_id"]
             if operation == "play":
                 query = str(message.get("query", "")).strip()[:300]
                 if not query: raise ValueError("Skriv en låt eller en YouTube-länk")

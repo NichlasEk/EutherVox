@@ -280,7 +280,7 @@ class EutherWashService:
     async def music(self, operation: str, payload: dict) -> dict:
         if not self.enabled or not self.control_enabled or not self._control_token:
             raise RuntimeError("Högtalarstyrning är inte aktiverad")
-        if operation not in {"play", "pause", "resume", "stop", "status", "volume"}:
+        if operation not in {"play", "pause", "resume", "stop", "status", "volume", "seek"}:
             raise ValueError("Okänd ljudåtgärd")
         url = f"{self.base_url}/v1/vacuums/{quote(self.vacuum_alias, safe='')}/delivery/music/{operation}"
         try:

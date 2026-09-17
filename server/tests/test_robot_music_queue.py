@@ -19,6 +19,7 @@ class Backend:
         elif operation == 'resume': self.status.update(state='playing')
         elif operation == 'stop': self.status.update(state='stopped', ended=False, playback_id='')
         elif operation == 'volume': self.status.update(volume=payload['volume'])
+        elif operation == 'seek': self.status.update(position_seconds=payload['position_seconds'], ended=False)
         return dict(self.status)
 
 class Resolver:
@@ -154,4 +155,27 @@ def test_stop_interrupts_automatic_extraction_before_next_play():
         await asyncio.wait_for(resolving.wait(), 1)
         result = await asyncio.wait_for(q.control('stop', {}), 1)
         assert result['queue_count'] == 0 and b.serial == 1
+    asyncio.run(run())
+
+
+def test_previous_returns_to_prior_track_and_first_track_rewinds():
+    async def run():
+        q,b,r=await setup()
+        await q.control('next',{})
+        result=await q.control('previous',{})
+        assert result['queue_index']==1 and b.serial==3
+        assert r.calls[-1]==TRACKS[0]['video_id']
+        result=await q.control('previous',{})
+        assert result['position_seconds']==0 and b.serial==3
+        assert result['queue_count']==2
+    asyncio.run(run())
+
+
+def test_seek_keeps_queue_identity_and_duration_is_sent():
+    async def run():
+        q,b,r=await setup()
+        ident=q.playback_id
+        result=await q.control('seek',{'position_seconds':45})
+        assert result['position_seconds']==45 and result['queue_count']==2
+        assert q.playback_id==ident and result['queue_index']==1
     asyncio.run(run())

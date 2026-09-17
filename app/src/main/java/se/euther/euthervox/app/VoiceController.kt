@@ -674,7 +674,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     }
 
     private var robotMusicDeadline: Job? = null
-    fun robotMusic(operation: String, query: String = "", cleaning: Boolean = false, volume: Int = 50) {
+    fun robotMusic(operation: String, query: String = "", cleaning: Boolean = false, volume: Int = 50, positionSeconds: Int = 0, playbackId: String? = null) {
         if (!ready) return
         if (operation != "status") {
             stopRobotTalk()
@@ -686,6 +686,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             val message = JsonObject().apply {
                 addProperty("type", "vacuum.music"); addProperty("operation", operation)
                 addProperty("query", query); addProperty("cleaning", cleaning); addProperty("volume", volume)
+                addProperty("position_seconds", positionSeconds)
+                playbackId?.let { addProperty("playback_id", it) }
             }
             if (transport?.sendText(message.toString()) != true) {
                 robotMusicDeadline?.cancel()
