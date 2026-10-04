@@ -27,6 +27,7 @@ from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
 from .printer import PrinterService
 from .washer_notifications import WasherCompletionMonitor
+from .vacuum_notifications import VacuumCompletionMonitor
 
 
 LOG = logging.getLogger("euthervox.gateway")
@@ -85,7 +86,7 @@ def configure_device_hotwords(
     return count
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None, printer=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None, printer=None, vacuum_notifications=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -108,6 +109,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         eutherpump=eutherpump,
         eutherwash=eutherwash,
         washer_notifications=washer_notifications,
+        vacuum_notifications=vacuum_notifications,
         printer=printer,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
@@ -212,6 +214,7 @@ async def run(config: GatewayConfig) -> None:
         config.config_dir,
         message_generator=message_generator,
     )
+    vacuum_notifications = VacuumCompletionMonitor(eutherwash, config.eutherwash_settings, config.config_dir)
     configure_device_hotwords(engines[0], lights, television, eutherpump, eutherwash)
     tool_registry = EutherVoxToolRegistry(cast, lights, television, eutherpump, eutherwash, printer)
     tool_planner = None
@@ -236,9 +239,10 @@ async def run(config: GatewayConfig) -> None:
     )
     oauth_http = OAuthHttpHandler(youtube)
     await washer_notifications.start()
+    await vacuum_notifications.start()
     try:
         async with serve(
-            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications, printer),
+            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications, printer, vacuum_notifications),
             config.host,
             config.port,
             max_size=14 * 1024 * 1024,
@@ -248,6 +252,7 @@ async def run(config: GatewayConfig) -> None:
             await asyncio.get_running_loop().create_future()
     finally:
         await washer_notifications.stop()
+        await vacuum_notifications.stop()
 
 
 def cli() -> None:

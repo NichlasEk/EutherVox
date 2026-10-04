@@ -34,7 +34,7 @@ class EutherWashService:
         "total_cleaning_area_m2", "map_available", "multiple_maps_enabled",
         "do_not_disturb_enabled", "voice_language", "volume_percent",
         "auto_empty_enabled", "dust_station_status", "maintenance_required",
-        "system_messages", "raw_device_status", "raw_operating_mode",
+        "system_messages", "coverage", "raw_device_status", "raw_operating_mode",
         "raw_charging_state", "raw_task_status", "raw_relocation_status",
         "updated_at",
     }

@@ -107,6 +107,7 @@ class VoiceSession:
     eutherpump: EutherPumpService | None = None
     eutherwash: EutherWashService | None = None
     washer_notifications: WasherCompletionMonitor | None = None
+    vacuum_notifications: WasherCompletionMonitor | None = None
     printer: PrinterService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
@@ -200,6 +201,8 @@ class VoiceSession:
         await self._stop_robot_talk()
         if self.washer_notifications:
             self.washer_notifications.unsubscribe(self.notification_node, self._deliver_washer_notification)
+        if self.vacuum_notifications:
+            self.vacuum_notifications.unsubscribe(self.notification_node, self._deliver_vacuum_notification)
         if self.response_task:
             self.response_task.cancel()
             await asyncio.gather(self.response_task, return_exceptions=True)
@@ -284,6 +287,8 @@ class VoiceSession:
             await self.send_json({"type": "printer.config", "available": True})
         if self.authenticated_user and self.washer_notifications and self.washer_notifications.enabled:
             self.washer_notifications.subscribe(self.notification_node, self._deliver_washer_notification)
+        if self.authenticated_user and self.vacuum_notifications and self.vacuum_notifications.enabled:
+            self.vacuum_notifications.subscribe(self.notification_node, self._deliver_vacuum_notification)
         LOG.info(
             "session_ready session=%s character=%s voice=%s llm_model=%s",
             self.session_id,
@@ -304,38 +309,49 @@ class VoiceSession:
         ))
 
     async def _deliver_washer_notification(self, notification_id: str, text: str) -> bool:
+        return await self._deliver_appliance_notification(notification_id, text, self.washer_notifications, "Tvätten är klar")
+
+    async def _deliver_vacuum_notification(self, notification_id: str, text: str) -> bool:
+        return await self._deliver_appliance_notification(notification_id, text, self.vacuum_notifications, "Dammsugaren är klar")
+
+    async def _deliver_appliance_notification(self, notification_id, text, monitor, title) -> bool:
         if self.phase is not Phase.READY or not self.authenticated_user:
             return False
         self.phase = Phase.SPEAKING
         self.utterance_id = notification_id
         try:
-            voice = self.washer_notifications.voice_id if self.washer_notifications else self.voice_id
+            voice = monitor.voice_id if monitor else self.voice_id
             resolver = getattr(self.tts, "resolve_voice", None)
             resolved_voice = resolver(voice) if resolver else voice
             character = replace(self._character(), voice_id=resolved_voice)
             await self.send_json({
                 "type": "assistant.notification",
                 "utterance_id": notification_id,
-                "title": "Tvätten är klar",
+                "title": title,
                 "text": text,
             })
-            await self._stream_notification_speech(notification_id, text, character)
-            LOG.info("washer_notification_delivered session=%s notification=%s voice=%s", self.session_id, notification_id, resolved_voice)
+            await self._stream_notification_speech(notification_id, text, character, monitor)
+            LOG.info("appliance_notification_delivered session=%s notification=%s voice=%s title=%s", self.session_id, notification_id, resolved_voice, title)
             return True
         except Exception:
-            LOG.exception("washer_notification_failed session=%s", self.session_id)
+            LOG.exception("appliance_notification_failed session=%s title=%s", self.session_id, title)
             return False
         finally:
             self._reset()
 
-    async def _stream_notification_speech(self, utterance_id: str, text: str, character: object) -> None:
+    async def _stream_notification_speech(self, utterance_id: str, text: str, character: object, monitor=None) -> None:
+        prepared = None
+        if getattr(self.tts, "requires_prebuffer", lambda _: False)(character.voice_id):
+            prepared = [frame async for frame in self.tts.synthesize(text, character, self.tts.sample_rate)]
+        # Open phone playback only when a job-based voice is ready, so the
+        # jingle and report play consecutively without minutes of silent audio.
         await self.send_json({
             "type": "tts.start",
             "utterance_id": utterance_id,
             "audio": {"codec": "pcm_s16le", "sample_rate": self.tts.sample_rate, "channels": 1},
         })
         try:
-            jingle = self.washer_notifications.jingle_path if self.washer_notifications else None
+            jingle = monitor.jingle_path if monitor else None
             if jingle and jingle.is_file():
                 with wave.open(str(jingle), "rb") as audio:
                     if (
@@ -346,8 +362,12 @@ class VoiceSession:
                         raise RuntimeError("Tvättjingeln måste vara mono pcm_s16le med gatewayens samplingsfrekvens")
                     while frame := audio.readframes(4096):
                         await self.send_binary(frame)
-            async for frame in self.tts.synthesize(text, character, self.tts.sample_rate):
-                await self.send_binary(frame)
+            if prepared is not None:
+                for frame in prepared:
+                    await self.send_binary(frame)
+            else:
+                async for frame in self.tts.synthesize(text, character, self.tts.sample_rate):
+                    await self.send_binary(frame)
         finally:
             await self.send_json({"type": "tts.end", "utterance_id": utterance_id})
 

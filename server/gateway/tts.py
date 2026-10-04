@@ -96,6 +96,7 @@ class RoutedTextToSpeechEngine:
         fallback_voice: str,
         normalizer: SwedishTextNormalizer | None = None,
         normalized_voices: set[str] | None = None,
+        strict_voices: set[str] | None = None,
     ):
         if default_voice not in voices:
             raise ValueError(f"Unknown default TTS voice: {default_voice}")
@@ -104,6 +105,7 @@ class RoutedTextToSpeechEngine:
         sample_rates = {engine.sample_rate for engine in voices.values()}
         if len(sample_rates) != 1:
             raise ValueError("All routed TTS voices must use the same output sample rate")
+        self.strict_voices = strict_voices or set()
         self.voices = voices
         self.default_voice = default_voice
         self.fallback_voice = fallback_voice
@@ -114,6 +116,9 @@ class RoutedTextToSpeechEngine:
     @property
     def voice_ids(self) -> tuple[str, ...]:
         return tuple(self.voices)
+
+    def requires_prebuffer(self, requested: str) -> bool:
+        return bool(getattr(self.voices[self.resolve_voice(requested)], "prebuffer", False))
 
     def resolve_voice(self, requested: str) -> str:
         voice_id = requested or self.default_voice
@@ -137,7 +142,7 @@ class RoutedTextToSpeechEngine:
                 emitted = True
                 yield frame
         except Exception as error:
-            if emitted or voice_id == self.fallback_voice:
+            if emitted or voice_id == self.fallback_voice or voice_id in self.strict_voices:
                 raise
             LOG.warning(
                 "tts_voice_failed voice=%s fallback=%s error=%s",
@@ -171,6 +176,7 @@ class RoutedTextToSpeechEngine:
 def build_routed_tts(settings: dict) -> RoutedTextToSpeechEngine:
     voices: dict[str, TextToSpeechEngine] = {}
     normalized_voices: set[str] = set()
+    strict_voices: set[str] = set()
     frame_ms = int(settings.get("frame_ms", 20))
     for voice_id, voice_settings in dict(settings.get("voices", {})).items():
         provider = str(voice_settings.get("provider", "piper"))
@@ -185,6 +191,13 @@ def build_routed_tts(settings: dict) -> RoutedTextToSpeechEngine:
                 float(voice_settings.get("timeout_seconds", 60)),
                 str(voice_settings.get("profile", "")),
             )
+        elif provider == "ebba_dots":
+            from .ebba_tts import EbbaTextToSpeechEngine
+            voices[voice_id] = EbbaTextToSpeechEngine(
+                str(voice_settings["base_url"]), str(voice_settings["reference_file"]),
+                int(voice_settings.get("sample_rate", 22050)),
+                float(voice_settings.get("timeout_seconds", 420)))
+            strict_voices.add(voice_id)
         else:
             raise ValueError(f"Unsupported routed TTS provider: {provider}")
         if bool(voice_settings.get("normalize_pronunciation", provider == "piper")):
@@ -195,4 +208,5 @@ def build_routed_tts(settings: dict) -> RoutedTextToSpeechEngine:
         default_voice,
         str(settings.get("fallback_voice", default_voice)),
         normalized_voices=normalized_voices,
+        strict_voices=strict_voices,
     )

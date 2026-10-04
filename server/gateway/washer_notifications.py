@@ -102,15 +102,7 @@ class WasherCompletionMonitor:
         elif state in self.FINISHED_STATES and self._state["armed"]:
             self._state["armed"] = False
             event = {"id": str(uuid4()), "text": await self._completion_text(status)}
-            devices = self._state["devices"]
-            if devices:
-                for node in devices:
-                    queue = self._state["queues"].setdefault(node, [])
-                    queue.append(event.copy())
-                    del queue[:-self.MAX_QUEUE_DEPTH]
-            else:
-                self._state["unassigned"].append(event)
-                del self._state["unassigned"][:-self.MAX_QUEUE_DEPTH]
+            self._enqueue(event)
             changed = True
         if self._state.get("last_state") != state:
             self._state["last_state"] = state
@@ -118,6 +110,17 @@ class WasherCompletionMonitor:
         if changed:
             self._save()
         await self._deliver_pending()
+
+    def _enqueue(self, event: dict) -> None:
+        devices = self._state["devices"]
+        if devices:
+            for node in devices:
+                queue = self._state["queues"].setdefault(node, [])
+                queue.append(event.copy())
+                del queue[:-self.MAX_QUEUE_DEPTH]
+        else:
+            self._state["unassigned"].append(event)
+            del self._state["unassigned"][:-self.MAX_QUEUE_DEPTH]
 
     async def _completion_text(self, status: dict) -> str:
         if self.message_generator is None:

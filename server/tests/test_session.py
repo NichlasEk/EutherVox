@@ -1603,3 +1603,38 @@ def test_robot_music_extractor_failure_is_reported_without_disconnect(monkeypatc
         assert error.value.code == 'VACUUM_MUSIC_FAILED'
         assert 'internal' not in str(error.value)
     asyncio.run(scenario())
+
+
+def test_ebba_notification_uses_existing_audio_protocol_and_own_title():
+    async def scenario():
+        session,sent=make_session()
+        session.authenticated_user='nichlas'
+        session.vacuum_notifications=types.SimpleNamespace(
+            voice_id='piper-nst',jingle_path=None,enabled=True,
+            subscribe=lambda *args:None,unsubscribe=lambda *args:None)
+        await session.handle_text(start_message())
+        assert await session._deliver_vacuum_notification('ebba-done','Dammsugaren är klar!')
+        messages=[item for item in sent if isinstance(item,dict)]
+        assert next(m for m in messages if m['type']=='assistant.notification')['title']=='Dammsugaren är klar'
+        assert any(m['type']=='tts.end' for m in messages)
+        assert any(isinstance(item,bytes) for item in sent)
+        assert session.phase is Phase.READY
+        session.authenticated_user=''
+        assert not await session._deliver_vacuum_notification('ebba-done-2','Test')
+    asyncio.run(scenario())
+
+
+def test_ebba_job_finishes_before_phone_audio_stream_opens():
+    async def scenario():
+        session,sent=make_session()
+        class Tts:
+            sample_rate=22050
+            def requires_prebuffer(self,voice):return True
+            async def synthesize(self,*args):
+                assert not any(isinstance(m,dict) and m['type']=='tts.start' for m in sent)
+                yield b'\x01\x00'*100
+        session.tts=Tts()
+        await session._stream_notification_speech('ebba','Test',types.SimpleNamespace(voice_id='ebba'))
+        assert [m['type'] for m in sent if isinstance(m,dict)]==['tts.start','tts.end']
+        assert any(isinstance(m,bytes) for m in sent)
+    asyncio.run(scenario())

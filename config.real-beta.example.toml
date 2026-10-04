@@ -149,6 +149,8 @@ notification_character = "skinnskattaren"
 notification_voice = "moss-nano"
 notification_state_file = "state/washer-notification.json"
 notification_jingle_file = "assets/audio/washer-complete.wav"
+vacuum_notification_voice = "ebba"
+vacuum_notification_jingle_file = "assets/audio/vacuum-complete.wav"
 
 [wikipedia]
 enabled = true
@@ -173,3 +175,11 @@ enabled = true
 status_url = "https://apothictech.se/euthershould/api/printer-service"
 allowed_users = ["nichlas"]
 token_file = "/home/nichlas/.config/euthervox/printer-service-token"
+
+[tts.voices.ebba]
+provider = "ebba_dots"
+base_url = "http://127.0.0.1:8765"
+reference_file = "/home/nichlas/EutherWash/.private/ebba-voice-pack/ebba-reference.wav"
+sample_rate = 22050
+timeout_seconds = 420
+normalize_pronunciation = false

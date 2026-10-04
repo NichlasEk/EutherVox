@@ -215,3 +215,15 @@ def test_sherlock_understands_auto_language_but_always_answers_in_english():
     assert "Always answer in clear, natural English" in prompt
     assert "even when the user speaks Swedish" in prompt
     assert config.tts_settings["voices"]["matcha-sherlock"]["profile"] == "sherlock"
+
+
+def test_strict_ebba_voice_never_falls_back_to_another_character():
+    import pytest
+    async def scenario():
+        fallback=RecordingTts()
+        ebba=RecordingTts(error=RuntimeError('Ebba unavailable'))
+        router=RoutedTextToSpeechEngine({'fallback':fallback,'ebba':ebba},'fallback','fallback',strict_voices={'ebba'})
+        with pytest.raises(RuntimeError,match='Ebba unavailable'):
+            async for _ in router.synthesize('Dammsugaren är klar.',replace(character(),voice_id='ebba'),22050):pass
+        assert not fallback.texts
+    asyncio.run(scenario())
