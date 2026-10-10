@@ -38,6 +38,8 @@ from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
 from .television import NecTvService
+from .remotes import RemoteService
+from .beam import plan_beam
 
 
 SendJson = Callable[[dict], Awaitable[None]]
@@ -107,6 +109,8 @@ class VoiceSession:
     wikipedia: WikipediaService | None = None
     lights: MagicHomeLightService | None = None
     television: NecTvService | None = None
+    remotes: RemoteService | None = None
+    remote_peer_trusted: bool = False
     eutherpump: EutherPumpService | None = None
     eutherwash: EutherWashService | None = None
     washer_notifications: WasherCompletionMonitor | None = None
@@ -160,6 +164,8 @@ class VoiceSession:
                 await self._upsert_tv(message)
             elif message_type == "tv.discover":
                 await self._discover_tvs()
+            elif message_type == "remote.request":
+                await self._remote_request(message)
             elif message_type == "tv.command":
                 await self._tv_command(message)
             elif message_type == "pump.status":
@@ -419,6 +425,26 @@ class VoiceSession:
             "type": "lights.config",
             "lights": self.lights.list_public(include_network=True) if self.lights else [],
         })
+
+    async def _remote_voice(self, utterance_id, transcript, action):
+        result = await self.remotes.execute(self.authenticated_user, action.arguments["command_id"], action.action_id)
+        spoken = result["message"]
+        await self.send_json({"type":"assistant.text.final", "utterance_id":utterance_id, "text":spoken})
+        await self.send_json({"type":"remote.result", "operation":"execute", "ok":True, **result})
+        try:
+            await self._stream_action_speech(utterance_id, spoken, self._character(), fast=True)
+        finally:
+            self._remember_turn(transcript, spoken)
+            self._reset()
+
+    async def _remote_request(self, message: dict) -> None:
+        if self.phase is Phase.CONNECTED or not self.remote_peer_trusted or not self.remotes or not self.remotes.can_use(self.authenticated_user):
+            raise ProtocolError("REMOTE_AUTH_REQUIRED", "Inloggning och behörighet krävs för fjärrkontroller")
+        try:
+            result = await self.remotes.request(self.authenticated_user, message)
+            await self.send_json({"type":"remote.result", "operation":message.get("operation"), "ok":True, **result})
+        except (KeyError, TypeError, ValueError, OSError, RuntimeError) as error:
+            await self.send_json({"type":"remote.result", "operation":message.get("operation"), "ok":False, "message":str(error)})
 
     async def _upsert_tv(self, message: dict) -> None:
         self._require_tv_access()
@@ -1099,6 +1125,18 @@ class VoiceSession:
                 return
             if wants_report(transcript):
                 await self._speak_scryer(utterance_id)
+                return
+            remote_action = self.remotes.plan(self.authenticated_user, transcript, self.node_name) if self.remote_peer_trusted and self.remotes else None
+            if remote_action:
+                await self._remote_voice(utterance_id, transcript, remote_action)
+                return
+            beam_action = plan_beam(transcript,self.node_name) if self.remote_peer_trusted and self.remotes and self.remotes.can_use(self.authenticated_user) else None
+            if beam_action:
+                self.pending_actions.add(beam_action.action_id)
+                await self.send_json(beam_action.to_message(utterance_id))
+                await self.send_json({"type":"assistant.text.final","utterance_id":utterance_id,"text":beam_action.acknowledgement})
+                self._remember_turn(transcript,beam_action.acknowledgement)
+                self._reset()
                 return
             if self.pending_wikipedia_mode:
                 action = DeviceAction(

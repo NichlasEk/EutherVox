@@ -140,7 +140,7 @@ private data class DeviceDestination(
 private val DeviceDestinations = listOf(
     DeviceDestination("voice", "Röst", "◉", R.drawable.hero_voice),
     DeviceDestination("lights", "Ljus", "✦", R.drawable.hero_lights),
-    DeviceDestination("tv", "TV", "▣", R.drawable.hero_tv),
+    DeviceDestination("tv", "TV apparater", "▣", R.drawable.hero_tv),
     DeviceDestination("washer", "Tvättmaskin", "◎", R.drawable.hero_washer),
     DeviceDestination("signal", "Signal", "◈", R.drawable.hero_scryer),
     DeviceDestination("scryer", "Scryer", "◇", R.drawable.hero_scryer),
@@ -298,7 +298,7 @@ fun EutherVoxApp() {
                 onlineByTab = mapOf(
                     "voice" to state.canTalk,
                     "lights" to (wifiLightState.devices.isNotEmpty() || lightState.devices.isNotEmpty()),
-                    "tv" to state.configuredTvs.isNotEmpty(),
+                    "tv" to (state.remoteData?.get("ok")?.asBoolean == true || state.configuredTvs.isNotEmpty()),
                     "washer" to state.washerState?.online,
                     "printer" to state.printerState?.available,
                     "signal" to state.signalData?.get("available")?.asBoolean,
@@ -470,15 +470,14 @@ fun EutherVoxApp() {
                     onInspect = lightController::inspect,
                 )
             } else if (selectedTab == "tv") {
-                TvPanel(
-                    configured = state.configuredTvs,
-                    discovered = state.discoveredTvs,
-                    message = state.tvMessage,
-                    busy = state.tvBusy,
-                    onDiscover = controller::discoverTvs,
-                    onSave = controller::saveTv,
-                    onCommand = controller::controlTv,
-                )
+                PushToTalkButton(active=state.microphoneActive, enabled=state.canTalk && hasPermission && !state.conversationActive,
+                    onStart=controller::startTalking, onStop=controller::stopTalking)
+                state.actionMessage?.let { Text(it) }
+                TvDevicesPanel(data=state.remoteData,busy=state.remoteBusy,onRequest=controller::remoteRequest)
+                var serverTvExpanded by remember { mutableStateOf(false) }
+                OutlinedButton(onClick={serverTvExpanded=!serverTvExpanded}) { Text(if(serverTvExpanded) "Dölj serverns NEC-styrning" else "NEC via servern, även utanför hemmet") }
+                if(serverTvExpanded) TvPanel(configured=state.configuredTvs,discovered=state.discoveredTvs,message=state.tvMessage,busy=state.tvBusy,
+                    onDiscover=controller::discoverTvs,onSave=controller::saveTv,onCommand=controller::controlTv)
             } else if (selectedTab == "pump") {
                 PumpPanel(
                     configured = state.configuredPumps,

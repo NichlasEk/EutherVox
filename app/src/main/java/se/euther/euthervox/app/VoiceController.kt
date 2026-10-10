@@ -88,6 +88,8 @@ data class VoiceUiState(
     val discoveredTvs: List<ServerEvent.DiscoveredTv> = emptyList(),
     val tvMessage: String? = null,
     val tvBusy: Boolean = false,
+    val remoteData: JsonObject? = null,
+    val remoteBusy: Boolean = false,
     val configuredPumps: List<ServerEvent.ConfiguredPump> = emptyList(),
     val pumpState: ServerEvent.PumpState? = null,
     val pumpMessage: String? = null,
@@ -161,6 +163,8 @@ private data class ConnectionIdentity(
 )
 
 class VoiceController(context: Context, private val scope: CoroutineScope) : VoiceTransport.Listener {
+    private val beamVoice = se.euther.eutherbeam.BeamVoice(context.applicationContext)
+    private val beamActions = mutableSetOf<String>()
     private val appearanceCache = se.euther.euthervox.ui.AppearanceCache(context)
     private var appearanceInFlight: Pair<String, String>? = null
     private val notificationDeviceId = context.applicationContext
@@ -178,6 +182,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     val state: StateFlow<VoiceUiState> = mutableState.asStateFlow()
     private var transport: VoiceTransport? = null
     private var connectionJob: Job? = null
+    private var remoteTimeoutJob: Job? = null
     private var printerTimeoutJob: Job? = null
     private var scryerTimeoutJob: Job? = null
     private var washerPollingJob: Job? = null
@@ -527,6 +532,26 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             return
         }
         sendPendingLightConfig()
+    }
+
+    fun remoteRequest(operation: String, payload: JsonObject = JsonObject()) {
+        if (!ready) {
+            mutableState.value=mutableState.value.copy(remoteData=JsonObject().apply { addProperty("ok",false);addProperty("message","Anslut till servern under Röst först.") })
+            return
+        }
+        if (mutableState.value.remoteBusy) return
+        remoteTimeoutJob?.cancel()
+        mutableState.value=mutableState.value.copy(remoteBusy=true)
+        remoteTimeoutJob=scope.launch {
+            delay(15000)
+            mutableState.value=mutableState.value.copy(remoteBusy=false,remoteData=JsonObject().apply {
+                addProperty("ok",false);addProperty("message","Svar saknas. Kontrollera resultatet innan du försöker igen; inget skickas om automatiskt.")
+            })
+        }
+        scope.launch {
+            payload.addProperty("type","remote.request");payload.addProperty("operation",operation)
+            if(transport?.sendText(payload.toString())!=true)mutableState.value=mutableState.value.copy(remoteBusy=false,remoteData=JsonObject().apply { addProperty("ok",false);addProperty("message","Kontakten bröts. Kontrollera resultatet innan nytt försök.") })
+        }
     }
 
     fun discoverTvs() {
@@ -1046,6 +1071,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 }
             }
             is ServerEvent.Ready -> {
+                beamActions.clear()
                 ready = true
                 syncAppearance(event.appearanceTheme)
                 recordDiagnostic("transport.ready")
@@ -1198,6 +1224,10 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 pumpBusy = false,
                 pumpMessage = event.message,
             )
+            is ServerEvent.RemoteResult -> {
+                remoteTimeoutJob?.cancel()
+                mutableState.value=mutableState.value.copy(remoteData=event.payload,remoteBusy=false)
+            }
             is ServerEvent.SignalResult -> {
                 signalTimeoutJob?.cancel()
                 val merged = mutableState.value.signalData?.deepCopy() ?: JsonObject()
@@ -1316,7 +1346,10 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                     else -> "Ingen lokal karta är konfigurerad ännu."
                 },
             )
-            is ServerEvent.Error -> if (event.code.startsWith("SIGNAL_")) {
+            is ServerEvent.Error -> if (event.code.startsWith("REMOTE_")) {
+                remoteTimeoutJob?.cancel()
+                mutableState.value=mutableState.value.copy(remoteBusy=false,remoteData=JsonObject().apply { addProperty("ok",false);addProperty("message",event.message) })
+            } else if (event.code.startsWith("SIGNAL_")) {
                 signalTimeoutJob?.cancel()
                 mutableState.value = mutableState.value.copy(signalBusy = false)
                 fail(event.message, event.recoverable)
@@ -1383,6 +1416,23 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
 
         finishUtterance()
+        if(event.name=="beam.control" && event.provider=="eutherbeam") {
+            if(beamActions.contains(event.actionId))return
+            if(beamActions.size>=128) {
+                val message="Anslut till servern igen för fler EutherBeam-kommandon."
+                mutableState.value=mutableState.value.copy(actionMessage=message)
+                scope.launch { transport?.sendText(actionResult(event.actionId,event.utteranceId,"rejected",message)) }
+                return
+            }
+            beamActions.add(event.actionId)
+            scope.launch {
+                val result=runCatching { beamVoice.execute(event.uri,event.query) }
+                val text=result.getOrElse { it.message ?: "EutherBeam-kommandot misslyckades" }
+                mutableState.value=mutableState.value.copy(actionMessage=text)
+                transport?.sendText(actionResult(event.actionId,event.utteranceId,if(result.isSuccess)"completed" else "failed",text))
+            }
+            return
+        }
         val result = actionExecutor.execute(event)
         scope.launch {
             transport?.sendText(actionResult(event.actionId, event.utteranceId, result.status, result.message))

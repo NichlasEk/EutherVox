@@ -23,6 +23,7 @@ from .tools import EutherVoxToolRegistry
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
 from .television import NecTvService
+from .remotes import RemoteService
 from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
 from .printer import PrinterService
@@ -88,7 +89,7 @@ def configure_device_hotwords(
     return count
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None, printer=None, vacuum_notifications=None, scryer=None, signal=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None, printer=None, vacuum_notifications=None, scryer=None, signal=None, remotes=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -115,6 +116,8 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         printer=printer,
         scryer=scryer,
         signal=signal,
+        remotes=remotes,
+        remote_peer_trusted=bool(socket.remote_address and socket.remote_address[0] in config.remote_settings.get("trusted_proxy_ips", [])),
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -196,6 +199,7 @@ async def run(config: GatewayConfig) -> None:
     cast = CastService(config.cast_settings)
     wikipedia = WikipediaService(config.wikipedia_settings)
     lights = MagicHomeLightService(config.light_settings, config.config_dir)
+    remotes = RemoteService(config.remote_settings, config.config_dir)
     television = NecTvService(config.television_settings, config.config_dir)
     eutherpump = EutherPumpService(config.eutherpump_settings)
     eutherwash = EutherWashService(config.eutherwash_settings)
@@ -248,7 +252,7 @@ async def run(config: GatewayConfig) -> None:
     await vacuum_notifications.start()
     try:
         async with serve(
-            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications, printer, vacuum_notifications, scryer, signal),
+            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications, printer, vacuum_notifications, scryer, signal, remotes),
             config.host,
             config.port,
             max_size=14 * 1024 * 1024,

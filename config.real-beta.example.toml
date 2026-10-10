@@ -217,3 +217,10 @@ enabled = true
 allowed_users = ["nichlas"]
 base_url = "http://127.0.0.1:8797"
 token_file = "/home/nichlas/EutherSignal/state/api-token"
+
+[remotes]
+enabled = true
+allowed_users = ["nichlas"]
+trusted_proxy_ips = ["192.168.32.186"]
+node_config = "/run/media/nichlas/Kingston1TB/EutherCommand/.local/control/client.json"
+database = "/home/nichlas/EutherVox/state/remotes.sqlite"

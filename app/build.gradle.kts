@@ -12,8 +12,8 @@ android {
         applicationId = "se.euther.euthervox"
         minSdk = 26
         targetSdk = 36
-        versionCode = 64
-        versionName = "0.19.0-beta.40"
+        versionCode = 65
+        versionName = "0.20.0-beta.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -30,6 +30,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":beam"))
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.compose.ui:ui:1.8.3")
     implementation("androidx.compose.ui:ui-tooling-preview:1.8.3")

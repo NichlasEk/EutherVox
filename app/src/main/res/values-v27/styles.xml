@@ -1,0 +1,13 @@
+<resources>
+    <!-- A neutral dark launch window is intentional even before user preferences can be read. -->
+    <style name="Theme.EutherVox" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">#071523</item>
+        <item name="android:colorBackground">#071523</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:statusBarColor">#071523</item>
+        <item name="android:navigationBarColor">#071523</item>
+        <item name="android:colorAccent">#D4B86A</item>
+    </style>
+</resources>

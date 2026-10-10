@@ -465,3 +465,20 @@ Start a report conversation to ask follow-up questions by microphone, or type a
 question in the Signal panel. A new report does not replace an active discussion.
 Collection and speech can be cancelled separately. There is no automatic daily
 schedule or unsolicited news playback in this first version.
+
+## TV apparater — 0.20.0-beta.1
+
+The TV tab combines the vendored MIT EutherBeam Android library with authenticated
+EutherCommand IR learning. Users can inspect a capture, name it, save explicit
+spoken aliases, test once, and record their observation. Backup controls are
+optional. Pair network TVs again inside Vox; standalone Beam private app storage
+cannot be imported. Existing gateway NEC controls remain expandable below Beam.
+
+`[remotes]` config sets `enabled`, `allowed_users`, `trusted_proxy_ips`, the
+private `node_config` path and SQLite `database` path. Install EutherCommand into
+the gateway environment. Only trusted reverse-proxy connections carrying an
+approved authenticated user can use the feature. Never put node credentials in
+this repository. The gateway reserves execution IDs durably, never retries an
+uncertain IR transmission and disables the node after execution.
+
+See `docs/TV_APPARATER.md` for deployment and physical validation boundaries.

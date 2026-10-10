@@ -271,6 +271,7 @@ sealed interface ServerEvent {
     data class PumpsConfig(val pumps: List<ConfiguredPump>) : ServerEvent
     data class PumpStatusResult(val pump: PumpState) : ServerEvent
     data class PumpCommandResult(val pump: PumpState, val message: String) : ServerEvent
+    data class RemoteResult(val payload: JsonObject) : ServerEvent
     data class SignalResult(val payload: JsonObject) : ServerEvent
     data class ScryerReports(val payload: JsonObject) : ServerEvent
     data class PrinterAction(val action: String) : ServerEvent
@@ -348,6 +349,7 @@ fun parseServerEvent(raw: String): ServerEvent {
             json["status"].asString,
             json["message"].asString,
         )
+        "remote.result" -> ServerEvent.RemoteResult(json)
         "action.completed" -> ServerEvent.ActionCompleted(
             json["action_id"].asString,
             json["status"].asString,

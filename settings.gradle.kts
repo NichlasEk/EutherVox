@@ -17,3 +17,5 @@ dependencyResolutionManagement {
 rootProject.name = "EutherVox"
 include(":app")
 
+
+include(":beam")
