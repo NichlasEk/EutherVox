@@ -526,6 +526,7 @@ fun EutherBeamPanel() {
                 Text("Dina skärmar. Ett tryck bort.", color = BeamText, fontWeight = FontWeight.Bold, fontSize = 30.sp)
                 Text("Lokal signal. Krypterad länk. Ingen molntjänst.", color = BeamMuted, fontSize = 15.sp)
 
+                LogitechVolumeCard()
                 RemoteTabs(
                     selected = selectedTab,
                     onSelect = { tab ->

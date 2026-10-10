@@ -98,3 +98,16 @@ def test_session_requires_started_authenticated_trusted_connection(tmp_path):
         session.authenticated_user='intruder'
         with pytest.raises(ProtocolError):await session._remote_request(message)
     asyncio.run(run())
+
+def test_logitech_shortcuts_are_owned_allowlisted_and_deduplicated(tmp_path):
+    s=service(tmp_path)
+    async def run():
+        for direction in ('up','down'):
+            request={'operation':'logitech','direction':direction,'request_id':'button-'+direction}
+            assert (await s.request('nichlas',request))['status']=='transmitted'
+            assert (await s.request('nichlas',request))['duplicate']
+        assert s.node.calls==['enable','volume_up','disable','enable','volume_down','disable']
+        for user,direction in [('intruder','up'),('nichlas','toggle')]:
+            with pytest.raises(ValueError):await s.request(user,{'operation':'logitech','direction':direction,'request_id':'invalid'})
+        assert len(s.node.calls)==6
+    asyncio.run(run())

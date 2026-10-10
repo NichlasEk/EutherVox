@@ -74,3 +74,26 @@ verified with the user's devices.
   phone voice and TV pairing require physical follow-up.
 - Multi-node configuration/discovery, node OTA/rollback, flash encryption and
   secure boot remain future work. The current implementation is a single-node beta.
+
+## Direct Logitech buttons — 0.20.0-beta.2
+
+Two always-visible buttons, **Höj volymen** and **Sänk volymen**, sit above the
+voice control on the TV card. They do not require enabling backup controls.
+Each tap invokes the gateway's `logitech` operation with `direction` (`up` or
+`down`) and a fresh request ID. The gateway resolves the current authenticated
+user's registered Logitech command; ownership and durable duplicate checks remain.
+Buttons are disabled while a request is pending. There is no hold-to-repeat.
+
+Standalone EutherBeam 0.1.0-alpha.13 uses an explicit ordered broadcast to
+`LogitechVolumeReceiver` in Vox. The receiver is protected by a signature-level
+permission and accepts only the two directions. Both apps must be signed by the
+same trusted publisher (the current beta builds use the same development key).
+Vox must already be connected/authenticated; the bridge does not queue actions
+for a later reconnect or share server/node credentials with Beam. An 8-second
+bridge timeout returns uncertainty without resending; the existing controller
+and gateway retain their own busy/deduplication safeguards.
+
+Validation: app builds/lint/unit tests pass, 9 remote-service tests pass,
+emulator taps on both buttons in both apps reach the mock transmitter exactly
+once per tap and display the result. An unprivileged ADB broadcast was denied
+by the signature permission. No physical IR was emitted during these tests.

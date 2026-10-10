@@ -89,6 +89,10 @@ class RemoteService:
             return result
     async def request(self,user,b):
         self.require(user);op=b.get('operation')
+        if op=='logitech':
+            direction=b.get('direction')
+            if direction not in ('up','down'):raise ValueError('Ogiltig volymriktning')
+            return await self.execute(user,'logitech_volume_'+direction+'_'+user,b['request_id'])
         if op=='execute':return await self.execute(user,b['command_id'],b['request_id'])
         async with self.lock:
             if op=='list':return {'commands':self.listing(user)}

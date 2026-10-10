@@ -470,10 +470,11 @@ fun EutherVoxApp() {
                     onInspect = lightController::inspect,
                 )
             } else if (selectedTab == "tv") {
-                PushToTalkButton(active=state.microphoneActive, enabled=state.canTalk && hasPermission && !state.conversationActive,
-                    onStart=controller::startTalking, onStop=controller::stopTalking)
-                state.actionMessage?.let { Text(it) }
-                TvDevicesPanel(data=state.remoteData,busy=state.remoteBusy,onRequest=controller::remoteRequest)
+                TvDevicesPanel(data=state.remoteData,busy=state.remoteBusy,onRequest=controller::remoteRequest) {
+                    PushToTalkButton(active=state.microphoneActive, enabled=state.canTalk && hasPermission && !state.conversationActive,
+                        onStart=controller::startTalking, onStop=controller::stopTalking)
+                    state.actionMessage?.let { Text(it) }
+                }
                 var serverTvExpanded by remember { mutableStateOf(false) }
                 OutlinedButton(onClick={serverTvExpanded=!serverTvExpanded}) { Text(if(serverTvExpanded) "Dölj serverns NEC-styrning" else "NEC via servern, även utanför hemmet") }
                 if(serverTvExpanded) TvPanel(configured=state.configuredTvs,discovered=state.discoveredTvs,message=state.tvMessage,busy=state.tvBusy,
