@@ -3,6 +3,7 @@
 from pathlib import Path
 from uuid import UUID
 import asyncio
+from contextlib import suppress
 import re
 import time
 import httpx
@@ -24,6 +25,41 @@ class SpeechPacer:
         if delay > 0:
             await self.sleep(delay)
         self.playback_until += len(frame) / self.bytes_per_second
+
+
+async def prefetched_speech(tts, text, character):
+    """Render the next bounded paragraph while the current one is playing."""
+    chunks = iter(speech_chunks(text))
+
+    async def render(chunk):
+        frames = []
+        size = 0
+        async for frame in tts.synthesize(chunk, character, tts.sample_rate):
+            size += len(frame)
+            if size > tts.sample_rate * 2 * 90:
+                raise ValueError("Signal speech paragraph exceeds 90 seconds")
+            frames.append(frame)
+        return frames
+
+    pending = None
+    try:
+        chunk = next(chunks, None)
+        if chunk is None:
+            return
+        pending = asyncio.create_task(render(chunk))
+        while pending is not None:
+            frames = await pending
+            pending = None
+            chunk = next(chunks, None)
+            if chunk is not None:
+                pending = asyncio.create_task(render(chunk))
+            for frame in frames:
+                yield frame
+    finally:
+        if pending is not None:
+            pending.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await pending
 
 
 class SignalService:

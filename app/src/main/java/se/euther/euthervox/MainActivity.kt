@@ -81,6 +81,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -93,6 +94,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.core.content.edit
 import se.euther.euthervox.app.Latencies
 import se.euther.euthervox.app.VoiceStatus
+import se.euther.euthervox.app.keepScreenAwake
 import se.euther.euthervox.background.EutherVoxNodeRuntime
 import se.euther.euthervox.background.EutherVoxNodeService
 import se.euther.euthervox.network.EutherAuthClient
@@ -221,6 +223,12 @@ fun EutherVoxApp() {
         if (hasBlePermission) lightController.startScan()
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val view = LocalView.current
+    val keepAwake = keepScreenAwake(state.status)
+    DisposableEffect(view, keepAwake) {
+        view.keepScreenOn = keepAwake
+        onDispose { view.keepScreenOn = false }
+    }
     val character = characterUi(characterId)
     val characterName = character.name
     val characterSymbol = character.symbol

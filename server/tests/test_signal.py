@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from gateway.signal import SignalService, SpeechPacer, signal_intent, speech_chunks
+from gateway.signal import SignalService, SpeechPacer, prefetched_speech, signal_intent, speech_chunks
 from gateway.session import Phase, ProtocolError
 from test_session import make_session, start_message
 
@@ -75,6 +75,78 @@ def test_audio_pacing_remains_cancellable():
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
+
+    asyncio.run(run())
+
+
+def test_speech_prefetch_is_one_paragraph_ahead_and_preserves_order():
+    class TTS:
+        sample_rate = 22050
+
+        def __init__(self):
+            self.calls = []
+            self.second_ready = asyncio.Event()
+
+        async def synthesize(self, text, *args):
+            self.calls.append(text)
+            yield text.encode()
+            if len(self.calls) == 2:
+                self.second_ready.set()
+
+    async def run():
+        tts = TTS()
+        text = "a" * 500 + " " + "b" * 500 + " " + "c" * 500
+        stream = prefetched_speech(tts, text, None)
+        assert await anext(stream) == b"a" * 500
+        await asyncio.wait_for(tts.second_ready.wait(), 1)
+        assert tts.calls == ["a" * 500, "b" * 500]
+        assert [frame async for frame in stream] == [b"b" * 500, b"c" * 500]
+
+    asyncio.run(run())
+
+
+def test_speech_prefetch_cancels_pending_synthesis_on_close():
+    class TTS:
+        sample_rate = 22050
+
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.cancelled = False
+
+        async def synthesize(self, text, *args):
+            if text.startswith("b"):
+                self.started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    self.cancelled = True
+            yield b"audio"
+
+    async def run():
+        tts = TTS()
+        stream = prefetched_speech(tts, "a" * 500 + " b", None)
+        assert await anext(stream) == b"audio"
+        await asyncio.wait_for(tts.started.wait(), 1)
+        await stream.aclose()
+        assert tts.cancelled
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("oversized", [True, False])
+def test_speech_prefetch_propagates_errors_and_bounds_audio(oversized):
+    class TTS:
+        sample_rate = 10
+
+        async def synthesize(self, *args):
+            if oversized:
+                yield bytes(1802)
+            else:
+                raise ValueError("worker failed")
+
+    async def run():
+        with pytest.raises(ValueError):
+            _ = [frame async for frame in prefetched_speech(TTS(), "hello", None)]
 
     asyncio.run(run())
 

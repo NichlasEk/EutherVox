@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 import hashlib
 import inspect
 from dataclasses import dataclass, field, replace
@@ -32,7 +33,7 @@ from .eutherwash import EutherWashService
 from .appearance import AppearanceStore, THEMES
 from .printer import PrinterService
 from .scryer import ScryerService, wants_report, spoken_report
-from .signal import SignalService, SpeechPacer, signal_intent, speech_chunks, spoken_briefing
+from .signal import SignalService, SpeechPacer, prefetched_speech, signal_intent, speech_chunks, spoken_briefing
 from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
@@ -589,8 +590,8 @@ class VoiceSession:
             audio_bytes = 0
             try:
                 async with asyncio.timeout(300):
-                    for chunk in speech_chunks(spoken):
-                        async for frame in self.tts.synthesize(chunk, self._character(), self.tts.sample_rate):
+                    async with aclosing(prefetched_speech(self.tts, spoken, self._character())) as frames:
+                        async for frame in frames:
                             await pacer.wait(frame)
                             await self.send_binary(frame)
                             audio_bytes += len(frame)
@@ -598,6 +599,7 @@ class VoiceSession:
             finally:
                 await self.send_json({"type":"tts.end", "utterance_id":utterance_id})
         except asyncio.CancelledError:
+            LOG.info("signal_response_cancelled session=%s utterance=%s", self.session_id, utterance_id)
             raise
         except Exception:
             LOG.exception("signal_response_failed session=%s utterance=%s", self.session_id, utterance_id)
@@ -916,6 +918,7 @@ class VoiceSession:
         if message.get("utterance_id") != self.utterance_id:
             raise ProtocolError("UTTERANCE_MISMATCH", "response.cancel does not match active utterance")
         utterance_id = self.utterance_id
+        LOG.info("response_cancel_requested session=%s utterance=%s phase=%s", self.session_id, utterance_id, self.phase.value)
         if self.response_task:
             self.response_task.cancel()
             await asyncio.gather(self.response_task, return_exceptions=True)

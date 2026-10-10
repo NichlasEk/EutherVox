@@ -451,6 +451,16 @@ boundaries; a synthesis pause must not accumulate permission for a later burst.
 The gateway logs `signal_audio_complete` with byte count and duration, and logs
 `signal_response_failed` on failure. Completion means delivery, not proof of
 physical phone playback.
+Beta40 keeps the visible app's screen awake while preparing and playing a
+response, then restores the normal screen timeout. Explicit screen locking or
+leaving the app still follows the existing cancellation behavior. Signal renders
+one paragraph ahead during playback to avoid synthesis gaps; memory is bounded
+to the current and next paragraph (maximum 90 seconds of PCM each), and cancelling
+the response also cancels the pending synthesis.
+Verified with the beta40 Android emulator: a complete 134.9-second OmniVoice
+briefing played with a 15-second system screen timeout and charging stay-awake
+disabled; the window kept the screen awake until playback completed, then cleared
+the flag. This is emulator evidence; physical-phone confirmation remains separate.
 Start a report conversation to ask follow-up questions by microphone, or type a
 question in the Signal panel. A new report does not replace an active discussion.
 Collection and speech can be cancelled separately. There is no automatic daily
