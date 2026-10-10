@@ -71,14 +71,14 @@ import java.util.UUID
 
 private enum class RemoteTab { SAMSUNG, NEC, ANDROID_TV }
 
-internal val BeamDark = Color(0xFF1D2021)
-internal val BeamPanel = Color(0xFF282828)
-internal val BeamRaised = Color(0xFF32302F)
-internal val BeamOrange = Color(0xFFFE8019)
-internal val BeamMint = Color(0xFF8EC07C)
-internal val BeamYellow = Color(0xFFFABD2F)
-internal val BeamText = Color(0xFFEBDBB2)
-internal val BeamMuted = Color(0xFFA89984)
+internal val BeamDark: Color @Composable get() = MaterialTheme.colorScheme.background
+internal val BeamPanel: Color @Composable get() = MaterialTheme.colorScheme.surface
+internal val BeamRaised: Color @Composable get() = MaterialTheme.colorScheme.surfaceContainerHigh
+internal val BeamOrange: Color @Composable get() = MaterialTheme.colorScheme.tertiary
+internal val BeamMint: Color @Composable get() = MaterialTheme.colorScheme.primary
+internal val BeamYellow: Color @Composable get() = MaterialTheme.colorScheme.secondary
+internal val BeamText: Color @Composable get() = MaterialTheme.colorScheme.onSurface
+internal val BeamMuted: Color @Composable get() = MaterialTheme.colorScheme.onSurfaceVariant
 
 @Composable
 fun EutherBeamPanel() {

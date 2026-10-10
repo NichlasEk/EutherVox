@@ -233,4 +233,4 @@ use_default_node = true
 [remotes.tv_targets.samsung]
 label = "Samsung-TV:n"
 aliases = ["samsung", "samsung tv", "samsung tvn", "samsung tv:n", "samsung-tv", "samsung-tvn", "övervåningen", "övervåning", "uppe", "där uppe", "en trappa upp"]
-# No transmitter upstairs yet. Never route this target to the downstairs node.
+node_config = "/run/media/nichlas/Kingston1TB/EutherCommand/nodes/esp8266/.local/client.json"

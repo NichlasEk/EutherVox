@@ -151,13 +151,46 @@ def test_confirmed_home_configuration(tmp_path,text,target):
     from pathlib import Path
     settings=tomllib.loads((Path(__file__).parents[2]/'config.real-beta.example.toml').read_text())['remotes']
     settings['database']=str(tmp_path/'remotes.sqlite')
+    # Exercise deployed routing without reading private credentials or sending IR.
+    assert settings['tv_targets']['samsung'].pop('node_config')
     s=RemoteService(settings,tmp_path,Node())
+    s.target_nodes['samsung']=Node()
     action=s.plan('nichlas',text,'phone')
+    assert action.name=='remote.volume' and action.arguments['target_id']==target
     if target=='nec':
-        assert action.name=='remote.volume' and action.arguments['target_id']=='nec'
         assert s.target_nodes['nec'] is s.node
     else:
-        assert action.name=='remote.unavailable'
-        assert 'Samsung' in action.acknowledgement
-        assert 'samsung' not in s.target_nodes
+        assert s.target_nodes['samsung'] is not s.node
     assert not s.node.calls
+
+
+def test_button_request_routes_explicit_target_only(tmp_path):
+    s=service(tmp_path);s.target_nodes['samsung']=Node()
+    async def run():
+        for target in ('nec','samsung'):
+            for direction in ('up','down'):
+                await s.request('nichlas',{'operation':'logitech','target_id':target,'direction':direction,'request_id':target+'-'+direction})
+        for node in (s.node,s.target_nodes['samsung']):
+            assert [c[:2] for c in node.calls]==[('fast','volume_up'),('fast','volume_down')]
+        with pytest.raises(ValueError):
+            await s.request('nichlas',{'operation':'logitech','target_id':'unknown','direction':'up','request_id':'bad-target'})
+        assert len(s.node.calls)==len(s.target_nodes['samsung'].calls)==2
+    asyncio.run(run())
+
+
+def test_unreachable_node_does_not_block_other_clock_refresh(tmp_path):
+    import threading
+    from contextlib import suppress
+    blocked=threading.Event();ready=threading.Event()
+    class SlowNode(Node):
+        def refresh_fast(self):blocked.wait(2)
+    class ReadyNode(Node):
+        def refresh_fast(self):ready.set()
+    async def run():
+        s=service(tmp_path);s.node=SlowNode();s.target_nodes={'samsung':ReadyNode()}
+        s.start_fast_refresh()
+        try:assert await asyncio.to_thread(ready.wait,.5)
+        finally:
+            blocked.set();s.fast_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):await s.fast_refresh_task
+    asyncio.run(run())

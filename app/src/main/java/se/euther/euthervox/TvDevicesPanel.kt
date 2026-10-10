@@ -50,11 +50,11 @@ fun TvDevicesPanel(data: JsonObject?, busy: Boolean, onRequest: (String, JsonObj
         if(polling && captureId.isNotBlank())repeat(40){delay(1500);if(!latestBusy)latestRequest("capture",JsonObject().apply{addProperty("capture_id",captureId)})}
     }
     Text("TV apparater",style=MaterialTheme.typography.headlineMedium)
-    LogitechVolumeCard(enabled=!busy, status=message.takeIf { data?.get("ok")?.asBoolean==false }, onVolume={ direction ->
-        onRequest("logitech",JsonObject().apply { addProperty("direction",direction);addProperty("request_id",UUID.randomUUID().toString()) })
+    LogitechVolumeCard(enabled=!busy, status=message.takeIf { data?.get("ok")?.asBoolean==false }, onVolume={ target, direction ->
+        onRequest("logitech",JsonObject().apply { addProperty("target_id",target);addProperty("direction",direction);addProperty("request_id",UUID.randomUUID().toString()) })
     })
     voiceControls()
-    Text("Rösten först. Säg exempelvis ”sänk volymen på Logitech”. Varje fras utför ett sparat kommando en gång.")
+    Text("Rösten först. Säg exempelvis ”sänk volymen på Samsung”. Varje fras utför ett sparat kommando en gång.")
     if(message.isNotBlank())Text(message)
     OutlinedButton(onClick={onRequest("list",JsonObject())},enabled=!busy){Text("Uppdatera kommandon")}
     commands.forEach { value ->

@@ -57,12 +57,13 @@ class RemoteService:
         self.db.commit()
     def start_fast_refresh(self):
         if not self.enabled:return
-        async def refresh():
+        async def refresh_node(node):
             while True:
-                for node in dict.fromkeys([self.node,*self.target_nodes.values()]):
-                    try:await asyncio.to_thread(node.refresh_fast)
-                    except Exception:pass # No credentials in logs; send_fast fails closed on stale cache.
+                try:await asyncio.to_thread(node.refresh_fast)
+                except Exception:pass # No credentials in logs; send_fast fails closed on stale cache.
                 await asyncio.sleep(5)
+        async def refresh():
+            await asyncio.gather(*(refresh_node(node) for node in dict.fromkeys([self.node,*self.target_nodes.values()])))
         self.fast_refresh_task=asyncio.create_task(refresh())
 
     async def dispatch_fast(self,user,cid,rid,target_id=None):

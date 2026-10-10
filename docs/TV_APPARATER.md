@@ -175,3 +175,34 @@ All 45 focused remote/volume tests pass, including nine cases using the actual
 configured room aliases and node assignments. The gateway user service was
 restarted to activate this configuration. These tests emitted no real IR; spoken
 phone-to-device verification remains for the user.
+
+## Separate TV buttons and themes — Vox beta.4 / Beam alpha.15
+
+Each app now shows two named Logitech cards: NEC · Bottenvåningen and Samsung ·
+Övervåningen, each with explicit up/down buttons. Every new request includes the
+registered `target_id`; no selection can silently carry over from another card.
+160 ms tap debounce is per target and success remains silent/no acknowledgement.
+Standalone Beam uses the signature-protected `LOGITECH_VOLUME_TARGET` action.
+Older Vox receivers reject this new action instead of ignoring the target and
+sending downstairs; update both apps. New Vox still accepts the old action as NEC.
+
+Vox cards use the active Material color scheme and shapes; embedded Beam's palette
+now follows Vox including System Regis. Standalone Beam's Material controls use
+its existing dark/mint palette. No credentials, MAC addresses or IPs are sent by
+the app. The gateway maps IDs to separately pinned certificates and unique tokens.
+
+The new ESP8266 is assigned to Samsung, at observed DHCP address 192.168.32.253,
+MAC 80:7d:3a:3e:20:fc. It is temporarily placed downstairs for the user's first
+optical test. The NEC target remains assigned to ESP32 at 192.168.32.248; it was
+unreachable during this turn's live status check. Clock refreshes now run
+independently per node so an unreachable node cannot stall the other one.
+The new node's pinned status refresh succeeds and TX is ready. No actual IR was
+sent by the development tests. Physical volume response on ESP8266 remains pending.
+
+Validation: 47 focused gateway tests pass, including explicit-target dispatch,
+unknown-target rejection and independent node refresh. Both APK builds, lint and
+unit tests pass. Emulator: all four buttons in each app dispatch the exact target
+and direction once through two mock nodes with no response/wait. System Regis,
+classic Vox and standalone Beam colors were inspected. Packages are published as
+Vox 0.20.0-beta.4 (68) and Beam 0.1.0-alpha.15 (15). Server upload hashes match local
+APKs; Beam's public download hash matches, Vox's anonymous download returns 401.
