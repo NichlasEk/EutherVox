@@ -440,6 +440,10 @@ saved evidence. The research model is selected in EutherSignal, independently of
 Vox's conversational model selector. No news metadata can invoke device tools.
 
 Voice examples: “Signal, hämta nyheter”, “Signal, läs rapporten”, “Lämna Signal”.
+Short requests such as “Nyhetsrapport”, “Vad är det senaste?”, “Vad är nytt?”,
+“Nyheter tack”, “Vad händer?” and “Siare, säg mig vad är nytt” read the saved
+report. Siare/Siaren, Scryer and Orakel/Oraklet can prefix these short requests.
+Use “Signal, hämta nyheter” to collect a fresh report.
 Start a report conversation to ask follow-up questions by microphone, or type a
 question in the Signal panel. A new report does not replace an active discussion.
 Collection and speech can be cancelled separately. There is no automatic daily

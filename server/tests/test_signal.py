@@ -14,6 +14,24 @@ from test_session import make_session, start_message
         ("Läs nyhetsrapporten", "speak"),
         ("Signal rapportera inte", None),
         ("Starta dammsugaren", None),
+        ("nyhetsrapport", "speak"),
+        ("Vad är det senaste?", "speak"),
+        ("vad är nytt", "speak"),
+        ("Nyheter tack!", "speak"),
+        ("Vad händer?", "speak"),
+        ("Siare, säg mig vad är nytt", "speak"),
+        ("Siaren! Berätta för mig vad är det senaste!", "speak"),
+        ("Ooo Orakel, säg mig vad händer?", "speak"),
+        ("Hej Signal, vad har hänt?", "speak"),
+        ("Kan du säga mig vad är nytt?", "speak"),
+        ("Ge mig en nyhetsrapport tack", "speak"),
+        ("Vad finns det för nyheter?", "speak"),
+        ("Scryer, rapportera", None),
+        ("Vad händer med dammsugaren?", None),
+        ("Vad är nytt i den andra nyheten?", None),
+        ("Siaren säg mig vad är nytt med EutherVault", None),
+        ("Nyheter tack men inte nu", None),
+        ("Lämna inte Signal", None),
     ],
 )
 def test_intents(text, expected):
@@ -89,6 +107,36 @@ def test_signal_auth_and_audio_use_existing_pipeline():
         assert types.count("tts.start") == types.count("tts.end") == 1
         await s._signal_request({"command": "leave"})
         assert s.signal_report_id is None
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("utterance", ["Vad händer?", "Siare säg mig vad är nytt"])
+def test_short_voice_request_reads_news_through_audio_pipeline(utterance):
+    class STT:
+        async def transcribe(self, *args, **kwargs):
+            return utterance
+
+    async def run():
+        s, sent = make_session()
+        s.signal = Fake()
+        s.stt = STT()
+        s.authenticated_user = "owner"
+        await s.handle_text(start_message())
+        await s.handle_text('{"type":"audio.start","utterance_id":"short-news"}')
+        await s.handle_binary(bytes(640))
+        await s.handle_text('{"type":"audio.end","utterance_id":"short-news"}')
+        await s.response_task
+        assert s.signal_report_id == "new"
+        assert any(isinstance(x, bytes) and x for x in sent)
+        assert any(
+            isinstance(x, dict) and x.get("type") == "assistant.text.final"
+            and x["text"] == "Det här är den sparade rapporten."
+            for x in sent
+        )
+        assert not any(
+            isinstance(x, dict) and x.get("type") == "action.request" for x in sent
+        )
 
     asyncio.run(run())
 

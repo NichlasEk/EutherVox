@@ -62,13 +62,27 @@ class SignalService:
 
 def signal_intent(text):
     t = " ".join(re.findall(r"\w+", text.lower()))
+    if re.search(r"\b(?:inte|aldrig)\b", t):
+        return None
     if re.search(r"\b(?:lämna|avsluta|sluta)\b.*\b(?:signal|nyheter|rapporten)\b", t):
         return "leave"
+    # Match complete short requests so questions about a particular story or
+    # appliance remain questions, even when they start with "vad händer".
+    short_request = re.sub(
+        r"^(?:(?:hej|snälla|o+|du) )*(?:(?:euthersignal|signal|scryer|scryern|siare|siaren|orakel|oraklet) )?"
+        r"(?:(?:kan du |vill du )?(?:säga|säg|berätta)(?: för)? mig )?",
+        "", t,
+    )
+    if re.fullmatch(
+        r"(?:nyheter(?:na)?|nyhetsrapport(?:en)?|vad är det senaste|vad är nytt|vad händer|"
+        r"vad har hänt|vad finns det för nyheter|ge mig (?:nyheter(?:na)?|en nyhetsrapport))"
+        r"(?: (?:tack|är du snäll))?",
+        short_request,
+    ):
+        return "speak"
     if not re.search(
         r"\b(?:euthersignal|signal|nyhetsrapport(?:en)?|nyhetsbriefing(?:en)?)\b", t
     ):
-        return None
-    if re.search(r"\b(?:inte|aldrig)\b", t):
         return None
     if re.search(r"\b(?:samla|hämta|skapa|uppdatera)\b", t) or "vad blev möjligt" in t:
         return "collect"
