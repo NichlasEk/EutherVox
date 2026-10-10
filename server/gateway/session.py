@@ -139,6 +139,10 @@ class VoiceSession:
     pending_confirmations: dict[str, DeviceAction] = field(default_factory=dict)
     conversation_history: list[tuple[str, str]] = field(default_factory=list)
     pending_wikipedia_mode: str | None = None
+    volume_target: str | None = None
+    volume_target_until: float = 0
+    volume_pending_direction: str | None = None
+    volume_pending_until: float = 0
 
     async def handle_text(self, raw: str) -> None:
         try:
@@ -427,9 +431,26 @@ class VoiceSession:
         })
 
     async def _remote_voice(self, utterance_id, transcript, action):
+        if action.name in ('remote.clarify','remote.unavailable'):
+            self.volume_target=None
+            self.volume_pending_direction=action.arguments.get('direction')
+            self.volume_pending_until=time.monotonic()+30
+            spoken=action.acknowledgement
+            await self.send_json({'type':'assistant.text.final','utterance_id':utterance_id,'text':spoken})
+            try:
+                await self._stream_action_speech(utterance_id,spoken,self._character(),fast=True)
+            finally:
+                self._remember_turn(transcript,spoken)
+                self._reset()
+            return
         cid=action.arguments["command_id"]
         if cid in ('logitech_volume_up_'+self.authenticated_user,'logitech_volume_down_'+self.authenticated_user):
-            await self.remotes.dispatch_fast(self.authenticated_user,cid,action.action_id)
+            target=action.arguments.get('target_id')
+            await self.remotes.dispatch_fast(self.authenticated_user,cid,action.action_id,target)
+            if target:
+                self.volume_target=target
+                self.volume_target_until=time.monotonic()+600
+            self.volume_pending_direction=None
             # Local dispatch completes this voice turn, not a physical-delivery acknowledgement.
             await self.send_json({"type":"action.completed","action_id":action.action_id,"status":"completed","message":""})
             self._remember_turn(transcript, "")
@@ -1128,6 +1149,8 @@ class VoiceSession:
             if not initial_partial:
                 await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": transcript})
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
+            pending_volume=self.volume_pending_direction if time.monotonic()<self.volume_pending_until else None
+            self.volume_pending_direction=None
             news_intent = signal_intent(transcript)
             if news_intent or self.signal_report_id:
                 await self._signal_response(utterance_id, news_intent or "ask", self.signal_report_id, transcript)
@@ -1135,7 +1158,12 @@ class VoiceSession:
             if wants_report(transcript):
                 await self._speak_scryer(utterance_id)
                 return
-            remote_action = self.remotes.plan(self.authenticated_user, transcript, self.node_name) if self.remote_peer_trusted and self.remotes else None
+            now=time.monotonic()
+            remote_action = self.remotes.plan(
+                self.authenticated_user, transcript, self.node_name,
+                self.volume_target if now<self.volume_target_until else None,
+                pending_volume,
+            ) if self.remote_peer_trusted and self.remotes else None
             if remote_action:
                 await self._remote_voice(utterance_id, transcript, remote_action)
                 return

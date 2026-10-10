@@ -8,6 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from .actions import DeviceAction
+from .volume_voice import normalize, parse_volume, target_named
 
 
 def phrase(text):
@@ -22,10 +23,24 @@ class RemoteService:
         self.users=settings.get('allowed_users',[])
         self.lock=asyncio.Lock();self.capture=None
         self.node=node
+        self.targets={}
+        self.target_nodes={}
         if not self.enabled:return
         if node is None:
             from euthercommand.network_node import NetworkNode
             self.node=NetworkNode(settings['node_config'])
+        for key, item in settings.get('tv_targets', {}).items():
+            if not re.fullmatch(r'[a-z][a-z0-9_]{0,31}',key):raise ValueError('Ogiltigt TV-id')
+            label=self._label(item.get('label'))
+            aliases={normalize(a) for a in [label,*item.get('aliases',[])]}
+            if any(aliases & t['aliases'] for t in self.targets.values()):raise ValueError('TV-namn måste vara unika')
+            self.targets[key]={'label':label,'aliases':aliases}
+            if item.get('use_default_node') is True:
+                if self.node in self.target_nodes.values():raise ValueError('Standardnoden får bara tillhöra en TV')
+                self.target_nodes[key]=self.node
+            elif item.get('node_config'):
+                from euthercommand.network_node import NetworkNode
+                self.target_nodes[key]=NetworkNode(item['node_config'])
         path=Path(settings.get('database',str(config_dir/'state/remotes.sqlite')))
         path.parent.mkdir(parents=True,exist_ok=True)
         self.db=sqlite3.connect(path)
@@ -44,26 +59,33 @@ class RemoteService:
         if not self.enabled:return
         async def refresh():
             while True:
-                try:await asyncio.to_thread(self.node.refresh_fast)
-                except Exception:pass # No credentials in logs; send_fast fails closed on stale cache.
+                for node in dict.fromkeys([self.node,*self.target_nodes.values()]):
+                    try:await asyncio.to_thread(node.refresh_fast)
+                    except Exception:pass # No credentials in logs; send_fast fails closed on stale cache.
                 await asyncio.sleep(5)
         self.fast_refresh_task=asyncio.create_task(refresh())
 
-    async def dispatch_fast(self,user,cid,rid):
+    async def dispatch_fast(self,user,cid,rid,target_id=None):
         self.require(user)
+        node=self.node
+        if target_id is not None:
+            if target_id not in self.targets:raise ValueError('Okänd TV')
+            if target_id not in self.target_nodes:raise ValueError('Ingen IR-sändare är konfigurerad för '+self.targets[target_id]['label'])
+            node=self.target_nodes[target_id]
         if not isinstance(rid,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}',rid):raise ValueError('Ogiltigt begärande-ID')
         # No await in reservation/send: preserve sequence order, no queued hardware jobs.
         row=self.db.execute('SELECT node_command FROM commands WHERE owner=? AND id=?',(user,cid)).fetchone()
         if not row or row[0] not in ('volume_up','volume_down'):raise ValueError('Otillåtet snabbkommando')
+        ledger_cid=cid if target_id is None else cid+'@'+target_id
         prior=self.db.execute('SELECT owner,command_id FROM executions WHERE id=?',(rid,)).fetchone()
         if prior:
-            if prior!=(user,cid):raise ValueError('Begärande-ID används redan')
+            if prior!=(user,ledger_cid):raise ValueError('Begärande-ID används redan')
             return {'status':'duplicate','request_id':rid}
         result={'status':'unknown','request_id':rid}
-        cur=self.db.execute('INSERT INTO executions VALUES(?,?,?,?)',(rid,user,cid,json.dumps(result)));self.db.commit()
+        cur=self.db.execute('INSERT INTO executions VALUES(?,?,?,?)',(rid,user,ledger_cid,json.dumps(result)));self.db.commit()
         # Durable row IDs increase across gateway restart. History must not be purged.
         try:
-            self.node.send_fast(row[0],cur.lastrowid)
+            node.send_fast(row[0],cur.lastrowid)
             result['status']='dispatched'
         finally:
             self.db.execute('UPDATE executions SET result=? WHERE id=?',(json.dumps(result),rid));self.db.commit()
@@ -75,11 +97,24 @@ class RemoteService:
     def listing(self,user):
         self.require(user)
         return [{'id':r[0],'device':r[1],'label':r[2],'aliases':[a[0] for a in self.db.execute('SELECT phrase FROM aliases WHERE owner=? AND command_id=?',(user,r[0]))]} for r in self.db.execute('SELECT id,device,label FROM commands WHERE owner=? ORDER BY device,label',(user,))]
-    def plan(self,user,text,node_name):
+    def plan(self,user,text,node_name,selected_target=None,pending_direction=None):
         if not self.can_use(user):return None
         try:clean=phrase(text)
         except ValueError:return None
         row=self.db.execute('SELECT command_id FROM aliases WHERE owner=? AND phrase=?',(user,clean)).fetchone()
+        if row and not row[0].startswith('logitech_volume_'):
+            return DeviceAction(str(uuid.uuid4()),'remote.execute',node_name,{'command_id':row[0]},'Jag skickar det registrerade fjärrkommandot.')
+        if self.targets:
+            intent=parse_volume(text,self.targets)
+            answer=target_named(text,self.targets) if pending_direction else None
+            if intent or answer:
+                direction=intent.direction if intent else pending_direction
+                target=(intent.target if intent else answer) or selected_target
+                if (intent and intent.unknown_target) or not target:
+                    return DeviceAction(str(uuid.uuid4()),'remote.clarify',node_name,{'direction':direction},'Menar du '+ ' eller '.join(t['label'] for t in self.targets.values())+'?')
+                if target not in self.target_nodes:
+                    return DeviceAction(str(uuid.uuid4()),'remote.unavailable',node_name,{},'Ingen IR-sändare är konfigurerad för '+self.targets[target]['label']+' ännu.')
+                return DeviceAction(str(uuid.uuid4()),'remote.volume',node_name,{'command_id':'logitech_volume_'+direction+'_'+user,'target_id':target},'')
         if not row:return None
         return DeviceAction(str(uuid.uuid4()),'remote.execute',node_name,{'command_id':row[0]},'Jag skickar det registrerade fjärrkommandot.')
     async def execute(self,user,cid,rid):
@@ -121,7 +156,7 @@ class RemoteService:
         if op=='logitech':
             direction=b.get('direction')
             if direction not in ('up','down'):raise ValueError('Ogiltig volymriktning')
-            return await self.dispatch_fast(user,'logitech_volume_'+direction+'_'+user,b['request_id'])
+            return await self.dispatch_fast(user,'logitech_volume_'+direction+'_'+user,b['request_id'],b.get('target_id'))
         if op=='execute':return await self.execute(user,b['command_id'],b['request_id'])
         async with self.lock:
             if op=='list':return {'commands':self.listing(user)}

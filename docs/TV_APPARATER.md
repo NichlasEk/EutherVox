@@ -111,3 +111,50 @@ errors may still be reported; silence is not proof of physical device response.
 Update both apps and node firmware together. The corrected firmware includes one
 observed NEC repetition frame; the previous claim that volume changes were
 confirmed has been withdrawn by the user. At-TV verification is pending.
+
+## Natural volume routing — 2026-10-10
+
+The user now confirms the fast IR/app update works at the TV (“Det funkar kanon!”).
+This supersedes the pending physical trial above. Two TV installations have
+Logitech systems accepting the same codes; the destination must therefore select
+an IR node, not another code. Room mapping and the second node are not inferred.
+
+The gateway supports optional `[remotes.tv_targets.<id>]` tables with `label`,
+`aliases` and either `use_default_node = true` (only one target) or a private
+`node_config` path for another provisioned node. Omitting both leaves a named
+TV unavailable; it never falls back to another target. This feature is inactive
+until targets are configured. Learning and existing generic app buttons still
+use the original default node; this is not a multi-node learning UI.
+
+Example (room aliases must be confirmed before adding them):
+
+```toml
+[remotes.tv_targets.nec]
+label = "NEC-TV:n"
+aliases = ["nec", "nec tvn", "nec tv", "nec-tv:n"]
+# use_default_node = true  # only if the existing transmitter is here
+
+[remotes.tv_targets.samsung]
+label = "Samsung-TV:n"
+aliases = ["samsung", "samsung tvn", "samsung tv", "samsung-tv:n"]
+# node_config = "/private/provisioned-samsung-node.json"
+```
+
+Supported whole-utterance requests include “höj volymen på NEC TVN tack”,
+“kan du sänka ljudet på Samsung”, “skruva ner volymen lite”, “höj”, “sänk” and
+“det är för högt”. Each means one bounded existing volume press. No model-generated
+codes, unconstrained repeats, negated requests or substring matching are used.
+Custom registered aliases retain precedence. A phrase like “det här är intressant”
+is ordinary conversation, not a volume instruction.
+
+An unnamed target uses the last explicitly selected TV in that authenticated
+voice connection, expiring after ten minutes without a volume dispatch. Otherwise Vox asks which TV. A target-only
+answer resolves the pending direction within 30 seconds; unrelated intervening
+speech clears the pending question. An unavailable or ambiguous target clears
+selection rather than silently using another room. Connection restart also clears
+context. Success has no speech acknowledgement; only clarification/errors speak.
+
+Validation: all 316 gateway tests pass, including 36 focused remote/volume tests, including two simulated nodes,
+ownership, cross-target duplicate protection, unknown/unconfigured targets,
+negation, silent dispatch, clarification, follow-up and context expiry. No real IR
+was sent during these tests. Room/node configuration and live voice trial remain.
