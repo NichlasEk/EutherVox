@@ -429,3 +429,18 @@ Mätningen är vägledande och gjord medan ett annat GPU-jobb använde cirka 13 
 Piper-runtimen `piper-tts` 1.6 är GPL-3.0-or-later. Den valda `nst`-rösten är tränad av KB-Lab på CC0-data; modellfilerna distribueras inte i detta repo.
 
 Se [protokolldokumentet](docs/protocol-v1.md) för frame-koppling, tillstånd och fel.
+
+### EutherSignal (beta39)
+
+The Signal panel uses the independent local EutherSignal API on port 8797 through
+an owner-authorized gateway facade (`[signal]`, `allowed_users`, `token_file`).
+It collects curated news, shows source-linked reports, reads a short briefing
+through the selected voice and answers questions against the selected report's
+saved evidence. The research model is selected in EutherSignal, independently of
+Vox's conversational model selector. No news metadata can invoke device tools.
+
+Voice examples: “Signal, hämta nyheter”, “Signal, läs rapporten”, “Lämna Signal”.
+Start a report conversation to ask follow-up questions by microphone, or type a
+question in the Signal panel. A new report does not replace an active discussion.
+Collection and speech can be cancelled separately. There is no automatic daily
+schedule or unsolicited news playback in this first version.

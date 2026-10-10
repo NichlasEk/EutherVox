@@ -211,3 +211,9 @@ sample_rate = 22050
 timeout_seconds = 100
 normalize_pronunciation = false
 profile = "siaren-klar"
+
+[signal]
+enabled = true
+allowed_users = ["nichlas"]
+base_url = "http://127.0.0.1:8797"
+token_file = "/home/nichlas/EutherSignal/state/api-token"

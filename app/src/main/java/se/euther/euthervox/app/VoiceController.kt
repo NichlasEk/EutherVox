@@ -99,6 +99,8 @@ data class VoiceUiState(
     val washerSchedule: ServerEvent.WasherSchedule? = null,
     val washerMessage: String? = null,
     val washerBusy: Boolean = false,
+    val signalData: JsonObject? = null,
+    val signalBusy: Boolean = false,
     val scryerReports: com.google.gson.JsonObject? = null,
     val scryerBusy: Boolean = false,
     val printerAction: String? = null,
@@ -317,7 +319,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         stopRobotTalk()
         printerTimeoutJob?.cancel()
         scryerTimeoutJob?.cancel()
-        mutableState.value = mutableState.value.copy(scryerReports = null, scryerBusy = false, printerState = null, printerAvailable = false, printerPdf = null, printerJobs = emptyList(), printerAction = null, printerMessage = null, printerBusy = false)
+        signalTimeoutJob?.cancel()
+        mutableState.value = mutableState.value.copy(signalData = null, signalBusy = false, scryerReports = null, scryerBusy = false, printerState = null, printerAvailable = false, printerPdf = null, printerJobs = emptyList(), printerAction = null, printerMessage = null, printerBusy = false)
         stopWasherPolling()
         shouldReconnect = false
         conversationRequested = false
@@ -485,8 +488,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             if (cancelledGesture) transport?.sendText(responseCancel(id))
         }
         val responseTimeoutMs = if (llmModel == "qwen3.8:27b") 45_000L else 15_000L
-        val responseTimeoutSeconds = responseTimeoutMs / 1_000
-        armTimeout(id, responseTimeoutMs, "Servern svarade inte inom $responseTimeoutSeconds sekunder")
+        armTimeout(id, if (mutableState.value.signalData?.get("discussing")?.asBoolean == true) 650000L else responseTimeoutMs, "Servern svarade inte i tid")
     }
 
     fun cancelResponse() {
@@ -627,6 +629,40 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 mutableState.value = mutableState.value.copy(printerBusy = false, printerMessage = "Kunde inte skicka. Kontrollera anslutningen.")
             }
         }
+    }
+
+    private var signalTimeoutJob: Job? = null
+    fun requestSignal(command: String = "status", reportId: String? = null) {
+        if (!ready || mutableState.value.signalBusy) return
+        mutableState.value = mutableState.value.copy(signalBusy = true)
+        signalTimeoutJob?.cancel()
+        signalTimeoutJob = scope.launch {
+            delay(20000)
+            mutableState.value = mutableState.value.copy(signalBusy = false, errorMessage = "Signal svarar inte just nu")
+        }
+        scope.launch {
+            val sent = transport?.sendText(JsonObject().apply {
+                addProperty("type", "signal.request"); addProperty("command", command)
+                reportId?.let { addProperty("report_id", it) }
+            }.toString()) == true
+            if (!sent) { signalTimeoutJob?.cancel(); mutableState.value = mutableState.value.copy(signalBusy = false) }
+        }
+    }
+
+    fun speakSignal(reportId: String, question: String = "") {
+        if (!ready || utteranceId != null) return
+        val id = UUID.randomUUID().toString()
+        utteranceId = id; serverActionInProgress = false; timeline = Timeline()
+        mutableState.value = mutableState.value.copy(status = VoiceStatus.Processing, responseText = "", errorMessage = null, canTalk = false)
+        scope.launch {
+            val sent = transport?.sendText(JsonObject().apply {
+                addProperty("type", "signal.request"); addProperty("command", if (question.isBlank()) "speak" else "ask")
+                addProperty("utterance_id", id); addProperty("report_id", reportId)
+                if (question.isNotBlank()) addProperty("question", question.take(1200))
+            }.toString()) == true
+            if (!sent) fail("Kunde inte skicka frågan till Signal")
+        }
+        armTimeout(id, 650000L, "Signals lokala modell svarade inte i tid")
     }
 
     fun speakScryer() {
@@ -951,7 +987,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         stopRobotTalk("Anslutningen bröts – mikrofonen är avstängd")
         stopWasherPolling()
         scryerTimeoutJob?.cancel()
-        mutableState.value = mutableState.value.copy(washerStatusStale = true, printerBusy = false, printerAvailable = false, scryerReports = null, scryerBusy = false)
+        signalTimeoutJob?.cancel()
+        mutableState.value = mutableState.value.copy(washerStatusStale = true, printerBusy = false, printerAvailable = false, scryerReports = null, scryerBusy = false, signalData = null, signalBusy = false)
         ready = false
         nextConversationTurnJob?.cancel()
         stopResources()
@@ -1161,6 +1198,14 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 pumpBusy = false,
                 pumpMessage = event.message,
             )
+            is ServerEvent.SignalResult -> {
+                signalTimeoutJob?.cancel()
+                val merged = mutableState.value.signalData?.deepCopy() ?: JsonObject()
+                val incomingReport = event.payload.get("report")?.takeIf { it.isJsonObject }?.asJsonObject
+                if (incomingReport != null && incomingReport.get("id") != merged.get("report")?.takeIf { it.isJsonObject }?.asJsonObject?.get("id")) merged.remove("answer")
+                event.payload.entrySet().forEach { merged.add(it.key, it.value) }
+                mutableState.value = mutableState.value.copy(signalData = merged, signalBusy = false)
+            }
             is ServerEvent.ScryerReports -> {
                 scryerTimeoutJob?.cancel()
                 mutableState.value = mutableState.value.copy(scryerReports = event.payload, scryerBusy = false)
@@ -1271,7 +1316,11 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                     else -> "Ingen lokal karta är konfigurerad ännu."
                 },
             )
-            is ServerEvent.Error -> if (event.code.startsWith("PUMP_")) {
+            is ServerEvent.Error -> if (event.code.startsWith("SIGNAL_")) {
+                signalTimeoutJob?.cancel()
+                mutableState.value = mutableState.value.copy(signalBusy = false)
+                fail(event.message, event.recoverable)
+            } else if (event.code.startsWith("PUMP_")) {
                 mutableState.value = mutableState.value.copy(pumpBusy = false, pumpMessage = event.message)
             } else if (event.code.startsWith("PRINTER_")) {
                 mutableState.value = mutableState.value.copy(printerBusy = false, printerMessage = event.message)

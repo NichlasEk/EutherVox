@@ -32,6 +32,7 @@ from .eutherwash import EutherWashService
 from .appearance import AppearanceStore, THEMES
 from .printer import PrinterService
 from .scryer import ScryerService, wants_report, spoken_report
+from .signal import SignalService, signal_intent, speech_chunks, spoken_briefing
 from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
@@ -111,6 +112,8 @@ class VoiceSession:
     vacuum_notifications: WasherCompletionMonitor | None = None
     printer: PrinterService | None = None
     scryer: ScryerService | None = None
+    signal: SignalService | None = None
+    signal_report_id: str | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -162,6 +165,11 @@ class VoiceSession:
                 await self._pump_status(message)
             elif message_type == "pump.command":
                 await self._pump_command(message)
+            elif message_type == "signal.request":
+                try:
+                    await self._signal_request(message)
+                except ValueError as error:
+                    raise ProtocolError("SIGNAL_FAILED", str(error)) from error
             elif message_type == "scryer.speak":
                 if self.phase is not Phase.READY:
                     raise ProtocolError("SESSION_BUSY", "En annan uppläsning pågår")
@@ -518,6 +526,78 @@ class VoiceSession:
             await self.send_json({"type": "printer.command.result", **result})
         except ValueError as error:
             raise ProtocolError("PRINTER_COMMAND_FAILED", str(error)) from error
+
+    async def _signal_request(self, message):
+        if self.phase is Phase.CONNECTED or not self.signal or not self.signal.can_use(self.authenticated_user):
+            raise ProtocolError("SIGNAL_AUTH_REQUIRED", "EutherSignal är inte tillgänglig för detta konto.")
+        command = message.get("command", "status")
+        if command in {"leave", "discuss"} and self.phase is not Phase.READY:
+            raise ProtocolError("SESSION_BUSY", "Ett annat svar pågår")
+        if command == "leave":
+            self.signal_report_id = None
+            await self.send_json({"type":"signal.result", "discussing":False})
+        elif command == "discuss":
+            report = await self.signal.request(self.authenticated_user, "report", message.get("report_id"))
+            self.signal_report_id = report["id"]
+            await self.send_json({"type":"signal.result", "discussing":True, "report":report})
+        elif command in {"speak", "ask"}:
+            if self.phase is not Phase.READY:
+                raise ProtocolError("SESSION_BUSY", "Ett annat svar pågår")
+            self.utterance_id = str(message.get("utterance_id", ""))[:100]
+            if not self.utterance_id: raise ValueError("utterance_id required")
+            self.phase = Phase.PROCESSING
+            self.response_task = asyncio.create_task(self._signal_response(self.utterance_id, command, message.get("report_id"), message.get("question", "")))
+        else:
+            result = await self.signal.request(self.authenticated_user, command)
+            if isinstance(result, list): result = {"reports": result}
+            if self.signal_report_id and "report" in result:
+                result["latest_report_id"] = (result.get("report") or {}).get("id")
+                result["report"] = await self.signal.request(self.authenticated_user, "report", self.signal_report_id)
+                result["discussing"] = True
+            await self.send_json({"type":"signal.result", **result})
+
+    async def _signal_response(self, utterance_id, command, identity=None, question=""):
+        try:
+            if not self.signal or not self.signal.can_use(self.authenticated_user):
+                raise ValueError("EutherSignal är inte tillgänglig för detta konto.")
+            if command == "leave":
+                self.signal_report_id = None
+                spoken = "Vi lämnar nyhetsrapporten."
+                await self.send_json({"type":"signal.result", "discussing":False})
+            elif command == "collect":
+                result = await self.signal.request(self.authenticated_user, "collect")
+                await self.send_json({"type":"signal.result", **result})
+                spoken = "EutherSignal samlar och granskar nyheter. Följ arbetet i Signal-avsnittet." if (result.get("job") or {}).get("state") in {"collecting","writing"} else "Den senaste rapporten finns i Signal-avsnittet."
+            else:
+                if not identity:
+                    data = await self.signal.request(self.authenticated_user)
+                    identity = (data.get("report") or {}).get("id")
+                if not identity: raise ValueError("Ingen rapport finns ännu. Hämta nyheter i Signal först.")
+                report = await self.signal.request(self.authenticated_user, "report", identity)
+                self.signal_report_id = report["id"]
+                if command == "ask":
+                    answer = await self.signal.request(self.authenticated_user, "ask", identity, question, self.session_id)
+                    spoken = answer["answer"]
+                    await self.send_json({"type":"signal.result", "answer":answer, "report":report, "discussing":True})
+                else:
+                    spoken = spoken_briefing(report)
+                    await self.send_json({"type":"signal.result", "report":report, "discussing":True})
+            await self.send_json({"type":"assistant.text.final", "utterance_id":utterance_id, "text":spoken})
+            self.phase = Phase.SPEAKING
+            await self.send_json({"type":"tts.start", "utterance_id":utterance_id, "audio":{"codec":"pcm_s16le", "sample_rate":self.tts.sample_rate, "channels":1}})
+            try:
+                async with asyncio.timeout(300):
+                    for chunk in speech_chunks(spoken):
+                        async for frame in self.tts.synthesize(chunk, self._character(), self.tts.sample_rate):
+                            await self.send_binary(frame)
+            finally:
+                await self.send_json({"type":"tts.end", "utterance_id":utterance_id})
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self.send_json({"type":"error", "code":"SIGNAL_FAILED", "message":"Signal kunde inte slutföra svaret. Kontrollera rapportstatus och försök igen.", "recoverable":True})
+        finally:
+            self._reset()
 
     async def _speak_scryer(self, utterance_id):
         try:
@@ -1004,6 +1084,10 @@ class VoiceSession:
             if not initial_partial:
                 await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": transcript})
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
+            news_intent = signal_intent(transcript)
+            if news_intent or self.signal_report_id:
+                await self._signal_response(utterance_id, news_intent or "ask", self.signal_report_id, transcript)
+                return
             if wants_report(transcript):
                 await self._speak_scryer(utterance_id)
                 return

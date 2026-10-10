@@ -42,6 +42,7 @@ class GatewayConfig:
     eutherwash_settings: dict
     printer_settings: dict = field(default_factory=dict)
     scryer_settings: dict = field(default_factory=dict)
+    signal_settings: dict = field(default_factory=dict)
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -113,4 +114,5 @@ def load_config(path: str | Path) -> GatewayConfig:
         eutherwash_settings=eutherwash_settings,
         printer_settings=dict(raw.get("printer", {})),
         scryer_settings=dict(raw.get("scryer", {})),
+        signal_settings=dict(raw.get("signal", {})),
     )
