@@ -2,8 +2,28 @@
 
 from pathlib import Path
 from uuid import UUID
+import asyncio
 import re
+import time
 import httpx
+
+
+class SpeechPacer:
+    """Bound PCM lead so a slow player can still read WebSocket heartbeats."""
+
+    def __init__(self, sample_rate, *, clock=time.monotonic, sleep=asyncio.sleep):
+        self.bytes_per_second = sample_rate * 2  # mono PCM16
+        self.clock = clock
+        self.sleep = sleep
+        self.playback_until = clock()
+
+    async def wait(self, frame):
+        now = self.clock()
+        self.playback_until = max(now, self.playback_until)
+        delay = self.playback_until - now - 0.5
+        if delay > 0:
+            await self.sleep(delay)
+        self.playback_until += len(frame) / self.bytes_per_second
 
 
 class SignalService:

@@ -444,6 +444,13 @@ Short requests such as “Nyhetsrapport”, “Vad är det senaste?”, “Vad �
 “Nyheter tack”, “Vad händer?” and “Siare, säg mig vad är nytt” read the saved
 report. Siare/Siaren, Scryer and Orakel/Oraklet can prefix these short requests.
 Use “Signal, hämta nyheter” to collect a fresh report.
+Signal audio is paced with at most roughly half a second of PCM lead. Sending
+whole synthesized paragraphs at once fills the Android playback queue and blocks
+WebSocket heartbeat processing during long reports. Keep pacing across paragraph
+boundaries; a synthesis pause must not accumulate permission for a later burst.
+The gateway logs `signal_audio_complete` with byte count and duration, and logs
+`signal_response_failed` on failure. Completion means delivery, not proof of
+physical phone playback.
 Start a report conversation to ask follow-up questions by microphone, or type a
 question in the Signal panel. A new report does not replace an active discussion.
 Collection and speech can be cancelled separately. There is no automatic daily

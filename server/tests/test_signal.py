@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from gateway.signal import SignalService, signal_intent, speech_chunks
+from gateway.signal import SignalService, SpeechPacer, signal_intent, speech_chunks
 from gateway.session import Phase, ProtocolError
 from test_session import make_session, start_message
 
@@ -36,6 +36,47 @@ from test_session import make_session, start_message
 )
 def test_intents(text, expected):
     assert signal_intent(text) == expected
+
+
+def test_audio_pacing_bounds_lead_even_after_synthesis_stalls():
+    async def run():
+        now = 0.0
+
+        async def sleep(delay):
+            nonlocal now
+            now += delay
+
+        pacer = SpeechPacer(22050, clock=lambda: now, sleep=sleep)
+        frame = bytes(882)  # 20 ms of mono PCM16
+        for _ in range(3000):
+            await pacer.wait(frame)
+            assert pacer.playback_until - now <= 0.521
+        assert 59.4 < now < 60.0
+        now += 20  # Slow next sentence must not accumulate burst allowance.
+        for _ in range(100):
+            await pacer.wait(frame)
+            assert pacer.playback_until - now <= 0.521
+
+    asyncio.run(run())
+
+
+def test_audio_pacing_remains_cancellable():
+    async def run():
+        waiting = asyncio.Event()
+
+        async def sleep(delay):
+            waiting.set()
+            await asyncio.Future()
+
+        pacer = SpeechPacer(22050, clock=lambda: 0, sleep=sleep)
+        await pacer.wait(bytes(44100))
+        task = asyncio.create_task(pacer.wait(bytes(882)))
+        await waiting.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
 
 
 def test_owner_and_fixed_commands():

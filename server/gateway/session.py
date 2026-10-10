@@ -32,7 +32,7 @@ from .eutherwash import EutherWashService
 from .appearance import AppearanceStore, THEMES
 from .printer import PrinterService
 from .scryer import ScryerService, wants_report, spoken_report
-from .signal import SignalService, signal_intent, speech_chunks, spoken_briefing
+from .signal import SignalService, SpeechPacer, signal_intent, speech_chunks, spoken_briefing
 from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
@@ -585,16 +585,22 @@ class VoiceSession:
             await self.send_json({"type":"assistant.text.final", "utterance_id":utterance_id, "text":spoken})
             self.phase = Phase.SPEAKING
             await self.send_json({"type":"tts.start", "utterance_id":utterance_id, "audio":{"codec":"pcm_s16le", "sample_rate":self.tts.sample_rate, "channels":1}})
+            pacer = SpeechPacer(self.tts.sample_rate)
+            audio_bytes = 0
             try:
                 async with asyncio.timeout(300):
                     for chunk in speech_chunks(spoken):
                         async for frame in self.tts.synthesize(chunk, self._character(), self.tts.sample_rate):
+                            await pacer.wait(frame)
                             await self.send_binary(frame)
+                            audio_bytes += len(frame)
+                LOG.info("signal_audio_complete session=%s utterance=%s bytes=%d audio_seconds=%.2f", self.session_id, utterance_id, audio_bytes, audio_bytes / (self.tts.sample_rate * 2))
             finally:
                 await self.send_json({"type":"tts.end", "utterance_id":utterance_id})
         except asyncio.CancelledError:
             raise
         except Exception:
+            LOG.exception("signal_response_failed session=%s utterance=%s", self.session_id, utterance_id)
             await self.send_json({"type":"error", "code":"SIGNAL_FAILED", "message":"Signal kunde inte slutföra svaret. Kontrollera rapportstatus och försök igen.", "recoverable":True})
         finally:
             self._reset()
