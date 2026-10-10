@@ -31,6 +31,7 @@ from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
 from .appearance import AppearanceStore, THEMES
 from .printer import PrinterService
+from .scryer import ScryerService, wants_report, spoken_report
 from .washer_notifications import WasherCompletionMonitor
 from .wikipedia import WikipediaService
 from .lighting import MagicHomeLightService
@@ -109,6 +110,7 @@ class VoiceSession:
     washer_notifications: WasherCompletionMonitor | None = None
     vacuum_notifications: WasherCompletionMonitor | None = None
     printer: PrinterService | None = None
+    scryer: ScryerService | None = None
     authenticated_user: str = ""
     session_id: str = field(default_factory=lambda: str(uuid4()))
     phase: Phase = Phase.CONNECTED
@@ -160,6 +162,16 @@ class VoiceSession:
                 await self._pump_status(message)
             elif message_type == "pump.command":
                 await self._pump_command(message)
+            elif message_type == "scryer.speak":
+                if self.phase is not Phase.READY:
+                    raise ProtocolError("SESSION_BUSY", "En annan uppläsning pågår")
+                self.utterance_id = str(message.get("utterance_id", ""))[:100]
+                if not self.utterance_id:
+                    raise ValueError("utterance_id required")
+                self.phase = Phase.PROCESSING
+                self.response_task = asyncio.create_task(self._speak_scryer(self.utterance_id))
+            elif message_type == "scryer.reports":
+                await self._scryer_reports(message)
             elif message_type == "printer.command":
                 await self._printer_command(message)
             elif message_type == "printer.status":
@@ -507,6 +519,34 @@ class VoiceSession:
         except ValueError as error:
             raise ProtocolError("PRINTER_COMMAND_FAILED", str(error)) from error
 
+    async def _speak_scryer(self, utterance_id):
+        try:
+            if not self.scryer or not self.scryer.can_use(self.authenticated_user):
+                spoken = "Scryer är inte tillgänglig för detta konto."
+            else:
+                data = await self.scryer.request(self.authenticated_user)
+                await self.send_json({"type": "scryer.reports.result", **data})
+                spoken = spoken_report(data)
+            await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": spoken})
+            self.phase = Phase.SPEAKING
+            await asyncio.wait_for(self._stream_action_speech(utterance_id, spoken, self._character()), timeout=90)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await self.send_json({"type": "error", "code": "SCRYER_SPEECH_FAILED", "message": "Rapporten kunde inte läsas upp. Texten finns kvar i Scryer-avsnittet.", "recoverable": True})
+        finally:
+            self._reset()
+
+    async def _scryer_reports(self, message):
+        if self.phase is Phase.CONNECTED or not self.scryer or not self.scryer.can_use(self.authenticated_user):
+            await self.send_json({"type": "scryer.reports.result", "available": False, "reports": [], "error": "Scryer är inte tillgänglig för detta konto."})
+            return
+        try:
+            result = await self.scryer.request(self.authenticated_user, message.get("command", "list"), message.get("id"))
+            await self.send_json({"type": "scryer.reports.result", **result})
+        except ValueError:
+            await self.send_json({"type": "scryer.reports.result", "available": False, "reports": [], "error": "Åtgärden är inte tillåten."})
+
     async def _printer_status(self) -> None:
         if self.phase is Phase.CONNECTED:
             raise ProtocolError("SESSION_REQUIRED", "Starta sessionen först")
@@ -789,10 +829,11 @@ class VoiceSession:
     async def _cancel(self, message: dict) -> None:
         if message.get("utterance_id") != self.utterance_id:
             raise ProtocolError("UTTERANCE_MISMATCH", "response.cancel does not match active utterance")
+        utterance_id = self.utterance_id
         if self.response_task:
             self.response_task.cancel()
             await asyncio.gather(self.response_task, return_exceptions=True)
-        await self.send_json({"type": "response.cancelled", "utterance_id": self.utterance_id})
+        await self.send_json({"type": "response.cancelled", "utterance_id": utterance_id})
         self._reset()
 
     async def _action_result(self, message: dict) -> None:
@@ -963,6 +1004,9 @@ class VoiceSession:
             if not initial_partial:
                 await self.send_json({"type": "stt.partial", "utterance_id": utterance_id, "text": transcript})
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
+            if wants_report(transcript):
+                await self._speak_scryer(utterance_id)
+                return
             if self.pending_wikipedia_mode:
                 action = DeviceAction(
                     action_id=str(uuid4()),

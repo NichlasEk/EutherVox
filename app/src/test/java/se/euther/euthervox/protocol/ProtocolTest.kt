@@ -6,6 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProtocolTest {
+    @Test fun scryerReportsPreserveUnknownAndAcknowledgedEvidence() {
+        val event = parseServerEvent("""{"type":"scryer.reports.result","available":true,"reports":[{"id":"vault","state":"unconfirmed","acknowledged":true}]}""") as ServerEvent.ScryerReports
+        val report = event.payload["reports"].asJsonArray[0].asJsonObject
+        assertEquals("unconfirmed", report["state"].asString)
+        assertTrue(report["acknowledged"].asBoolean)
+    }
+
     @Test fun sessionStartAdvertisesExactPcmFormat() {
         val json = JsonParser.parseString(sessionStart("pixel", character = "christian-grosshandlare", voiceId = "moss-christian", llmModel = "qwen3.8:27b")).asJsonObject
         val audio = json["input_audio"].asJsonObject

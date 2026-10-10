@@ -140,6 +140,7 @@ private val DeviceDestinations = listOf(
     DeviceDestination("lights", "Ljus", "✦", R.drawable.hero_lights),
     DeviceDestination("tv", "TV", "▣", R.drawable.hero_tv),
     DeviceDestination("washer", "Tvättmaskin", "◎", R.drawable.hero_washer),
+    DeviceDestination("scryer", "Scryer", "◇", R.drawable.hero_scryer),
     DeviceDestination("printer", "Skrivare", "▤", R.drawable.hero_printer),
     DeviceDestination("dryer", "Torktumlare", "◌", R.drawable.hero_dryer),
     DeviceDestination("boiler", "Panna", "♨", R.drawable.hero_boiler),
@@ -291,6 +292,7 @@ fun EutherVoxApp() {
                     "tv" to state.configuredTvs.isNotEmpty(),
                     "washer" to state.washerState?.online,
                     "printer" to state.printerState?.available,
+                    "scryer" to state.scryerReports?.get("available")?.asBoolean,
                     "dryer" to null,
                     "boiler" to null,
                     "pump" to state.pumpState?.online,
@@ -490,6 +492,8 @@ fun EutherVoxApp() {
                     onSchedule = controller::createWasherSchedule,
                     onCancelSchedule = controller::cancelWasherSchedule,
                 )
+            } else if (selectedTab == "scryer") {
+                ScryerPanel(state, controller)
             } else if (selectedTab == "printer") {
                 PrinterPanel(state, controller)
             } else if (selectedTab == "vacuum") {

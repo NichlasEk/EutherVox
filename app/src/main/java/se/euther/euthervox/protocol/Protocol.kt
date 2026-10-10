@@ -271,6 +271,7 @@ sealed interface ServerEvent {
     data class PumpsConfig(val pumps: List<ConfiguredPump>) : ServerEvent
     data class PumpStatusResult(val pump: PumpState) : ServerEvent
     data class PumpCommandResult(val pump: PumpState, val message: String) : ServerEvent
+    data class ScryerReports(val payload: JsonObject) : ServerEvent
     data class PrinterAction(val action: String) : ServerEvent
     data class PrinterCommandResult(val message: String, val pdf: String?, val jobs: List<PrinterJob>?) : ServerEvent
     data class PrinterJob(val id: Int, val title: String, val state: String)
@@ -393,6 +394,7 @@ fun parseServerEvent(raw: String): ServerEvent {
             parsePumpState(json["pump"].asJsonObject),
             json["message"]?.asString ?: "Pumpen bekräftade ändringen.",
         )
+        "scryer.reports.result" -> ServerEvent.ScryerReports(json)
         "printer.action" -> ServerEvent.PrinterAction(json["action"].asString)
         "printer.command.result" -> ServerEvent.PrinterCommandResult(
             json["message"]?.asString ?: "Klart",

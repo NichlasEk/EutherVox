@@ -26,6 +26,7 @@ from .television import NecTvService
 from .eutherpump import EutherPumpService
 from .eutherwash import EutherWashService
 from .printer import PrinterService
+from .scryer import ScryerService
 from .washer_notifications import WasherCompletionMonitor
 from .vacuum_notifications import VacuumCompletionMonitor
 
@@ -70,7 +71,7 @@ def configure_device_hotwords(
     add_hotwords = getattr(stt, "add_hotwords", None)
     if not add_hotwords:
         return 0
-    phrases = ["EutherVox", "Skinnskattaren", "YouTube Music", "Wikipedia", "NEC-TV"]
+    phrases = ["Scryer", "Siaren", "Oraklet", "lägesrapport", "EutherVox", "Skinnskattaren", "YouTube Music", "Wikipedia", "NEC-TV"]
     for target in (*lights.list_public(), *television.list_public()):
         phrases.extend((str(target.get("name", "")), str(target.get("room", ""))))
     if eutherpump is not None:
@@ -86,7 +87,7 @@ def configure_device_hotwords(
     return count
 
 
-async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None, printer=None, vacuum_notifications=None) -> None:
+async def handle_connection(socket: ServerConnection, config: GatewayConfig, engines=None, youtube=None, playlists=None, cast=None, tool_planner=None, wikipedia=None, lights=None, television=None, eutherpump=None, eutherwash=None, washer_notifications=None, printer=None, vacuum_notifications=None, scryer=None) -> None:
     async def send_json(message: dict) -> None:
         await socket.send(json.dumps(message, ensure_ascii=False, separators=(",", ":")))
 
@@ -111,6 +112,7 @@ async def handle_connection(socket: ServerConnection, config: GatewayConfig, eng
         washer_notifications=washer_notifications,
         vacuum_notifications=vacuum_notifications,
         printer=printer,
+        scryer=scryer,
         authenticated_user=socket.request.headers.get("X-Euther-User", "") if socket.request else "",
     )
     try:
@@ -196,6 +198,7 @@ async def run(config: GatewayConfig) -> None:
     eutherpump = EutherPumpService(config.eutherpump_settings)
     eutherwash = EutherWashService(config.eutherwash_settings)
     printer = PrinterService(config.printer_settings)
+    scryer = ScryerService(config.scryer_settings)
     message_generator = None
     if bool(config.eutherwash_settings.get("notification_ai_enabled", True)):
 
@@ -242,7 +245,7 @@ async def run(config: GatewayConfig) -> None:
     await vacuum_notifications.start()
     try:
         async with serve(
-            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications, printer, vacuum_notifications),
+            lambda socket: handle_connection(socket, config, engines, youtube, playlists, cast, tool_planner, wikipedia, lights, television, eutherpump, eutherwash, washer_notifications, printer, vacuum_notifications, scryer),
             config.host,
             config.port,
             max_size=14 * 1024 * 1024,

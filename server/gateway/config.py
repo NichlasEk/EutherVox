@@ -41,6 +41,7 @@ class GatewayConfig:
     eutherpump_settings: dict
     eutherwash_settings: dict
     printer_settings: dict = field(default_factory=dict)
+    scryer_settings: dict = field(default_factory=dict)
 
 
 def load_config(path: str | Path) -> GatewayConfig:
@@ -111,4 +112,5 @@ def load_config(path: str | Path) -> GatewayConfig:
         eutherpump_settings=eutherpump_settings,
         eutherwash_settings=eutherwash_settings,
         printer_settings=dict(raw.get("printer", {})),
+        scryer_settings=dict(raw.get("scryer", {})),
     )

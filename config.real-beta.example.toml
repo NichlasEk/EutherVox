@@ -183,3 +183,7 @@ reference_file = "/home/nichlas/EutherWash/.private/ebba-voice-pack/ebba-referen
 sample_rate = 22050
 timeout_seconds = 420
 normalize_pronunciation = false
+
+[scryer]
+enabled = true
+allowed_users = ["nichlas"]

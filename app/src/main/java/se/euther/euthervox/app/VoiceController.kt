@@ -99,6 +99,8 @@ data class VoiceUiState(
     val washerSchedule: ServerEvent.WasherSchedule? = null,
     val washerMessage: String? = null,
     val washerBusy: Boolean = false,
+    val scryerReports: com.google.gson.JsonObject? = null,
+    val scryerBusy: Boolean = false,
     val printerAction: String? = null,
     val printerMessage: String? = null,
     val printerBusy: Boolean = false,
@@ -175,6 +177,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     private var transport: VoiceTransport? = null
     private var connectionJob: Job? = null
     private var printerTimeoutJob: Job? = null
+    private var scryerTimeoutJob: Job? = null
     private var washerPollingJob: Job? = null
     private var washerPollResponse: CompletableDeferred<Unit>? = null
     private var connectionIdentity: ConnectionIdentity? = null
@@ -313,7 +316,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     fun disconnect() {
         stopRobotTalk()
         printerTimeoutJob?.cancel()
-        mutableState.value = mutableState.value.copy(printerState = null, printerAvailable = false, printerPdf = null, printerJobs = emptyList(), printerAction = null, printerMessage = null, printerBusy = false)
+        scryerTimeoutJob?.cancel()
+        mutableState.value = mutableState.value.copy(scryerReports = null, scryerBusy = false, printerState = null, printerAvailable = false, printerPdf = null, printerJobs = emptyList(), printerAction = null, printerMessage = null, printerBusy = false)
         stopWasherPolling()
         shouldReconnect = false
         conversationRequested = false
@@ -625,6 +629,42 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
         }
     }
 
+    fun speakScryer() {
+        if (!ready || utteranceId != null) return
+        val id = UUID.randomUUID().toString()
+        utteranceId = id
+        serverActionInProgress = false
+        timeline = Timeline()
+        mutableState.value = mutableState.value.copy(status = VoiceStatus.Processing, responseText = "", errorMessage = null, canTalk = false)
+        scope.launch {
+            runCatching { transport?.sendText(com.google.gson.JsonObject().apply {
+                addProperty("type", "scryer.speak"); addProperty("utterance_id", id)
+            }.toString()) }.onFailure { fail("Kunde inte begära uppläsningen") }
+        }
+        armTimeout(id, 45000L, "Scryers uppläsning svarade inte")
+    }
+
+    fun requestScryer(command: String = "list", id: String? = null) {
+        if (!ready || mutableState.value.scryerBusy) return
+        mutableState.value = mutableState.value.copy(scryerBusy = true)
+        scryerTimeoutJob?.cancel()
+        scryerTimeoutJob = scope.launch {
+            delay(20000)
+            mutableState.value = mutableState.value.copy(scryerBusy = false, scryerReports = com.google.gson.JsonObject().apply {
+                addProperty("available", false); addProperty("error", "Inget svar. Åtgärden är inte bekräftad.")
+            })
+        }
+        scope.launch {
+            runCatching { transport?.sendText(com.google.gson.JsonObject().apply {
+                addProperty("type", "scryer.reports"); addProperty("command", command)
+                if (id != null) addProperty("id", id)
+            }.toString()) }.onFailure {
+                scryerTimeoutJob?.cancel()
+                mutableState.value = mutableState.value.copy(scryerBusy = false, scryerReports = null)
+            }
+        }
+    }
+
     fun refreshPrinter() {
         if (ready && mutableState.value.printerAvailable) scope.launch {
             transport?.sendText("{\"type\":\"printer.status\"}")
@@ -910,7 +950,8 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     override suspend fun onClosed(cause: Throwable?) {
         stopRobotTalk("Anslutningen bröts – mikrofonen är avstängd")
         stopWasherPolling()
-        mutableState.value = mutableState.value.copy(washerStatusStale = true, printerBusy = false, printerAvailable = false)
+        scryerTimeoutJob?.cancel()
+        mutableState.value = mutableState.value.copy(washerStatusStale = true, printerBusy = false, printerAvailable = false, scryerReports = null, scryerBusy = false)
         ready = false
         nextConversationTurnJob?.cancel()
         stopResources()
@@ -1120,6 +1161,10 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
                 pumpBusy = false,
                 pumpMessage = event.message,
             )
+            is ServerEvent.ScryerReports -> {
+                scryerTimeoutJob?.cancel()
+                mutableState.value = mutableState.value.copy(scryerReports = event.payload, scryerBusy = false)
+            }
             is ServerEvent.PrinterAction -> mutableState.value = mutableState.value.copy(printerAction = event.action)
             is ServerEvent.PrinterCommandResult -> {
                 printerTimeoutJob?.cancel()
