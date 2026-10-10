@@ -309,6 +309,8 @@ fun EutherVoxApp() {
                 "Röst: " + when (voiceId) {
                     "piper-lisa" -> "Lisa"
                     "kitten-2" -> "KittenTTS 2"
+                    "omnivoice-djup" -> "Siaren djup"
+                    "omnivoice-klar" -> "Siaren klar"
                     "chatterbox" -> "Chatterbox"
                     "moss-nano" -> "MOSS Nano"
                     "moss-christian" -> "Christian"
@@ -560,7 +562,9 @@ fun EutherVoxApp() {
                 } else if (settingsCharacterId == "sherlock-holmes") {
                     VoiceChoice("matcha-sherlock", "GrapheneOS Matcha – English", settingsVoiceId) { settingsVoiceId = it }
                 } else {
-                    VoiceChoice("piper-nst", "NST – snabb (rekommenderad)", settingsVoiceId) { settingsVoiceId = it }
+                    VoiceChoice("omnivoice-djup", "Siaren djup – OmniVoice", settingsVoiceId) { settingsVoiceId = it }
+                    VoiceChoice("omnivoice-klar", "Siaren klar – OmniVoice", settingsVoiceId) { settingsVoiceId = it }
+                    VoiceChoice("piper-nst", "NST – snabb", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("piper-lisa", "Lisa – alternativ", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("moss-nano", "MOSS Nano – Sören Svartkrut", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("kitten-2", "KittenTTS 2 – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }

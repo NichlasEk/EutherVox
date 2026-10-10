@@ -1,0 +1,22 @@
+[Unit]
+Description=EutherVox OmniVoice Swedish voices
+After=network-online.target
+ConditionPathIsMountPoint=/run/media/nichlas/Kingston1TB
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nichlas/EutherVox
+ExecStart=/run/media/nichlas/Kingston1TB/models/OmniVoice/venv/bin/python omnivoice-worker/worker.py --model-root /run/media/nichlas/Kingston1TB/models/OmniVoice
+Environment=HF_HUB_OFFLINE=1
+Environment=TOKENIZERS_PARALLELISM=false
+Environment=PYTHONUNBUFFERED=1
+Environment=OMP_NUM_THREADS=4
+Restart=on-failure
+RestartSec=10
+MemoryMax=8G
+CPUQuota=400%
+Nice=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,14 @@
+{
+  "siaren-djup": {
+    "file": "siaren-djup-reference.wav",
+    "text": "Jag är Siaren. Jag söker samband mellan systemen och berättar när något behöver din uppmärksamhet.",
+    "sha256": "9b7d5592d9ffa625df8336c7ff211035fb9e43d4ccfaec345816d52e89d7322c",
+    "seed": 302041
+  },
+  "siaren-klar": {
+    "file": "siaren-klar-reference.wav",
+    "text": "Jag är Siaren. Jag söker samband mellan systemen och berättar när något behöver din uppmärksamhet.",
+    "sha256": "37d6cd1892bae8a7f28bafc915c0c20434e4759448508162e13d270928ddc40e",
+    "seed": 302042
+  }
+}
