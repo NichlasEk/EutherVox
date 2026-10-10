@@ -224,3 +224,13 @@ allowed_users = ["nichlas"]
 trusted_proxy_ips = ["192.168.32.186"]
 node_config = "/run/media/nichlas/Kingston1TB/EutherCommand/.local/control/client.json"
 database = "/home/nichlas/EutherVox/state/remotes.sqlite"
+
+[remotes.tv_targets.nec]
+label = "NEC-TV:n"
+aliases = ["nec", "nec tv", "nec tvn", "nec tv:n", "nec-tv", "nec-tvn", "bottenvåningen", "bottenvåning", "nedervåningen", "nedervåning", "nere", "där nere"]
+use_default_node = true
+
+[remotes.tv_targets.samsung]
+label = "Samsung-TV:n"
+aliases = ["samsung", "samsung tv", "samsung tvn", "samsung tv:n", "samsung-tv", "samsung-tvn", "övervåningen", "övervåning", "uppe", "där uppe", "en trappa upp"]
+# No transmitter upstairs yet. Never route this target to the downstairs node.

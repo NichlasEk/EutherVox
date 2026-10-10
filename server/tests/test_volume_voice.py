@@ -133,3 +133,31 @@ def test_voice_pipeline_clarifies_remembers_and_expires(tmp_path):
         assert session.volume_target is None
         assert any(isinstance(m,dict) and 'Ingen IR-sändare' in m.get('text','') for m in sent)
     asyncio.run(run())
+
+
+@pytest.mark.parametrize('text,target',[
+    ('höj volymen på NEC TVN tack','nec'),
+    ('sänk ljudet på bottenvåningen','nec'),
+    ('höj volymen på nedervåningen','nec'),
+    ('sänk ljudet nere','nec'),
+    ('det är för högt där nere','nec'),
+    ('höj ljudet på Samsung tv:n','samsung'),
+    ('sänk ljudet på övervåningen','samsung'),
+    ('höj volymen uppe','samsung'),
+    ('sänk ljudet en trappa upp','samsung'),
+])
+def test_confirmed_home_configuration(tmp_path,text,target):
+    import tomllib
+    from pathlib import Path
+    settings=tomllib.loads((Path(__file__).parents[2]/'config.real-beta.example.toml').read_text())['remotes']
+    settings['database']=str(tmp_path/'remotes.sqlite')
+    s=RemoteService(settings,tmp_path,Node())
+    action=s.plan('nichlas',text,'phone')
+    if target=='nec':
+        assert action.name=='remote.volume' and action.arguments['target_id']=='nec'
+        assert s.target_nodes['nec'] is s.node
+    else:
+        assert action.name=='remote.unavailable'
+        assert 'Samsung' in action.acknowledgement
+        assert 'samsung' not in s.target_nodes
+    assert not s.node.calls

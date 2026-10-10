@@ -158,3 +158,20 @@ Validation: all 316 gateway tests pass, including 36 focused remote/volume tests
 ownership, cross-target duplicate protection, unknown/unconfigured targets,
 negation, silent dispatch, clarification, follow-up and context expiry. No real IR
 was sent during these tests. Room/node configuration and live voice trial remain.
+
+## Confirmed home mapping and activation — 2026-10-10
+
+User confirms NEC + Logitech downstairs, Samsung + Logitech one flight upstairs,
+and only one ESP32 so far. The deployed gateway configuration assigns the default
+node only to `nec`. Its aliases include bottenvåningen, nedervåningen, nere and
+där nere. `samsung` recognizes övervåningen, uppe, där uppe and en trappa upp,
+but has no node configuration until the second transmitter is built. Requests
+for Samsung volume explain the missing transmitter and do not send downstairs.
+Direct room phrases such as “sänk ljudet nere” and “höj volymen uppe” are supported.
+The original app volume buttons still operate the downstairs/default node.
+No Android update or ESP32 reflash is required for this voice routing change.
+
+All 45 focused remote/volume tests pass, including nine cases using the actual
+configured room aliases and node assignments. The gateway user service was
+restarted to activate this configuration. These tests emitted no real IR; spoken
+phone-to-device verification remains for the user.

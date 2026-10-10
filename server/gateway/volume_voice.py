@@ -31,21 +31,24 @@ def target_named(text: str, targets: dict) -> str | None:
 
 def parse_volume(text: str, targets: dict) -> VolumeIntent | None:
     value = clean_request(text)
+    destination_pattern = r'(?: (?:på|i|vid) (.+)| (nere|uppe|där nere|där uppe|en trappa upp))?'
     # Whole utterances only: no substring matching, negation or generated actions.
     match = re.fullmatch(
         r'(höj|sänk|öka|minska|dra upp|dra ner|dra ned|skruva upp|skruva ner|skruva ned)'
         r'(?: (?:volymen|ljudet))?(?: (?:lite|ett steg))?'
-        r'(?: (?:på|i|vid) (.+))?', value)
+        + destination_pattern, value)
     if match:
-        verb, destination = match.groups()
+        verb, destination, room = match.groups()
+        destination = destination or room
         direction = 'up' if verb in ('höj', 'öka', 'dra upp', 'skruva upp') else 'down'
     else:
         match = re.fullmatch(
             r'(?:det är|det här är|ljudet är|volymen är) (för högt|för hög|för lågt|för låg|för tyst)'
-            r'(?: (?:på|i|vid) (.+))?', value)
+            + destination_pattern, value)
         if not match:
             return None
-        level, destination = match.groups()
+        level, destination, room = match.groups()
+        destination = destination or room
         direction = 'down' if level in ('för högt', 'för hög') else 'up'
     if destination in ('logitech', 'logitech-systemet', 'tv', 'tvn', 'tv n'):
         destination = None
