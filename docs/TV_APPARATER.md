@@ -206,3 +206,12 @@ and direction once through two mock nodes with no response/wait. System Regis,
 classic Vox and standalone Beam colors were inspected. Packages are published as
 Vox 0.20.0-beta.4 (68) and Beam 0.1.0-alpha.15 (15). Server upload hashes match local
 APKs; Beam's public download hash matches, Vox's anonymous download returns 401.
+
+## Physical ESP8266 volume trial confirmed — 2026-10-10
+
+After being asked to test volume down and up on the Samsung · Övervåningen card
+with Vox 0.20.0-beta.4 and Beam 0.1.0-alpha.15, the user confirmed that it works.
+This verifies actual Logitech volume control through the new ESP8266 transmitter,
+which was temporarily positioned downstairs. It supersedes the pending physical
+trial notes above. Testing at its final upstairs mounting position remains to be
+done after the user hangs the nodes in place.
