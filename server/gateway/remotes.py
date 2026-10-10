@@ -40,6 +40,35 @@ class RemoteService:
                 self.db.execute('INSERT OR IGNORE INTO commands VALUES(?,?,?,?,?,?)',(cid,user,'Logitech ljudsystem',label,command,None))
                 self.db.execute('INSERT OR IGNORE INTO aliases VALUES(?,?,?)',(user,alias,cid))
         self.db.commit()
+    def start_fast_refresh(self):
+        if not self.enabled:return
+        async def refresh():
+            while True:
+                try:await asyncio.to_thread(self.node.refresh_fast)
+                except Exception:pass # No credentials in logs; send_fast fails closed on stale cache.
+                await asyncio.sleep(5)
+        self.fast_refresh_task=asyncio.create_task(refresh())
+
+    async def dispatch_fast(self,user,cid,rid):
+        self.require(user)
+        if not isinstance(rid,str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,64}',rid):raise ValueError('Ogiltigt begärande-ID')
+        # No await in reservation/send: preserve sequence order, no queued hardware jobs.
+        row=self.db.execute('SELECT node_command FROM commands WHERE owner=? AND id=?',(user,cid)).fetchone()
+        if not row or row[0] not in ('volume_up','volume_down'):raise ValueError('Otillåtet snabbkommando')
+        prior=self.db.execute('SELECT owner,command_id FROM executions WHERE id=?',(rid,)).fetchone()
+        if prior:
+            if prior!=(user,cid):raise ValueError('Begärande-ID används redan')
+            return {'status':'duplicate','request_id':rid}
+        result={'status':'unknown','request_id':rid}
+        cur=self.db.execute('INSERT INTO executions VALUES(?,?,?,?)',(rid,user,cid,json.dumps(result)));self.db.commit()
+        # Durable row IDs increase across gateway restart. History must not be purged.
+        try:
+            self.node.send_fast(row[0],cur.lastrowid)
+            result['status']='dispatched'
+        finally:
+            self.db.execute('UPDATE executions SET result=? WHERE id=?',(json.dumps(result),rid));self.db.commit()
+        return result
+
     def can_use(self,user):return bool(self.enabled and user in self.users)
     def require(self,user):
         if not self.can_use(user):raise ValueError('Åtkomst till fjärrkontroller nekad')
@@ -92,7 +121,7 @@ class RemoteService:
         if op=='logitech':
             direction=b.get('direction')
             if direction not in ('up','down'):raise ValueError('Ogiltig volymriktning')
-            return await self.execute(user,'logitech_volume_'+direction+'_'+user,b['request_id'])
+            return await self.dispatch_fast(user,'logitech_volume_'+direction+'_'+user,b['request_id'])
         if op=='execute':return await self.execute(user,b['command_id'],b['request_id'])
         async with self.lock:
             if op=='list':return {'commands':self.listing(user)}

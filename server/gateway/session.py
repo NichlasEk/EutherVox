@@ -427,7 +427,15 @@ class VoiceSession:
         })
 
     async def _remote_voice(self, utterance_id, transcript, action):
-        result = await self.remotes.execute(self.authenticated_user, action.arguments["command_id"], action.action_id)
+        cid=action.arguments["command_id"]
+        if cid in ('logitech_volume_up_'+self.authenticated_user,'logitech_volume_down_'+self.authenticated_user):
+            await self.remotes.dispatch_fast(self.authenticated_user,cid,action.action_id)
+            # Local dispatch completes this voice turn, not a physical-delivery acknowledgement.
+            await self.send_json({"type":"action.completed","action_id":action.action_id,"status":"completed","message":""})
+            self._remember_turn(transcript, "")
+            self._reset()
+            return
+        result = await self.remotes.execute(self.authenticated_user, cid, action.action_id)
         spoken = result["message"]
         await self.send_json({"type":"assistant.text.final", "utterance_id":utterance_id, "text":spoken})
         await self.send_json({"type":"remote.result", "operation":"execute", "ok":True, **result})
@@ -442,7 +450,8 @@ class VoiceSession:
             raise ProtocolError("REMOTE_AUTH_REQUIRED", "Inloggning och behörighet krävs för fjärrkontroller")
         try:
             result = await self.remotes.request(self.authenticated_user, message)
-            await self.send_json({"type":"remote.result", "operation":message.get("operation"), "ok":True, **result})
+            if message.get("operation")!="logitech":
+                await self.send_json({"type":"remote.result", "operation":message.get("operation"), "ok":True, **result})
         except (KeyError, TypeError, ValueError, OSError, RuntimeError) as error:
             await self.send_json({"type":"remote.result", "operation":message.get("operation"), "ok":False, "message":str(error)})
 

@@ -539,6 +539,15 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             mutableState.value=mutableState.value.copy(remoteData=JsonObject().apply { addProperty("ok",false);addProperty("message","Anslut till servern under Röst först.") })
             return
         }
+        if(operation=="logitech") {
+            scope.launch {
+                payload.addProperty("type","remote.request");payload.addProperty("operation",operation)
+                if(transport?.sendText(payload.toString())!=true)mutableState.value=mutableState.value.copy(remoteData=JsonObject().apply {
+                    addProperty("ok",false);addProperty("message","Ingen anslutning. Kommandot köas inte.")
+                })
+            }
+            return
+        }
         if (mutableState.value.remoteBusy) return
         remoteTimeoutJob?.cancel()
         mutableState.value=mutableState.value.copy(remoteBusy=true)

@@ -50,7 +50,7 @@ fun TvDevicesPanel(data: JsonObject?, busy: Boolean, onRequest: (String, JsonObj
         if(polling && captureId.isNotBlank())repeat(40){delay(1500);if(!latestBusy)latestRequest("capture",JsonObject().apply{addProperty("capture_id",captureId)})}
     }
     Text("TV apparater",style=MaterialTheme.typography.headlineMedium)
-    LogitechVolumeCard(enabled=!busy, status=message.takeIf { it.isNotBlank() }, onVolume={ direction ->
+    LogitechVolumeCard(enabled=!busy, status=message.takeIf { data?.get("ok")?.asBoolean==false }, onVolume={ direction ->
         onRequest("logitech",JsonObject().apply { addProperty("direction",direction);addProperty("request_id",UUID.randomUUID().toString()) })
     })
     voiceControls()

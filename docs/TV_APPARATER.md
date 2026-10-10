@@ -97,3 +97,17 @@ Validation: app builds/lint/unit tests pass, 9 remote-service tests pass,
 emulator taps on both buttons in both apps reach the mock transmitter exactly
 once per tap and display the result. An unprivileged ADB broadcast was denied
 by the signature permission. No physical IR was emitted during these tests.
+
+## Fast volume update — Vox beta.3 / Beam alpha.14
+
+This supersedes the earlier acknowledgement-waiting button workflow. Logitech
+buttons dispatch immediately, with 160 ms tap debouncing and no success receipt,
+waiting state or automatic resend. Beam uses an unordered signature-protected
+broadcast; Vox's already-authenticated WebSocket sends the registered operation.
+The gateway sends one HMAC-authenticated, short-lived UDP packet over LAN. It
+keeps a durable duplicate ledger and refreshes the node's epoch/clock outside the
+button path. Logitech voice aliases also dispatch silently. Local transport
+errors may still be reported; silence is not proof of physical device response.
+Update both apps and node firmware together. The corrected firmware includes one
+observed NEC repetition frame; the previous claim that volume changes were
+confirmed has been withdrawn by the user. At-TV verification is pending.

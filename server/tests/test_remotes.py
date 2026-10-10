@@ -8,6 +8,10 @@ from euthercommand.ir import nec
 class Node:
     def __init__(self):self.calls=[];self.fail=False
     def status(self):return {'boot_id':'boot'}
+    def send_fast(self,op,seq):
+        self.calls.append(('fast',op,seq))
+        if self.fail:raise OSError('UDP send failed')
+        return 'dispatched'
     def command(self,op,*args):
         self.calls.append(op)
         if op.startswith('volume') or op.startswith('ir_'):
@@ -104,10 +108,41 @@ def test_logitech_shortcuts_are_owned_allowlisted_and_deduplicated(tmp_path):
     async def run():
         for direction in ('up','down'):
             request={'operation':'logitech','direction':direction,'request_id':'button-'+direction}
-            assert (await s.request('nichlas',request))['status']=='transmitted'
-            assert (await s.request('nichlas',request))['duplicate']
-        assert s.node.calls==['enable','volume_up','disable','enable','volume_down','disable']
+            assert (await s.request('nichlas',request))['status']=='dispatched'
+            assert (await s.request('nichlas',request))['status']=='duplicate'
+        assert [call[:2] for call in s.node.calls]==[('fast','volume_up'),('fast','volume_down')]
+        assert s.node.calls[1][2]>s.node.calls[0][2]
         for user,direction in [('intruder','up'),('nichlas','toggle')]:
             with pytest.raises(ValueError):await s.request(user,{'operation':'logitech','direction':direction,'request_id':'invalid'})
-        assert len(s.node.calls)==6
+        assert len(s.node.calls)==2
+    asyncio.run(run())
+
+
+def test_fast_failure_never_retries_after_restart(tmp_path):
+    n=Node();n.fail=True;s=service(tmp_path,n)
+    with pytest.raises(OSError):asyncio.run(s.dispatch_fast('nichlas','logitech_volume_up_nichlas','fast-uncertain'))
+    s.db.close();again=service(tmp_path,n)
+    assert asyncio.run(again.dispatch_fast('nichlas','logitech_volume_up_nichlas','fast-uncertain'))['status']=='duplicate'
+    assert len(n.calls)==1
+
+
+def test_fast_shortcut_has_no_success_ack(tmp_path):
+    from test_session import make_session,start_message
+    async def run():
+        session,sent=make_session();session.remotes=service(tmp_path);session.authenticated_user='nichlas';session.remote_peer_trusted=True
+        await session.handle_text(start_message());sent.clear()
+        await session._remote_request({'operation':'logitech','direction':'down','request_id':'silent'})
+        assert not sent
+        assert session.remotes.node.calls[0][:2]==('fast','volume_down')
+    asyncio.run(run())
+
+def test_logitech_voice_dispatch_finishes_silently(tmp_path):
+    from test_session import make_session,start_message
+    async def run():
+        session,sent=make_session();session.remotes=service(tmp_path);session.authenticated_user='nichlas';session.remote_peer_trusted=True
+        await session.handle_text(start_message());sent.clear()
+        action=session.remotes.plan('nichlas','sänk volymen på logitech','phone')
+        await session._remote_voice('utterance-fast','sänk volymen på logitech',action)
+        assert sent==[{'type':'action.completed','action_id':action.action_id,'status':'completed','message':''}]
+        assert session.remotes.node.calls[0][:2]==('fast','volume_down')
     asyncio.run(run())

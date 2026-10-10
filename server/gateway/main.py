@@ -200,6 +200,7 @@ async def run(config: GatewayConfig) -> None:
     wikipedia = WikipediaService(config.wikipedia_settings)
     lights = MagicHomeLightService(config.light_settings, config.config_dir)
     remotes = RemoteService(config.remote_settings, config.config_dir)
+    remotes.start_fast_refresh()
     television = NecTvService(config.television_settings, config.config_dir)
     eutherpump = EutherPumpService(config.eutherpump_settings)
     eutherwash = EutherWashService(config.eutherwash_settings)
