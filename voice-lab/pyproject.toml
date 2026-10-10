@@ -1,0 +1,15 @@
+[project]
+name = "euthervox-voice-lab"
+version = "0.1.0"
+requires-python = ">=3.12,<3.13"
+dependencies = ["omnivoice", "torch==2.8.0", "torchaudio==2.8.0", "soundfile", "huggingface-hub"]
+
+[tool.uv.sources]
+omnivoice = { git = "https://github.com/k2-fsa/OmniVoice.git", rev = "08be0b4ccbac3e13e374e86fbfead4b4cac343e2" }
+torch = { index = "pytorch-cuda" }
+torchaudio = { index = "pytorch-cuda" }
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
