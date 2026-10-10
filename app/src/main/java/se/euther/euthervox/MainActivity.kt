@@ -308,6 +308,7 @@ fun EutherVoxApp() {
             Text(
                 "Röst: " + when (voiceId) {
                     "piper-lisa" -> "Lisa"
+                    "kitten-2" -> "KittenTTS 2"
                     "chatterbox" -> "Chatterbox"
                     "moss-nano" -> "MOSS Nano"
                     "moss-christian" -> "Christian"
@@ -562,6 +563,7 @@ fun EutherVoxApp() {
                     VoiceChoice("piper-nst", "NST – snabb (rekommenderad)", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("piper-lisa", "Lisa – alternativ", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("moss-nano", "MOSS Nano – Sören Svartkrut", settingsVoiceId) { settingsVoiceId = it }
+                    VoiceChoice("kitten-2", "KittenTTS 2 – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }
                     VoiceChoice("chatterbox", "Chatterbox – långsam (experimentell)", settingsVoiceId) { settingsVoiceId = it }
                 }
                 Text("Språkmodell", fontWeight = FontWeight.Bold, color = Forest)

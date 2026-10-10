@@ -1,0 +1,23 @@
+[Unit]
+Description=EutherVox KittenTTS 2 CPU worker
+After=network-online.target
+ConditionPathIsMountPoint=/run/media/nichlas/Kingston1TB
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nichlas/EutherVox
+ExecStart=/run/media/nichlas/Kingston1TB/models/KittenTTS-2/venv/bin/python kitten-worker/worker.py --binary /run/media/nichlas/Kingston1TB/models/KittenTTS-2/cpp-source/build/bin/kitten-tts --assets /run/media/nichlas/Kingston1TB/models/KittenTTS-2/assets
+Environment=CUDA_VISIBLE_DEVICES=
+Environment=OMP_NUM_THREADS=8
+Environment=MKL_NUM_THREADS=8
+Environment=HF_HUB_OFFLINE=1
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=10
+MemoryMax=6G
+CPUQuota=800%
+Nice=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
