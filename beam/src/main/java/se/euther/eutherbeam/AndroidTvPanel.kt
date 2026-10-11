@@ -240,7 +240,7 @@ internal fun AndroidTvPanel(
             Text("RUMSSCENER", color = BeamOrange, fontWeight = FontWeight.Black, fontSize = 12.sp)
             Spacer(Modifier.height(12.dp))
             if (canCastWake) {
-                AndroidTvButton("VÄCK PUCK VIA CAST", working, Modifier.fillMaxWidth(), onWakePlayer, primary = true)
+                AndroidTvButton("VÄCK PUCK", working, Modifier.fillMaxWidth(), onWakePlayer, primary = true)
                 Text(
                     "Fungerar även när Android Remote är nedkopplad i standby.",
                     color = BeamMuted,

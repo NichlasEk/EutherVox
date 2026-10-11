@@ -12,6 +12,7 @@ import se.euther.eutherbeam.nec.*
 /** Only selected, explicitly saved/paired devices. No arbitrary address or key. */
 class BeamVoice(private val context: Context) {
     private val lock = Mutex()
+    private val link = BeamLink(context)
     private fun linkedPlayer(target: String): AndroidTvDevice {
         require(target in setOf("android_tv_nec", "android_tv_samsung")) { "Välj TV-rum Uppe eller Nere" }
         val candidates = AndroidTvDeviceStore(context).load().filter { it.linkedDisplay == target.removePrefix("android_tv_") }
@@ -20,6 +21,7 @@ class BeamVoice(private val context: Context) {
     }
 
     suspend fun search(target: String, title: String, pcm: ByteArray): String = lock.withLock {
+        if (link.available()) return@withLock link.call("search", target, title, pcm).getString("message").orEmpty()
         require(title.length in 1..160)
         val device = linkedPlayer(target)
         check(device.paired) { "Para TV-kortets Androidpuck först" }
@@ -28,6 +30,7 @@ class BeamVoice(private val context: Context) {
     }
 
     suspend fun status(target: String): String = lock.withLock {
+        if (link.available()) return@withLock link.call("status", target).getString("message").orEmpty()
         val device = linkedPlayer(target)
         val cast = runCatching { CastPlaybackClient(AndroidTvIdentity().sslContext()).read(device.address, device.castPort) }.getOrNull()
         if (cast?.title != null) return@withLock cast.describe()
@@ -40,6 +43,7 @@ class BeamVoice(private val context: Context) {
     }
 
     suspend fun execute(target: String, command: String): String = lock.withLock {
+        if (link.available()) return@withLock link.call("control", target, command).getString("message").orEmpty()
         val samsung = mapOf("volume_up" to "KEY_VOLUP", "volume_down" to "KEY_VOLDOWN", "mute" to "KEY_MUTE", "power_off" to "KEY_POWEROFF", "hdmi1" to "KEY_HDMI1", "hdmi2" to "KEY_HDMI2", "home" to "KEY_MENU", "up" to "KEY_UP", "down" to "KEY_DOWN", "left" to "KEY_LEFT", "right" to "KEY_RIGHT", "ok" to "KEY_ENTER", "back" to "KEY_RETURN", "play" to "KEY_PLAY", "pause" to "KEY_PAUSE")
         val android = mapOf("volume_up" to AndroidTvKey.VOLUME_UP, "volume_down" to AndroidTvKey.VOLUME_DOWN, "mute" to AndroidTvKey.VOLUME_MUTE, "power_on" to AndroidTvKey.WAKEUP, "power_off" to AndroidTvKey.SLEEP, "home" to AndroidTvKey.HOME, "up" to AndroidTvKey.DPAD_UP, "down" to AndroidTvKey.DPAD_DOWN, "left" to AndroidTvKey.DPAD_LEFT, "right" to AndroidTvKey.DPAD_RIGHT, "ok" to AndroidTvKey.DPAD_CENTER, "back" to AndroidTvKey.BACK, "play" to AndroidTvKey.MEDIA_PLAY, "pause" to AndroidTvKey.MEDIA_PAUSE)
         when(target) {
@@ -66,7 +70,7 @@ class BeamVoice(private val context: Context) {
                     candidates.single()
                 }
                 val key=android[command] ?: error("Kommandot stöds inte för Android TV")
-                if(command=="power_on")CastCecWakeClient(AndroidTvIdentity().sslContext()).wake(device.address,device.castPort)
+                if(command=="power_on") return@withLock wakePlayer(device)
                 else {
                     check(device.paired) { "Para Android TV-pucken först" }
                     AndroidTvRemoteClient(AndroidTvIdentity()).use { it.sendKey(device.address,key) }

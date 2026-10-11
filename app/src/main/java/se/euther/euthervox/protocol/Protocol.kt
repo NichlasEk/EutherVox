@@ -20,7 +20,7 @@ fun sessionStart(
         addProperty("node_name", nodeName)
         if (notificationDeviceId.isNotBlank()) addProperty("notification_device_id", notificationDeviceId)
         addProperty("room", room)
-        add("capabilities", com.google.gson.JsonArray().apply { add("tv_media_v1") })
+        add("capabilities", com.google.gson.JsonArray().apply { add("tv_media_v1"); add("tv_control_result_v1") })
         addProperty("character", character)
         addProperty("voice_id", voiceId)
         if (llmModel.isNotBlank()) addProperty("llm_model", llmModel)

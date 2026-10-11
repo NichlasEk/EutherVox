@@ -56,6 +56,7 @@ import se.euther.eutherbeam.androidtv.AndroidTvKey
 import se.euther.eutherbeam.androidtv.AndroidTvNetworkDiscovery
 import se.euther.eutherbeam.androidtv.AndroidTvPairingClient
 import se.euther.eutherbeam.androidtv.AndroidTvRemoteClient
+import se.euther.eutherbeam.androidtv.wakePlayer
 import se.euther.eutherbeam.androidtv.CastCecWakeClient
 import se.euther.eutherbeam.nec.Ipv4Subnet
 import se.euther.eutherbeam.nec.NecNetworkDiscovery
@@ -450,10 +451,10 @@ fun EutherBeamPanel(showRoomRemotes: Boolean = true) {
             return@wakePlayer
         }
         androidTvWorking = true
-        androidTvStatus = "Väcker ${puck.name} via Cast…"
+        androidTvStatus = "Väcker ${puck.name}…"
         scope.launch {
-            runCatching { castCecWakeClient.wake(puck.address, puck.castPort) }
-                .onSuccess { androidTvStatus = "${puck.name} är väckt. Android Remote återansluter när den är redo." }
+            runCatching { wakePlayer(puck) }
+                .onSuccess { androidTvStatus = it }
                 .onFailure { androidTvStatus = it.message ?: "Kunde inte väcka ${puck.name}" }
             androidTvWorking = false
         }

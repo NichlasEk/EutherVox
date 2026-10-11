@@ -21,9 +21,35 @@ fun RoomRemoteCards(enabled: Boolean = true, status: String? = null, onVolume: (
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val remote = remember { BeamVoice(context.applicationContext) }
+    val link = remember { BeamLink(context) }
+    val linkedApp = link.available()
+    var linkError by remember { mutableStateOf<String?>(null) }
     val playerStore = remember { AndroidTvDeviceStore(context) }
     val preferences = remember { context.getSharedPreferences("eutherbeam", android.content.Context.MODE_PRIVATE) }
     var players by remember { mutableStateOf(playerStore.load()) }
+    suspend fun refreshPlayers() {
+        if (linkedApp) runCatching { link.players() }.onSuccess { players = it; linkError = null }
+            .onFailure { linkError = it.message }
+        else players = playerStore.load()
+    }
+    LaunchedEffect(linkedApp) { refreshPlayers() }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, linkedApp) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) scope.launch { refreshPlayers() }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    fun bind(target: String, id: String?) {
+        scope.launch {
+            runCatching {
+                if (linkedApp) link.call("bind", target, id.orEmpty())
+                else playerStore.save(bindPlayer(playerStore.load(), target, id))
+                refreshPlayers()
+            }.onFailure { linkError = it.message }
+        }
+    }
     DisposableEffect(preferences) {
         val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ -> players = playerStore.load() }
         preferences.registerOnSharedPreferenceChangeListener(listener)
@@ -44,6 +70,8 @@ fun RoomRemoteCards(enabled: Boolean = true, status: String? = null, onVolume: (
         }
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (linkedApp) Text("Använder enheter och parningar från EutherBeam")
+        linkError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         listOf("samsung" to "Uppe", "nec" to "Nere").forEach { (target, room) ->
             var working by remember(target) { mutableStateOf(false) }
             var failed by remember(target) { mutableStateOf(false) }
@@ -74,13 +102,13 @@ fun RoomRemoteCards(enabled: Boolean = true, status: String? = null, onVolume: (
                         TextButton(onClick = { choosePlayer = true }) { Text("Välj puck") }
                         DropdownMenu(expanded = choosePlayer, onDismissRequest = { choosePlayer = false }) {
                             DropdownMenuItem(text = { Text("Ingen puck") }, onClick = {
-                                playerStore.save(bindPlayer(playerStore.load(), target, null)); choosePlayer = false
+                                bind(target, null); choosePlayer = false
                             })
                             players.forEach { player ->
                                 val selectable = player.linkedDisplay.isBlank() || player.linkedDisplay == target
                                 DropdownMenuItem(text = { Text(player.name + if (selectable) "" else " · Kopplad till andra TV:n") },
                                     enabled = selectable, onClick = {
-                                        runCatching { playerStore.save(bindPlayer(playerStore.load(), target, player.id)) }
+                                        runCatching { bind(target, player.id) }
                                             .onFailure { feedback = it.message }
                                         choosePlayer = false
                                     })
@@ -96,6 +124,12 @@ fun RoomRemoteCards(enabled: Boolean = true, status: String? = null, onVolume: (
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf("hdmi1" to "HDMI 1", "hdmi2" to "HDMI 2").forEach { (operation, label) ->
                             OutlinedButton(onClick = { command(target, operation) }, enabled = !working,
+                                modifier = Modifier.weight(1f).semantics { contentDescription = "$room: $label" }) { Text(label) }
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("power_on" to "Väck puck", "power_off" to "Vila puck").forEach { (operation, label) ->
+                            OutlinedButton(onClick = { command("android_tv_$target", operation) }, enabled = !working && linked.size == 1,
                                 modifier = Modifier.weight(1f).semantics { contentDescription = "$room: $label" }) { Text(label) }
                         }
                     }

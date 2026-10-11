@@ -1427,7 +1427,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             return
         }
 
-        val spokenTvResult = event.provider == "eutherbeam" && event.name in setOf("beam.search", "beam.status")
+        val spokenTvResult = event.provider == "eutherbeam" && event.name in setOf("beam.control", "beam.search", "beam.status")
         if (spokenTvResult) {
             activeUtterance?.let { armTimeout(it, 45_000, "Svar saknas från TV:n") }
         } else finishUtterance()

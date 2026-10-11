@@ -304,3 +304,30 @@ Packages (local, not published to EutherOxide Apps):
 The final emulator run also reached audio_playback_start, turn.tts_complete and
 turn.idle for the media-result utterance. Gateway activation uses the local
 `euthervox-gateway.service` (the server at .186 remains the authenticated proxy).
+
+## Beta 7 / Beam alpha 17: shared remotes and explicit power results
+
+The installed standalone Beam is now the execution owner when its same-signature
+control provider is available. Vox delegates control, search and playback status
+to that provider, and TV room cards load/save player bindings through it. Pairing
+keys stay in Beam's Android Keystore; they are never exported. Without this
+provider, the embedded standalone-compatible controls retain their local store.
+Install both new versions to reuse existing Beam pairings in Vox.
+
+TV power phrases include `sätt på TV`, `stäng av tv:n`, `starta televisionen` and
+polite infinitives. An unscoped TV request asks Uppe/Nere and accepts a bounded
+room/display reply for 45 seconds (including NEC-TV). Explicit destinations still
+win over the selected room. New clients advertise `tv_control_result_v1`, retain
+the active utterance, and speak the actual phone action result or timeout.
+
+Player wake now tries the paired Android Remote WAKEUP key before Cast fallback.
+Cards provide Väck puck/Vila puck separately from display power. Successful
+transport is described as a sent command, not proof that the hardware woke.
+Network-off standby still requires a device-specific wake mechanism.
+
+Validation: 131 focused gateway tests; both Android builds, JVM tests and lint.
+Emulator: Vox's Beam preferences removed, standalone Beam alone held a simulated
+paired Nere player. Voice control and room-card buttons reached the simulator
+through the real signature-protected provider, sending WAKEUP 224 and SLEEP 223.
+Vox displayed Beam's player and paired state. Shell access to the provider was
+denied. No physical TV/puck was controlled during these tests.

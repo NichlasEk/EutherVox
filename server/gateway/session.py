@@ -128,6 +128,9 @@ class VoiceSession:
     character_name: str = ""
     voice_id: str = ""
     llm_model: str = ""
+    tv_control_result_capable: bool = False
+    beam_pending: str = ""
+    beam_pending_until: float = 0
     tv_media_capable: bool = False
     beam_results: dict[str, asyncio.Future] = field(default_factory=dict)
     room: str = ""
@@ -259,6 +262,7 @@ class VoiceSession:
         self.character_name = message.get("character", self.config.default_character)
         self.node_name = str(message.get("node_name", "unknown"))
         self.room = self._validated_room(message.get("room", ""))
+        self.tv_control_result_capable = isinstance(message.get("capabilities"), list) and "tv_control_result_v1" in message["capabilities"]
         self.tv_media_capable = isinstance(message.get("capabilities"), list) and "tv_media_v1" in message["capabilities"]
         # Keep the display/routing name independent from each installation's queue.
         device_id = message.get("notification_device_id", "")
@@ -969,6 +973,8 @@ class VoiceSession:
             raise ProtocolError("INVALID_MESSAGE", "utterance_id is required")
         room = self._validated_room(message.get("room", self.room))
         if room != self.room:
+            self.beam_pending = ""
+            self.beam_pending_until = 0
             self.volume_target = None
             self.volume_target_until = 0
             self.volume_pending_direction = None
@@ -1175,6 +1181,13 @@ class VoiceSession:
             await self.send_json({"type": "stt.final", "utterance_id": utterance_id, "text": transcript})
             pending_volume=self.volume_pending_direction if time.monotonic()<self.volume_pending_until else None
             self.volume_pending_direction=None
+            beam_transcript = transcript
+            if self.beam_pending and time.monotonic() < self.beam_pending_until:
+                from .volume_voice import clean_request
+                answer = clean_request(transcript)
+                if answer in ('uppe', 'nere', 'där uppe', 'där nere', 'nec', 'nec-tv', 'nec tv', 'samsung', 'samsung-tv', 'samsung tv'):
+                    beam_transcript = self.beam_pending + ' ' + answer
+            self.beam_pending = ""
             news_intent = signal_intent(transcript)
             if news_intent or self.signal_report_id:
                 await self._signal_response(utterance_id, news_intent or "ask", self.signal_report_id, transcript)
@@ -1191,11 +1204,13 @@ class VoiceSession:
             if remote_action:
                 await self._remote_voice(utterance_id, transcript, remote_action)
                 return
-            beam_action = (plan_tv_media(transcript, self.node_name, self.room) or plan_beam(transcript,self.node_name,self.room)) if self.remote_peer_trusted and self.remotes and self.remotes.can_use(self.authenticated_user) else None
+            beam_action = (plan_tv_media(transcript, self.node_name, self.room) or plan_beam(beam_transcript,self.node_name,self.room)) if self.remote_peer_trusted and self.remotes and self.remotes.can_use(self.authenticated_user) else None
             if beam_action:
                 if beam_action.name in ("beam.search", "beam.status") and not self.tv_media_capable:
                     beam_action = DeviceAction(str(uuid4()), "assistant.clarify", self.node_name, {}, "Uppdatera EutherVox till beta 6 för filmsökning och uppspelningsinformation.")
                 if beam_action.name == "assistant.clarify":
+                    self.beam_pending = str(beam_action.arguments.get("beam_pending", ""))
+                    self.beam_pending_until = time.monotonic() + 45
                     await self.send_json({"type": "assistant.text.final", "utterance_id": utterance_id, "text": beam_action.acknowledgement})
                     await self._stream_action_speech(utterance_id, beam_action.acknowledgement, character, fast=True)
                     self._reset()
@@ -1207,7 +1222,7 @@ class VoiceSession:
                     )
                 self.pending_actions.add(beam_action.action_id)
                 waiter = None
-                if beam_action.name in ("beam.search", "beam.status"):
+                if beam_action.name in ("beam.search", "beam.status") or self.tv_control_result_capable:
                     waiter = asyncio.get_running_loop().create_future()
                     self.beam_results[beam_action.action_id] = waiter
                 try:
@@ -1218,7 +1233,7 @@ class VoiceSession:
                         try:
                             result_text = await asyncio.wait_for(waiter, timeout=25)
                         except asyncio.TimeoutError:
-                            result_text = "Svar saknas från mobilen. Kontrollera TV:n; jag skickar inte om sökningen automatiskt."
+                            result_text = "Svar saknas från mobilen. Kontrollera TV:n; jag skickar inte om kommandot automatiskt."
                         await self.send_json({"type":"assistant.text.final","utterance_id":utterance_id,"text":result_text})
                         await self._stream_action_speech(utterance_id, result_text, character, fast=True)
                     self._remember_turn(transcript, result_text)

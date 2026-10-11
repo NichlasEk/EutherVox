@@ -19,7 +19,10 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" />
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
 
+    <uses-permission android:name="se.euther.eutherbeam.permission.CONTROL" />
     <queries>
+        <package android:name="se.euther.eutherbeam" />
+        <provider android:authorities="se.euther.eutherbeam.control" />
         <package android:name="com.google.android.apps.youtube.music" />
         <intent>
             <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
