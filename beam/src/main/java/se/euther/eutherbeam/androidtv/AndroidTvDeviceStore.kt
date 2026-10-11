@@ -13,7 +13,7 @@ internal data class AndroidTvDevice(
     val supportsCast: Boolean = false,
     val castPort: Int = 8009,
     val paired: Boolean = false,
-    val linkedDisplay: String = "nec",
+    val linkedDisplay: String = "",
 )
 
 internal class AndroidTvDeviceStore(context: Context) {
@@ -73,5 +73,23 @@ internal class AndroidTvDeviceStore(context: Context) {
     private companion object {
         const val KEY_DEVICES = "android_tv_devices_v1"
         const val KEY_SELECTED = "android_tv_selected_device_v1"
+    }
+}
+
+/** Binding never moves a player out of another TV card implicitly. */
+internal fun bindPlayer(devices: List<AndroidTvDevice>, display: String, playerId: String?): List<AndroidTvDevice> {
+    require(display in setOf("nec", "samsung"))
+    if (playerId != null) {
+        val selected = devices.singleOrNull { it.id == playerId } ?: error("Pucken finns inte längre")
+        require(selected.linkedDisplay.isBlank() || selected.linkedDisplay == display) {
+            "Koppla loss pucken från det andra TV-kortet först"
+        }
+    }
+    return devices.map {
+        when {
+            it.id == playerId -> it.copy(linkedDisplay = display)
+            it.linkedDisplay == display -> it.copy(linkedDisplay = "")
+            else -> it
+        }
     }
 }

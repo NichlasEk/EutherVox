@@ -3,7 +3,8 @@ package se.euther.eutherbeam.androidtv
 internal object AndroidTvProtocol {
     const val REMOTE_PORT = 6466
     const val PAIRING_PORT = 6467
-    const val ACTIVE_FEATURES = 611L // ping, key, power, volume and app links
+    const val ACTIVE_FEATURES = 611L // existing key/power/volume/app-link controls
+    const val MEDIA_FEATURES = 623L // additionally request IME and voice for media queries
 
     fun pairingRequest(clientName: String): ByteArray = outerPairing(10) {
         string(1, "atvremote")
@@ -35,9 +36,9 @@ internal object AndroidTvProtocol {
         return fields.firstOrNull { it.number in setOf(10, 11, 20, 30, 31, 40, 41) }?.number
     }
 
-    fun remoteConfigure(): ByteArray = ProtoWire.message {
+    fun remoteConfigure(features: Long = ACTIVE_FEATURES): ByteArray = ProtoWire.message {
         nested(1) {
-            uint(1, ACTIVE_FEATURES)
+            uint(1, features)
             nested(2) {
                 uint(3, 1)
                 string(4, "1")
@@ -47,8 +48,8 @@ internal object AndroidTvProtocol {
         }
     }
 
-    fun remoteSetActive(): ByteArray = ProtoWire.message {
-        nested(2) { uint(1, ACTIVE_FEATURES) }
+    fun remoteSetActive(features: Long = ACTIVE_FEATURES): ByteArray = ProtoWire.message {
+        nested(2) { uint(1, features) }
     }
 
     fun remotePingResponse(value: Long): ByteArray = ProtoWire.message {
@@ -61,6 +62,18 @@ internal object AndroidTvProtocol {
             uint(2, 3) // short press
         }
     }
+
+    fun voiceBegin(session: Long): ByteArray = ProtoWire.message { nested(30) { uint(1, session) } }
+    fun voiceEnd(session: Long): ByteArray = ProtoWire.message { nested(32) { uint(1, session) } }
+    fun voicePayload(session: Long, pcm: ByteArray): ByteArray = ProtoWire.message {
+        require(pcm.size in 8192..20480 && pcm.size % 2 == 0)
+        nested(31) { uint(1, session); bytes(2, pcm) }
+    }
+    fun voiceSession(payload: ByteArray): Long? = ProtoWire.nested(payload, 30)?.let { ProtoWire.varint(it, 1) ?: 0L }
+    fun supportedFeatures(payload: ByteArray): Long? = ProtoWire.nested(payload, 1)?.let { ProtoWire.varint(it, 1) }
+    fun currentApp(payload: ByteArray): String? = ProtoWire.nested(payload, 20)?.let { ProtoWire.nested(it, 1) }
+        ?.let { info -> ProtoWire.fields(info).firstOrNull { it.number == 12 }?.bytes?.toString(Charsets.UTF_8) }
+        ?.takeIf { it.matches(Regex("[a-zA-Z0-9_.]{1,200}")) }
 
     fun topLevelFields(payload: ByteArray): Set<Int> = ProtoWire.fields(payload).mapTo(mutableSetOf()) { it.number }
 
@@ -75,6 +88,7 @@ internal object AndroidTvProtocol {
 
 internal enum class AndroidTvKey(val code: Int) {
     HOME(3),
+    SEARCH(84),
     BACK(4),
     DPAD_UP(19),
     DPAD_DOWN(20),
@@ -85,6 +99,8 @@ internal enum class AndroidTvKey(val code: Int) {
     VOLUME_DOWN(25),
     POWER(26),
     MEDIA_PLAY_PAUSE(85),
+    MEDIA_PLAY(126),
+    MEDIA_PAUSE(127),
     MEDIA_STOP(86),
     MEDIA_NEXT(87),
     MEDIA_PREVIOUS(88),

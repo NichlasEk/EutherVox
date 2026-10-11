@@ -163,6 +163,9 @@ private data class ConnectionIdentity(
 )
 
 class VoiceController(context: Context, private val scope: CoroutineScope) : VoiceTransport.Listener {
+    private val roomPreferences = context.applicationContext.getSharedPreferences("euthervox", Context.MODE_PRIVATE)
+    private fun selectedRoom(): String = roomPreferences.getString("selected_room", "").orEmpty()
+        .takeIf { it in setOf("uppe", "nere") }.orEmpty()
     private val beamVoice = se.euther.eutherbeam.BeamVoice(context.applicationContext)
     private val beamActions = mutableSetOf<String>()
     private val appearanceCache = se.euther.euthervox.ui.AppearanceCache(context)
@@ -449,7 +452,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             droppedCaptureFrames = 0, interruptionListening = false,
         )
         scope.launch {
-            if (transport?.sendText(audioStart(id)) != true) {
+            if (transport?.sendText(audioStart(id, selectedRoom())) != true) {
                 fail("Kunde inte starta ljudströmmen")
                 return@launch
             }
@@ -993,7 +996,7 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
     override suspend fun onOpen() {
         recordDiagnostic("transport.open")
         mutableState.value = mutableState.value.copy(connectionLabel = "Handshake…", status = VoiceStatus.Connecting)
-        transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId, llmModel = llmModel, notificationDeviceId = notificationDeviceId))
+        transport?.sendText(sessionStart(nodeName, character = characterId, voiceId = voiceId, llmModel = llmModel, notificationDeviceId = notificationDeviceId, room = selectedRoom()))
     }
 
     override suspend fun onText(text: String) {
@@ -1424,8 +1427,11 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             return
         }
 
-        finishUtterance()
-        if(event.name=="beam.control" && event.provider=="eutherbeam") {
+        val spokenTvResult = event.provider == "eutherbeam" && event.name in setOf("beam.search", "beam.status")
+        if (spokenTvResult) {
+            activeUtterance?.let { armTimeout(it, 45_000, "Svar saknas från TV:n") }
+        } else finishUtterance()
+        if(event.name in setOf("beam.control", "beam.search", "beam.status") && event.provider=="eutherbeam") {
             if(beamActions.contains(event.actionId))return
             if(beamActions.size>=128) {
                 val message="Anslut till servern igen för fler EutherBeam-kommandon."
@@ -1435,7 +1441,16 @@ class VoiceController(context: Context, private val scope: CoroutineScope) : Voi
             }
             beamActions.add(event.actionId)
             scope.launch {
-                val result=runCatching { beamVoice.execute(event.uri,event.query) }
+                val result=runCatching {
+                    when (event.name) {
+                        "beam.search" -> {
+                            require(event.searchAudio.length in 1..540_000) { "Ogiltig sökfras" }
+                            beamVoice.search(event.uri, event.query, android.util.Base64.decode(event.searchAudio, android.util.Base64.DEFAULT))
+                        }
+                        "beam.status" -> beamVoice.status(event.uri)
+                        else -> beamVoice.execute(event.uri,event.query)
+                    }
+                }
                 val text=result.getOrElse { it.message ?: "EutherBeam-kommandot misslyckades" }
                 mutableState.value=mutableState.value.copy(actionMessage=text)
                 transport?.sendText(actionResult(event.actionId,event.utteranceId,if(result.isSuccess)"completed" else "failed",text))

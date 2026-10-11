@@ -11,6 +11,7 @@ fun sessionStart(
     voiceId: String = "piper-nst",
     llmModel: String = "",
     notificationDeviceId: String = "",
+    room: String = "",
 ): String =
     JsonObject().apply {
         addProperty("type", "session.start")
@@ -18,7 +19,8 @@ fun sessionStart(
         addProperty("client_id", "android-phone")
         addProperty("node_name", nodeName)
         if (notificationDeviceId.isNotBlank()) addProperty("notification_device_id", notificationDeviceId)
-        addProperty("room", "mobile")
+        addProperty("room", room)
+        add("capabilities", com.google.gson.JsonArray().apply { add("tv_media_v1") })
         addProperty("character", character)
         addProperty("voice_id", voiceId)
         if (llmModel.isNotBlank()) addProperty("llm_model", llmModel)
@@ -30,7 +32,11 @@ fun sessionStart(
         })
     }.toString()
 
-fun audioStart(utteranceId: String) = message("audio.start", utteranceId)
+fun audioStart(utteranceId: String, room: String = "") = JsonObject().apply {
+    addProperty("type", "audio.start")
+    addProperty("utterance_id", utteranceId)
+    addProperty("room", room)
+}.toString()
 fun audioEnd(utteranceId: String) = message("audio.end", utteranceId)
 fun responseCancel(utteranceId: String) = message("response.cancel", utteranceId)
 
@@ -261,6 +267,7 @@ sealed interface ServerEvent {
         val uri: String,
         val requiresConfirmation: Boolean,
         val outputRoom: String = "",
+        val searchAudio: String = "",
     ) : ServerEvent
     data class ActionStatus(val actionId: String, val status: String, val message: String) : ServerEvent
     data class ActionCompleted(val actionId: String, val status: String, val message: String) : ServerEvent
@@ -343,6 +350,7 @@ fun parseServerEvent(raw: String): ServerEvent {
             uri = json["arguments"].asJsonObject["uri"]?.asString.orEmpty(),
             requiresConfirmation = json["requires_confirmation"]?.asBoolean ?: true,
             outputRoom = json["arguments"].asJsonObject["output_room"]?.asString.orEmpty(),
+            searchAudio = json["arguments"].asJsonObject["search_audio"]?.asString.orEmpty(),
         )
         "action.status" -> ServerEvent.ActionStatus(
             json["action_id"].asString,

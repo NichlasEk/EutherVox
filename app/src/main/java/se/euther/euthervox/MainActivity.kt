@@ -50,6 +50,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -179,6 +180,7 @@ fun EutherVoxApp() {
         EutherVoxNodeService.migrateBackgroundMessages(context)
         context.getSharedPreferences("euthervox", 0)
     }
+    var selectedRoom by remember { mutableStateOf(preferences.getString("selected_room", "").orEmpty()) }
     var address by remember { mutableStateOf(preferences.getString("server_address", "").orEmpty()) }
     var nodeName by remember { mutableStateOf(preferences.getString("node_name", "android-phone").orEmpty()) }
     var username by remember { mutableStateOf(preferences.getString("username", "").orEmpty()) }
@@ -293,6 +295,19 @@ fun EutherVoxApp() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            Text("TV-rum: " + when (selectedRoom) {
+                "uppe" -> "Uppe"
+                "nere" -> "Nere"
+                else -> "Inget rum valt"
+            }, style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("uppe" to "Uppe", "nere" to "Nere", "" to "Inget rum").forEach { (id, label) ->
+                    FilterChip(selected = selectedRoom == id, onClick = {
+                        preferences.edit().putString("selected_room", id).apply()
+                        selectedRoom = id
+                    }, label = { Text(label) })
+                }
+            }
             DeviceNavigator(
                 selectedTab = selectedTab,
                 onlineByTab = mapOf(

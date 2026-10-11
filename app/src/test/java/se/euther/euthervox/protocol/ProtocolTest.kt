@@ -6,6 +6,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ProtocolTest {
+    @Test fun roomTravelsWithEachUtteranceAndCanBeCleared() {
+        assertEquals("uppe", JsonParser.parseString(sessionStart(room = "uppe")).asJsonObject["room"].asString)
+        assertEquals("nere", JsonParser.parseString(audioStart("one", "nere")).asJsonObject["room"].asString)
+        assertEquals("", JsonParser.parseString(audioStart("two", "")).asJsonObject["room"].asString)
+    }
+
     @Test fun scryerReportsPreserveUnknownAndAcknowledgedEvidence() {
         val event = parseServerEvent("""{"type":"scryer.reports.result","available":true,"reports":[{"id":"vault","state":"unconfirmed","acknowledged":true}]}""") as ServerEvent.ScryerReports
         val report = event.payload["reports"].asJsonArray[0].asJsonObject

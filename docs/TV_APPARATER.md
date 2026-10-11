@@ -215,3 +215,92 @@ This verifies actual Logitech volume control through the new ESP8266 transmitter
 which was temporarily positioned downstairs. It supersedes the pending physical
 trial notes above. Testing at its final upstairs mounting position remains to be
 done after the user hangs the nodes in place.
+
+## Room selection and ordinary volume controls — Vox beta.5 (2026-10-11)
+
+Vox 0.20.0-beta.5 (69) adds a persistent Uppe/Nere/Ingen room selector above the
+main navigation. Uppe maps to Samsung and Nere to NEC. Each audio.start carries
+a snapshot of the selection, including an empty value when cleared. Room changes
+clear older volume follow-up context. Explicit spoken destinations take priority
+for that command; the app selection remains the default for the next command.
+
+TV power/input commands use the display; playback/navigation commands use exactly
+one saved Android TV puck linked to that display. Missing or ambiguous puck links
+fail rather than selecting the last-used puck in another room. Play and pause use
+separate Android keycodes, avoiding play/pause toggles. The existing authentication
+and trusted-proxy gates remain in place. This release scopes TV, puck and volume
+commands; lights, pumps and other devices do not yet consume the room preference.
+Film search, availability and now-playing metadata are not implemented here.
+
+The TV tab has Uppe/Nere cards with display power/input, player remote, then normal
+Volym minus/plus buttons at the bottom of each card. Volume retains the registered
+NEC/Samsung IR routing and 160 ms per-target debounce. Hardware and Logitech labels
+are absent from these controls. Pairing remains available in the expandable Beam
+panel, which does not repeat the floor cards when embedded in Vox.
+
+Validation: 115 focused gateway tests passed, including the complete mocked
+speech pipeline, explicit overrides, room changes, session isolation and invalid
+room rejection. App/Beam JVM tests, app lint and APK build passed. Emulator taps
+on all four volume buttons produced exactly Samsung down/up and NEC down/up at a
+local mock gateway, with no physical transmission. Room selection survived an
+app restart. Screenshot: build/reports/room-controls/nere.png. The local gateway
+service was restarted and reached engines_ready/listening on port 8788.
+
+APK: build/releases/EutherVox-0.20.0-beta5-debug.apk
+SHA-256: 7ffbe529e93b85484f578f5ff5207a3d5a749162b4cea2cd7578ae26da50ae0e
+The APK has not been published to EutherOxide Apps or installed on the user's
+phone. Physical room/puck behavior remains to be tested with the paired devices.
+
+## TV combinations and film search — Vox beta.6 / Beam alpha.16 (2026-10-11)
+
+Uppe/Nere are TV combinations only: Samsung/NEC display, its explicitly linked
+Android player and the existing server-owned volume transmitter target. Other
+appliances retain their existing rooms. The selector is labelled TV-rum.
+Both apps now display the linked player's name and pairing state on each card,
+with a Välj puck menu. New discoveries are unassigned. Selecting a player cannot
+silently move it from the other card; disconnect that binding first. Legacy
+ambiguous links require an explicit choice. Setup and cards observe saved changes.
+
+Vox understands “Jag vill titta på Terminator på NEC tvn”, “Jag vill se Terminator
+på Netflix” with a selected TV room, and “vad tittar jag på?”. An explicit target
+wins over the selected TV room. Missing/conflicting targets request clarification.
+The gateway synthesizes only a bounded search phrase and converts it to 8 kHz mono
+PCM with ffmpeg. The phone sends SEARCH, waits for the puck's voice session ID,
+then sends bounded PCM chunks and a voice-end packet. There is no automatic
+retry. The puck's own search/assistant handles the results; this can involve
+Google and the named streaming service. No availability/subscription checks or
+guaranteed direct film playback are claimed. TV power/input remain separate
+controls; this release does not guess which HDMI input the player uses.
+
+“Vad visas?” reads Cast receiver/media status without LAUNCH or LOAD. If Cast
+exposes a title, its actual player state is reported. Otherwise the optional
+Android Remote IME app identifier is reported, with title explicitly unknown.
+Native streaming apps need not expose Cast metadata. Results return to Vox and
+are spoken while preserving the active utterance. Media capabilities are negotiated
+only for these operations; existing remote-key connections retain their features.
+Older Vox apps are told to update instead of receiving unsupported media actions.
+
+Protocol references:
+- https://github.com/tronikos/androidtvremote2/blob/main/src/androidtvremote2/remotemessage.proto
+- https://github.com/tronikos/androidtvremote2/blob/main/src/androidtvremote2/remote.py
+- https://developers.google.com/cast/docs/media/messages
+
+Validation: 125 focused Python tests pass. Vox has 57 passing JVM tests; embedded
+and standalone Beam each have 28 passing JVM tests and 5 opt-in hardware tests
+skipped. Both APKs build and lint passes. An emulator with a local TLS Android TV
+simulator verified SEARCH, session 77, 20480/11520-byte chunks and voice end;
+Cast status returned simulated Terminator/PLAYING through GET_STATUS only. The
+phone accepted and completed the returned TTS stream. Standalone Beam's four
+volume buttons reached the signature-protected Vox receiver and mock gateway as
+Samsung down/up and NEC down/up exactly once. No real IR or TV action was emitted.
+Physical search behavior and title availability on the user's pucks remain open.
+
+Packages (local, not published to EutherOxide Apps):
+- Vox 0.20.0-beta.6 / 70: build/releases/EutherVox-0.20.0-beta6-debug.apk
+  SHA-256 05a232a34cfbb80c4c02ddcb4d346e0e129717d823e8fd1d04e85e706f060f19
+- Beam 0.1.0-alpha.16 / 16: /home/nichlas/EutherBeam/build/releases/EutherBeam-0.1.0-alpha16-debug.apk
+  SHA-256 a9a4597cc49e7fe00c82db0a268924d982de56d0b9bdec14596000f461666685
+
+The final emulator run also reached audio_playback_start, turn.tts_complete and
+turn.idle for the media-result utterance. Gateway activation uses the local
+`euthervox-gateway.service` (the server at .186 remains the authenticated proxy).

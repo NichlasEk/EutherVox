@@ -10,7 +10,7 @@ import com.google.gson.JsonObject
 import kotlinx.coroutines.delay
 import java.util.UUID
 import se.euther.eutherbeam.EutherBeamPanel
-import se.euther.eutherbeam.LogitechVolumeCard
+import se.euther.eutherbeam.RoomRemoteCards
 
 @Composable
 fun TvDevicesPanel(data: JsonObject?, busy: Boolean, onRequest: (String, JsonObject)->Unit, voiceControls: @Composable ()->Unit = {}) {
@@ -50,7 +50,7 @@ fun TvDevicesPanel(data: JsonObject?, busy: Boolean, onRequest: (String, JsonObj
         if(polling && captureId.isNotBlank())repeat(40){delay(1500);if(!latestBusy)latestRequest("capture",JsonObject().apply{addProperty("capture_id",captureId)})}
     }
     Text("TV apparater",style=MaterialTheme.typography.headlineMedium)
-    LogitechVolumeCard(enabled=!busy, status=message.takeIf { data?.get("ok")?.asBoolean==false }, onVolume={ target, direction ->
+    RoomRemoteCards(enabled=!busy, status=message.takeIf { data?.get("ok")?.asBoolean==false }, onVolume={ target, direction ->
         onRequest("logitech",JsonObject().apply { addProperty("target_id",target);addProperty("direction",direction);addProperty("request_id",UUID.randomUUID().toString()) })
     })
     voiceControls()
@@ -87,6 +87,6 @@ fun TvDevicesPanel(data: JsonObject?, busy: Boolean, onRequest: (String, JsonObj
     Text("Samsung, NEC och Android TV: upptäckt, parkoppling och reservfjärr. Para om enheterna här; parkopplingar från den separata appen kan inte läsas av EutherVox.")
     Text("Röstexempel: ”sätt på Samsung”, ”sänk volymen på Android TV”, ”HDMI ett på NEC”. Nätverksstyrningen via EutherBeam kräver att mobilen är på samma lokalnät.")
     OutlinedButton(onClick={beam=!beam}){Text(if(beam)"Dölj EutherBeam" else "Öppna EutherBeam och parkoppling")}
-    if(beam)Box(Modifier.fillMaxWidth().height(720.dp)){EutherBeamPanel()}
+    if(beam)Box(Modifier.fillMaxWidth().height(720.dp)){EutherBeamPanel(showRoomRemotes = false)}
 }
 private fun phrases(text:String)=JsonArray().apply{text.split(';').map{it.trim()}.filter{it.isNotBlank()}.forEach{add(it)}}

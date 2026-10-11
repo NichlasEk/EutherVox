@@ -33,6 +33,7 @@ class RemoteService:
             if not re.fullmatch(r'[a-z][a-z0-9_]{0,31}',key):raise ValueError('Ogiltigt TV-id')
             label=self._label(item.get('label'))
             aliases={normalize(a) for a in [label,*item.get('aliases',[])]}
+            aliases.update({'nec': {'nere', 'där nere', 'tv n nere', 'tvn nere'}, 'samsung': {'uppe', 'där uppe', 'tv n uppe', 'tvn uppe'}}.get(key, set()))
             if any(aliases & t['aliases'] for t in self.targets.values()):raise ValueError('TV-namn måste vara unika')
             self.targets[key]={'label':label,'aliases':aliases}
             if item.get('use_default_node') is True:
@@ -111,7 +112,7 @@ class RemoteService:
             if intent or answer:
                 direction=intent.direction if intent else pending_direction
                 target=(intent.target if intent else answer) or selected_target
-                if (intent and intent.unknown_target) or not target:
+                if (intent and intent.unknown_target) or target not in self.targets:
                     return DeviceAction(str(uuid.uuid4()),'remote.clarify',node_name,{'direction':direction},'Menar du '+ ' eller '.join(t['label'] for t in self.targets.values())+'?')
                 if target not in self.target_nodes:
                     return DeviceAction(str(uuid.uuid4()),'remote.unavailable',node_name,{},'Ingen IR-sändare är konfigurerad för '+self.targets[target]['label']+' ännu.')

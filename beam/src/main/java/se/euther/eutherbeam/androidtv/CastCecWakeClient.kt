@@ -38,10 +38,10 @@ internal class CastCecWakeClient(private val sslContext: SSLContext) {
 }
 
 internal object CastV2 {
-    fun message(namespace: String, json: String): ByteArray = ProtoWire.message {
+    fun message(namespace: String, json: String, destination: String = "receiver-0"): ByteArray = ProtoWire.message {
         uint(1, 0) // CASTV2_1_0
         string(2, "sender-0")
-        string(3, "receiver-0")
+        string(3, destination)
         string(4, namespace)
         uint(5, 0) // STRING
         string(6, json)

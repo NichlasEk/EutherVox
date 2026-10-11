@@ -34,7 +34,12 @@ import androidx.compose.ui.unit.sp
 import se.euther.eutherbeam.androidtv.AndroidTvKey
 import se.euther.eutherbeam.androidtv.AndroidTvDevice
 
-internal enum class LinkedDisplay { SAMSUNG, NEC }
+internal enum class LinkedDisplay {
+    SAMSUNG, NEC, NONE;
+    companion object {
+        fun fromId(id: String?) = when (id) { "samsung" -> SAMSUNG; "nec" -> NEC; else -> NONE }
+    }
+}
 
 @Composable
 internal fun AndroidTvPanel(
@@ -146,7 +151,7 @@ internal fun AndroidTvPanel(
                         containerColor = if (selected) BeamOrange else BeamRaised,
                         contentColor = if (selected) BeamDark else BeamText,
                     ),
-                ) { Text(if (display == LinkedDisplay.SAMSUNG) "Samsung TV" else "NEC Display", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+                ) { Text(when (display) { LinkedDisplay.SAMSUNG -> "Uppe"; LinkedDisplay.NEC -> "Nere"; LinkedDisplay.NONE -> "Ej kopplad" }, fontWeight = FontWeight.Bold, fontSize = 12.sp) }
             }
         }
         Text(
