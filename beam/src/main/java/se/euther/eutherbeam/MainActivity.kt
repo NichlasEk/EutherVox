@@ -84,6 +84,15 @@ internal val BeamMuted: Color @Composable get() = MaterialTheme.colorScheme.onSu
 @Composable
 fun EutherBeamPanel(showRoomRemotes: Boolean = true) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    if (BeamLink(context).available()) {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Enheter och parningar hanteras i EutherBeam. TV-korten och rösten i Vox använder samma fjärrkontroll.")
+            Button(onClick = {
+                context.packageManager.getLaunchIntentForPackage(BeamLink.PACKAGE)?.let { context.startActivity(it) }
+            }) { Text("Öppna EutherBeam-inställningar") }
+        }
+        return
+    }
     val discovery = remember { SsdpSamsungDiscovery(context) }
     var scanning by remember { mutableStateOf(false) }
     var devices by remember { mutableStateOf<List<SamsungTvDevice>>(emptyList()) }

@@ -84,7 +84,7 @@ fun TvDevicesPanel(data: JsonObject?, busy: Boolean, onRequest: (String, JsonObj
     if(captured)Button(onClick={onRequest("save",JsonObject().apply{addProperty("capture_id",captureId);addProperty("device",device);addProperty("label",label);add("aliases",phrases(aliases))})},enabled=!busy && device.isNotBlank() && label.isNotBlank() && aliases.isNotBlank()){Text("Spara signal och röstfras")}
     HorizontalDivider()
     Text("EutherBeam",style=MaterialTheme.typography.titleLarge)
-    Text("Samsung, NEC och Android TV: upptäckt, parkoppling och reservfjärr. Para om enheterna här; parkopplingar från den separata appen kan inte läsas av EutherVox.")
+    Text("Samsung, NEC och Android TV: upptäckt och parkoppling. Med EutherBeam alpha 17 eller senare använder Vox den appens sparade enheter och parningar. Utan EutherBeam kan du konfigurera enheterna här.")
     Text("Röstexempel: ”sätt på Samsung”, ”sänk volymen på Android TV”, ”HDMI ett på NEC”. Nätverksstyrningen via EutherBeam kräver att mobilen är på samma lokalnät.")
     OutlinedButton(onClick={beam=!beam}){Text(if(beam)"Dölj EutherBeam" else "Öppna EutherBeam och parkoppling")}
     if(beam)Box(Modifier.fillMaxWidth().height(720.dp)){EutherBeamPanel(showRoomRemotes = false)}
